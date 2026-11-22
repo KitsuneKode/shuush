@@ -1,0 +1,324 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@graph': [
+    {
+      '@type': 'SoftwareApplication',
+      name: 'Shuush',
+      applicationCategory: 'DeveloperApplication',
+      operatingSystem: 'Linux (Wayland: Hyprland, Sway, Niri, Arch Linux, Omarchy)',
+      license: 'https://opensource.org/licenses/MIT',
+      offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+      description:
+        'Open-source local Superwhisper and Wispr Flow alternative for Linux/Wayland built on top of voxtype, featuring 5-source screen/selection/clipboard context, anti-paraphrase span gating, phonetic self-learning, KitsuneHud Quickshell pill, and native GTK4 Studio.',
+      softwareVersion: '1.0.0',
+      author: { '@type': 'Person', name: 'KitsuneKode', url: 'https://github.com/KitsuneKode' },
+      codeRepository: 'https://github.com/KitsuneKode/shuush',
+    },
+    {
+      '@type': 'FAQPage',
+      mainEntity: [
+        {
+          '@type': 'Question',
+          name: 'What is the best open-source Superwhisper or Wispr Flow alternative for Linux?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'Shuush built on stock voxtype is a free, MIT-licensed Linux/Wayland alternative to Superwhisper and Wispr Flow. It runs local GPU ASR (Parakeet, Whisper, or Cohere GGUF) with zero word caps, 5-source AT-SPI screen/selection/clipboard context, anti-paraphrase LLM cleanup (100% offline Ollama or ~500ms Groq failover), and a native GTK4 Studio.',
+          },
+        },
+        {
+          '@type': 'Question',
+          name: 'Does Shuush work on Omarchy, Hyprland, Sway, Niri, and non-NVIDIA GPUs?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'Yes. Shuush installs cleanly on top of stock voxtype-bin across NVIDIA CUDA, AMD ROCm/Vulkan, Intel Vulkan, and CPU-only laptops, with first-party kuwai rice auto-discovery and standard Hyprland/Sway/Niri support.',
+          },
+        },
+        {
+          '@type': 'Question',
+          name: 'Can Shuush run 100% offline without sending audio or text to the cloud?',
+          acceptedAnswer: {
+            '@type': 'Answer',
+            text: 'Yes. Speech recognition always runs locally via voxtype, and Shuush Studio includes a 1-click Air-Gapped Offline Mode toggle pinning cleanup strictly to local Ollama (127.0.0.1:11434). Password fields detected via AT-SPI bypass LLM cleanup entirely.',
+          },
+        },
+      ],
+    },
+  ],
+};
+---
+<BaseLayout
+  title="Shuush — Open-Source Local Superwhisper & Wispr Flow Alternative for Linux"
+  description="Free, MIT open-source local GPU voice dictation studio and context-aware cleanup layer built on voxtype for Linux & Wayland (Hyprland, Omarchy, Sway, Niri). 19,498 real words benchmarked, 516ms P50, air-gapped Ollama mode."
+  jsonLd={jsonLd}
+>
+  <main>
+    <section class="hero">
+      <div class="wrap hero-inner">
+        <span class="kicker-pill">Built on MIT <strong>voxtype</strong> · Zero cloud word limits · First-party <strong>kuwai</strong> support</span>
+        <h1>Local GPU dictation that actually knows your codebase.</h1>
+        <p class="lead">
+          The open-source Superwhisper &amp; Wispr Flow experience for Linux &amp; Wayland.
+          Parakeet, Whisper, or Cohere GGUF locally on your GPU — paired with 5-source screen context,
+          anti-paraphrase cleanup, phonetic self-learning, and a native GTK4 Studio.
+        </p>
+
+        <div class="cta-row">
+          <a href="#install" class="btn btn-primary">Install in 60 seconds</a>
+          <a href="/blog/why-we-built-shuush/" class="btn btn-secondary">Read benchmarks &amp; architecture</a>
+        </div>
+
+        <div class="cmd-bar" role="region" aria-label="Install command">
+          <code class="mono" id="install-cmd">git clone https://github.com/KitsuneKode/shuush &amp;&amp; cd shuush &amp;&amp; ./install.sh --wire-config</code>
+          <button class="copy-btn" id="copy-cmd" aria-label="Copy install command" data-copied="false">
+            <svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <svg class="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="20 6 9 17 4 12"/></svg>
+          </button>
+        </div>
+
+        <div class="stage-frame" style="inline-size:100%;margin-block-start:20px;">
+          <video class="stage-media" controls autoplay muted loop playsinline poster="/assets/shuush-outro.png">
+            <source src="/assets/shuush-launch.mp4" type="video/mp4" />
+          </video>
+        </div>
+
+        <div class="stats-grid tnum">
+          <div class="stat-card">
+            <div class="stat-label">Real-world usage</div>
+            <div class="stat-val">19,498</div>
+            <div class="stat-sub">words dictated (~8.1 hrs saved)</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">End-to-end cleanup (P50)</div>
+            <div class="stat-val">516 ms</div>
+            <div class="stat-sub">24 ms when already clean · 98.8% reliable</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Local GPU VRAM</div>
+            <div class="stat-val">2.3 GB</div>
+            <div class="stat-sub">Parakeet fp16 on RTX 4050 · Vulkan &amp; CPU too</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Monthly word limit</div>
+            <div class="stat-val">∞</div>
+            <div class="stat-sub">MIT open-source · 1-click offline Ollama mode</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="studio">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="kicker">Native GTK4 + Libadwaita Control Center</span>
+          <h2>Shuush Studio — live diffs, insights, and 1-click offline mode.</h2>
+          <p class="sec-sub">Zero Electron bloat. Dictations stream in live via <code>Gio.FileMonitor</code>, diffs highlight every repaired symbol, and self-learning syncs grounded jargon straight into <code>voxtype</code>'s daemon replacements.</p>
+        </div>
+
+        <div class="seg-bar" role="tablist" aria-label="Studio screens" id="studio-tabs">
+          <div class="seg-indicator" id="studio-ind"></div>
+          <button class="seg-tab" role="tab" aria-selected="true" data-img="/assets/studio-diff.png" data-alt="Shuush Studio Dictations and Inline Diff Inspector">Dictations &amp; Diff</button>
+          <button class="seg-tab" role="tab" aria-selected="false" data-img="/assets/studio-insights.png" data-alt="Shuush Studio Insights and Full-History Auto-Mine">Insights &amp; Auto-Mine</button>
+          <button class="seg-tab" role="tab" aria-selected="false" data-img="/assets/studio-learning.png" data-alt="Shuush Studio Self-Learning Inbox and Corrections">Learning Memory</button>
+          <button class="seg-tab" role="tab" aria-selected="false" data-img="/assets/studio-settings.png" data-alt="Shuush Studio Settings, Drag-and-Drop Failover, and Offline Mode">Settings &amp; Offline</button>
+        </div>
+
+        <div class="stage-frame">
+          <img id="studio-img" class="stage-media" src="/assets/studio-diff.png" alt="Shuush Studio Dictations and Inline Diff Inspector" width="1140" height="750" />
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="pill">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="kicker">Real 60fps Capture · KitsuneHud Quickshell Pill + Anti-Paraphrase Span Gate</span>
+          <h2>Feels native to Wayland. Never rewrites what you meant.</h2>
+          <p class="sec-sub">Recorded live on an Arch + Hyprland laptop via <code>gpu-screen-recorder</code>. Every cleanup reply passes a deterministic span gate so LLMs fix mishearings using your screen context without hallucinating rewrites.</p>
+        </div>
+
+        <div class="two-col">
+          <div class="card">
+            <span class="kicker">Live GPU-Recorded KitsuneHud Pill (60fps)</span>
+            <video class="stage-media" autoplay loop muted playsinline poster="/assets/osd-pill-strip.png">
+              <source src="/assets/osd-pill-states.mp4" type="video/mp4" />
+            </video>
+            <div class="ctx-row">
+              <span class="pill pill-blue">PipeWire PCM waveform</span>
+              <span class="pill">Word-wash live preview</span>
+              <span class="pill pill-green">Pen-stroke checkmark</span>
+              <span class="pill pill-amber">Double-tap Esc guard</span>
+            </div>
+          </div>
+
+          <div class="card">
+            <span class="kicker">Interactive 5-Source Context &amp; Span Gate Explorer</span>
+            <div class="seg-bar" role="tablist" id="diff-tabs" style="align-self:flex-start;">
+              <div class="seg-indicator" id="diff-ind"></div>
+              <button class="seg-tab" role="tab" aria-selected="true" data-case="code">Terminal Code</button>
+              <button class="seg-tab" role="tab" aria-selected="false" data-case="cmd">Voice Command</button>
+              <button class="seg-tab" role="tab" aria-selected="false" data-case="priv">Password Guard</button>
+            </div>
+            <div class="diff-box" id="diff-view"></div>
+            <div class="ctx-row" id="diff-pills"></div>
+            <p class="stat-sub" id="diff-note" style="margin:0;"></p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="compare">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="kicker">Side-by-Side Comparison</span>
+          <h2>Wispr Flow vs Superwhisper vs Shuush + voxtype</h2>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Capability</th><th>Wispr Flow</th><th>Superwhisper (Omarchy)</th><th>Shuush + voxtype</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Price &amp; monthly word cap</td><td>$15/mo</td><td>10,000 free words/mo</td><td class="hl">Free · MIT · Unlimited</td></tr>
+              <tr><td>Native Linux / Wayland</td><td>No (macOS/Win)</td><td>Omarchy / macOS</td><td class="hl">Hyprland · Sway · Niri · Omarchy · Arch</td></tr>
+              <tr><td>GPU &amp; ASR freedom</td><td>Cloud only</td><td>Apple Silicon / Cloud</td><td class="hl">NVIDIA CUDA · AMD/Intel Vulkan · CPU</td></tr>
+              <tr><td>Context sources</td><td>App + screen</td><td>App + selection + clipboard</td><td class="hl">App + AT-SPI Screen &amp; Draft + Selection + ≤15s Clipboard + Date</td></tr>
+              <tr><td>Offline privacy mode</td><td>No</td><td>Paid local tier</td><td class="hl">1-click Air-Gapped Ollama + AT-SPI password bypass</td></tr>
+              <tr><td>Self-learning dictionary</td><td>Proprietary</td><td>Manual / AI audit</td><td class="hl">Phonetic auto-mine + reject list + daemon [text] sync</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="install">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="kicker">Out-of-the-Box Setup</span>
+          <h2>Works on stock <code class="mono">voxtype-bin</code> in 3 commands.</h2>
+          <p class="sec-sub">Powered by <a href="https://github.com/peteonrails/voxtype" style="text-decoration:underline;color:var(--fg);">peteonrails/voxtype</a> (MIT). First-party auto-discovery built into <strong>kuwai</strong> — zero duplicated scripts.</p>
+        </div>
+        <div class="stage-frame">
+          <img class="stage-media" src="/assets/architecture.svg" alt="Shuush + voxtype 4-stage pipeline architecture" />
+        </div>
+        <div class="two-col" style="margin-block-start:18px;">
+          <div class="card">
+            <span class="kicker">1 · Arch / Omarchy / Hyprland / Sway / Niri</span>
+            <pre class="diff-box mono" style="margin:0;font-size:12.5px;overflow:auto;">yay -S voxtype-bin wtype wl-clipboard jq python-gobject libadwaita gtk4 at-spi2-core
+voxtype setup
+git clone https://github.com/KitsuneKode/shuush.git &amp;&amp; cd shuush
+./install.sh --wire-config
+shuush doctor &amp;&amp; shuush studio</pre>
+          </div>
+          <div class="card">
+            <span class="kicker">2 · First-Party kuwai Rice Separation of Concerns</span>
+            <pre class="diff-box mono" style="margin:0;font-size:12.5px;overflow:auto;">-- kuwai/hypr/kuwai/voxtype.lua auto-discovers:
+--   ~/.local/share/shuush/libexec/
+--
+-- kuwai owns: island OSD hosting (VOXTYPE_OSD_HOST),
+--             rules, and Hyprland binds.
+-- shuush owns: Studio, cleanup pipeline, learning &amp; HUD.</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="faq">
+      <div class="wrap">
+        <div class="sec-head">
+          <span class="kicker">Frequently Asked Questions</span>
+          <h2>Direct answers before you install.</h2>
+        </div>
+        <details open>
+          <summary>Why build Shuush on top of voxtype instead of forking it?</summary>
+          <p><code>voxtype</code> already nails low-level PipeWire audio capture, CUDA/Vulkan/CPU inference (Parakeet, Whisper, Cohere GGUF), and Wayland typing. Keeping Shuush as a clean companion layer means zero fork drift, instant compatibility with stock <code>voxtype-bin</code> from Arch AUR and Omarchy, and proper attribution to Peter Jackson's MIT daemon.</p>
+        </details>
+        <details>
+          <summary>How does the anti-paraphrase span gate prevent LLM hallucinations?</summary>
+          <p><code>voxtype_pp_gate.py</code> aligns every cleaned reply back against the raw recognizer transcript. Ordinary English words are never rewritten unless grounded by a phonetic match in your vocabulary, visible AT-SPI screen, highlighted selection, or fresh (≤15s) clipboard.</p>
+        </details>
+        <details>
+          <summary>Does this work on AMD, Intel, or CPU-only laptops?</summary>
+          <p>Yes. Studio detects NVIDIA CUDA, AMD ROCm/Vulkan, Intel Vulkan iGPUs, and CPU setups automatically and reads whichever <code>voxtype</code> engine you configured (<code>parakeet</code>, <code>whisper</code>, <code>cohere</code>, or <code>moonshine</code>).</p>
+        </details>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    function initSegBar(barId: string, indId: string, onSelect: (btn: HTMLButtonElement) => void) {
+      const bar = document.getElementById(barId);
+      const ind = document.getElementById(indId);
+      if (!bar || !ind) return;
+      const tabs = Array.from(bar.querySelectorAll<HTMLButtonElement>('.seg-tab'));
+      const move = (btn: HTMLButtonElement) => {
+        ind.style.width = `${btn.offsetWidth}px`;
+        ind.style.transform = `translateX(${btn.offsetLeft - 4}px)`;
+      };
+      tabs.forEach((btn) => {
+        btn.addEventListener('click', () => {
+          tabs.forEach((t) => t.setAttribute('aria-selected', String(t === btn)));
+          move(btn);
+          onSelect(btn);
+        });
+      });
+      const active = tabs.find((t) => t.getAttribute('aria-selected') === 'true') ?? tabs[0];
+      if (active) requestAnimationFrame(() => move(active));
+      window.addEventListener('resize', () => {
+        const cur = tabs.find((t) => t.getAttribute('aria-selected') === 'true') ?? tabs[0];
+        if (cur) move(cur);
+      });
+    }
+
+    initSegBar('studio-tabs', 'studio-ind', (btn) => {
+      const img = document.getElementById('studio-img') as HTMLImageElement | null;
+      if (img && btn.dataset.img) {
+        img.src = btn.dataset.img;
+        img.alt = btn.dataset.alt ?? '';
+      }
+    });
+
+    const CASES: Record<string, { html: string; pills: string[]; note: string }> = {
+      code: {
+        html: '<span class="del">um</span> Open <span class="del">webar</span> <span class="ins">Waybar</span> in <span class="del">next year</span> <span class="ins">Next.js</span> and <span class="del">uh</span> check why <span class="del">box type pp gate</span> <span class="ins">voxtype_pp_gate</span> is dropping the <span class="del">hyperline</span> <span class="ins">Hyprland</span> flag.',
+        pills: ['App: T3 Code', 'AT-SPI <screen>', 'Selection: voxtype_pp_gate.py', '482 ms · Groq proxy'],
+        note: 'All 4 symbol repairs were grounded in vocabulary.txt + visible screen terms; ordinary English phrasing stayed untouched.',
+      },
+      cmd: {
+        html: '<span class="del">So basically we are trying to make sure the timeout doesnt hang forever when the proxy is down</span><br/><span class="ins">Enforce a bounded timeout so a stalled proxy fails over immediately to direct Groq.</span>',
+        pills: ['Mode: Voice Command (Super+Ctrl+E)', 'Highlighted <selection>', 'Replaced in place'],
+        note: 'Highlight any text, press Super+Ctrl+E, say "make this tighter and punchier", and Shuush rewrites the selection in place.',
+      },
+      priv: {
+        html: 'AT-SPI detected focused <strong>password / sign-in</strong> field → <span class="ins">LLM bypassed · typed locally · excluded from history &amp; clipboard</span>.',
+        pills: ['PP_PRIVATE_GUARD=1', 'Zero network calls', 'Not written to history.jsonl'],
+        note: 'Password managers, sudo prompts, and sign-in inputs never leave your machine — even when cloud cleanup is enabled.',
+      },
+    };
+
+    function renderCase(key: string) {
+      const c = CASES[key] ?? CASES.code;
+      const view = document.getElementById('diff-view');
+      const pills = document.getElementById('diff-pills');
+      const note = document.getElementById('diff-note');
+      if (view) view.innerHTML = c.html;
+      if (pills) pills.innerHTML = c.pills.map((p, i) => `<span class="pill ${i === 0 ? 'pill-blue' : ''}">${p}</span>`).join('');
+      if (note) note.textContent = c.note;
+    }
+
+    initSegBar('diff-tabs', 'diff-ind', (btn) => renderCase(btn.dataset.case ?? 'code'));
+    renderCase('code');
+
+    const copyBtn = document.getElementById('copy-cmd');
+    const cmdEl = document.getElementById('install-cmd');
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    copyBtn?.addEventListener('click', () => {
+      navigator.clipboard?.writeText(cmdEl?.textContent?.trim() ?? '').catch(() => {});
+      copyBtn.setAttribute('data-copied', 'true');
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => copyBtn.setAttribute('data-copied', 'false'), 1800);
+    });
+  </script>
+</BaseLayout>

@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://shuush-ochre.vercel.app/sitemap-index.xml
+# AI / GEO / AEO index
+# See https://shuush-ochre.vercel.app/llms.txt

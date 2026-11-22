@@ -1,0 +1,81 @@
+---
+import '../styles/global.css';
+
+interface Props {
+  title: string;
+  description: string;
+  ogType?: 'website' | 'article';
+  ogImage?: string;
+  jsonLd?: Record<string, unknown>;
+}
+
+const {
+  title,
+  description,
+  ogType = 'website',
+  ogImage = '/assets/architecture.png',
+  jsonLd,
+} = Astro.props;
+
+const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+const absoluteOgImage = new URL(ogImage, Astro.site).toString();
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{title}</title>
+  <meta name="description" content={description} />
+  <link rel="canonical" href={canonicalURL.toString()} />
+  <link rel="alternate" type="application/rss+xml" title="Shuush Blog RSS" href="/rss.xml" />
+  <meta property="og:type" content={ogType} />
+  <meta property="og:url" content={canonicalURL.toString()} />
+  <meta property="og:title" content={title} />
+  <meta property="og:description" content={description} />
+  <meta property="og:image" content={absoluteOgImage} />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content={title} />
+  <meta name="twitter:description" content={description} />
+  <meta name="twitter:image" content={absoluteOgImage} />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  {jsonLd && <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />}
+</head>
+<body>
+  <header class="nav">
+    <div class="wrap nav-inner">
+      <a href="/" class="brand"><span class="brand-dot" aria-hidden="true"></span>Shuush</a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="/#studio">Studio</a>
+        <a href="/#pill">KitsuneHud</a>
+        <a href="/#compare">Compare</a>
+        <a href="/blog/">Blog</a>
+        <a href="https://github.com/KitsuneKode/shuush" class="btn btn-secondary" style="padding-block:6px;padding-inline:12px;min-block-size:34px;">GitHub ↗</a>
+      </nav>
+    </div>
+  </header>
+
+  <slot />
+
+  <footer>
+    <div class="wrap foot-inner">
+      <span>Shuush · MIT License · Built on <a href="https://github.com/peteonrails/voxtype" style="text-decoration:underline;">voxtype</a> by Peter Jackson.</span>
+      <div style="display:flex;gap:18px;">
+        <a href="/blog/">Blog</a>
+        <a href="/rss.xml">RSS</a>
+        <a href="/llms.txt">llms.txt</a>
+        <a href="https://github.com/KitsuneKode/shuush">GitHub</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    import { inject } from '@vercel/analytics';
+    import { injectSpeedInsights } from '@vercel/speed-insights';
+    inject();
+    injectSpeedInsights();
+  </script>
+</body>
+</html>

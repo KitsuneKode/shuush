@@ -94,7 +94,15 @@ else:
 
 for prof in ("terminal", "chat", "command"):
     hdr = f"[profiles.{prof}]"
-    if hdr not in text:
+    if hdr in text:
+        text = re.sub(
+            rf'(\[profiles\.{prof}\][^\[]*?^\s*post_process_command\s*=\s*)"[^"]*voxtype-postprocess\.sh[^"]*"',
+            rf'\1"{pp} {prof}"',
+            text,
+            count=1,
+            flags=re.M | re.S,
+        )
+    else:
         text += f'\n{hdr}\npost_process_command = "{pp} {prof}"\n'
 
 if "[osd]" not in text:

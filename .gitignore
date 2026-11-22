@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .DS_Store
 *.bak.*
+web/node_modules/
+web/dist/
+web/.astro/
+web/.vercel/

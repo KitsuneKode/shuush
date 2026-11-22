@@ -27,7 +27,7 @@
 > **Powered by [`peteonrails/voxtype`](https://github.com/peteonrails/voxtype) (MIT, Peter Jackson).**
 > Shuush does **not** fork or replace your `voxtype` binary — it drops cleanly on top of stock `voxtype-bin` from Arch AUR or Omarchy repos with one command.
 >
-> **Links:** [Landing Page](site/index.html) · [Architecture &amp; Benchmarks Blog](site/blog.html) · [Launch Video (1080p MP4)](assets/shuush-launch.mp4) · [Sandbox Test Suite](tests/test_sandbox.sh)
+> **Links:** [Live Website](https://shuush-ochre.vercel.app/) · [Architecture &amp; Benchmarks Blog](https://shuush-ochre.vercel.app/blog/why-we-built-shuush/) · [Launch Video (1080p MP4)](assets/shuush-launch.mp4) · [Sandbox Test Suite](tests/test_sandbox.sh)
 
 ---
 

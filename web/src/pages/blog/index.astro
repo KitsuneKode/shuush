@@ -1,0 +1,34 @@
+---
+import { getCollection } from 'astro:content';
+import BaseLayout from '../../layouts/BaseLayout.astro';
+
+const posts = (await getCollection('blog')).sort((a, b) =>
+  b.data.pubDate.localeCompare(a.data.pubDate)
+);
+---
+<BaseLayout
+  title="Blog — Shuush Engineering & Benchmarks"
+  description="Architecture deep dives, real-world ASR and LLM cleanup benchmarks, and Wayland voice dictation engineering notes from Shuush."
+>
+  <main class="wrap" style="padding-block:56px 88px;">
+    <div class="sec-head">
+      <span class="kicker">Engineering &amp; Benchmarks</span>
+      <h1>Shuush Blog</h1>
+      <p class="sec-sub">Real hardware telemetry, Wayland engineering notes, and open-source local AI dictation architecture.</p>
+    </div>
+
+    <div style="display:grid;gap:16px;">
+      {posts.map((post) => (
+        <a href={`/blog/${post.id}/`} class="card" style="transition:border-color 150ms ease,transform 150ms var(--ease-out);">
+          <div class="ctx-row">
+            <span class="pill pill-blue">{post.data.pubDate}</span>
+            <span class="pill">{post.data.readTime}</span>
+            {post.data.tags.slice(0, 4).map((t) => <span class="pill">{t}</span>)}
+          </div>
+          <h2 style="font-size:22px;">{post.data.title}</h2>
+          <p class="sec-sub">{post.data.description}</p>
+        </a>
+      ))}
+    </div>
+  </main>
+</BaseLayout>
