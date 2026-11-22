@@ -56,8 +56,8 @@ start() {  # [profile]
     # A thicker border on that window until the text lands. Color is left alone.
     "$SCRIPT_DIR/voxtype-outline.sh" on >/dev/null 2>&1 || true
     # Superwhisper-style context capture at record start: highlighted primary
-    # selection (for normal dictation too) and a baseline hash of the clipboard
-    # so postprocess only uses clipboard text copied right before or during talk.
+    # selection, clipboard baseline hash, AND AT-SPI/kitty screen+draft context
+    # all run in the background while you speak, so stop->type pays 0 ms for them.
     (
         umask 077
         sel=$(timeout 0.15 wl-paste --primary --no-newline 2>/dev/null | head -c 600 || true)
@@ -79,6 +79,32 @@ start() {  # [profile]
         else
             rm -f "$rt/take_clip_start"
         fi
+        # Pre-capture screen & draft context in the background while talking
+        CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
+        sc_on=$(sed -n 's/^PP_SCREEN_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
+        if [ "${sc_on:-1}" = 1 ]; then
+            w_cls=$(printf '%s' "$win" | jq -r '.class // empty' 2>/dev/null || true)
+            w_title=$(printf '%s' "$win" | jq -r '.title // empty' 2>/dev/null || true)
+            w_pid=$(printf '%s' "$win" | jq -r '.pid // 0' 2>/dev/null || true)
+            ctx_out=""
+            if [ "$w_cls" = kitty ] && [ -n "$w_pid" ] && [ "$w_pid" != "0" ]; then
+                sock="${XDG_RUNTIME_DIR:-/run/user/$UID}/mykitty-$w_pid"
+                if [ -S "$sock" ]; then
+                    ktxt=$(timeout 0.35 kitten @ --to "unix:$sock" get-text --match state:focused --extent screen 2>/dev/null || true)
+                    ctx_out=$(jq -nc --arg s "$ktxt" '{password:false, draft:"", screen:$s, source:"kitty"}')
+                fi
+            fi
+            if [ -z "$ctx_out" ]; then
+                ctx_out=$(timeout 0.35 python3 -I "$SCRIPT_DIR/voxtype_screen_ctx.py" "${w_pid:-0}" "$w_cls" "$w_title" 2>/dev/null || true)
+            fi
+            if [ -n "$ctx_out" ]; then
+                printf '%s' "$ctx_out" > "$rt/take_screen_ctx.tmp" && mv -f "$rt/take_screen_ctx.tmp" "$rt/take_screen_ctx.json"
+            else
+                rm -f "$rt/take_screen_ctx.json"
+            fi
+        else
+            rm -f "$rt/take_screen_ctx.json"
+        fi
     ) >/dev/null 2>&1 &
     profile="${1:-}"
     if [ -z "$profile" ]; then
@@ -90,6 +116,8 @@ start() {  # [profile]
                 profile=chat ;;
         esac
     fi
+    printf '%s' "${profile:-default}" > "$rt/target_profile.tmp" 2>/dev/null \
+        && mv -f "$rt/target_profile.tmp" "$rt/target_profile"
     if [ -n "$profile" ]; then
         exec voxtype record start --profile "$profile"
     fi

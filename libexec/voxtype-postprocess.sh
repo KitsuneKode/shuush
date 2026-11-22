@@ -130,19 +130,45 @@ fi
 cls=$(printf '%s' "$win" | jq -r '.class // empty' 2>/dev/null || true)
 title=$(printf '%s' "$win" | jq -r '.title // empty' 2>/dev/null || true)
 kpid=$(printf '%s' "$win" | jq -r '.pid // empty' 2>/dev/null || true)
-# Screen & draft context: kitty uses its fast remote-control socket; every
-# other app (T3 Code, browsers, editors, chat) reads its visible AT-SPI tree
-# and focused input box via voxtype_screen_ctx.py (bounded to 0.25s, secrets
-# redacted). Also catches real password fields directly via AT-SPI.
+
+# Recover profile when voxtype streaming mode invokes default post_process without profile arg
+if [ "$MODE" = default ]; then
+  pf="$RT/target_profile"
+  if [ -f "$pf" ] && [ $(( $(date +%s) - $(stat -c %Y "$pf" 2>/dev/null || echo 0) )) -le 1200 ]; then
+    p_saved=$(cat "$pf" 2>/dev/null || true)
+    case "$p_saved" in terminal|chat|command) MODE="$p_saved" ;; esac
+  fi
+  if [ "$MODE" = default ] && [ -n "$cls" ]; then
+    case "$(printf '%s' "$cls" | tr '[:upper:]' '[:lower:]')" in
+      ghostty|kitty|alacritty|foot|wezterm|konsole|xterm|*terminal*|neovide|cursor|code|code-oss|zed|dev.zed*|com.t3tools.t3code|devin-desktop*|jetbrains-*|obsidian)
+        MODE=terminal ;;
+      zapzap|slack|discord|vesktop|webcord|telegram*|whatsapp*|signal*|beeper*|ferdium*|franz*)
+        MODE=chat ;;
+    esac
+  fi
+fi
+
+# Screen & draft context: prefer the pre-captured background snapshot from
+# voxtype-toggle.sh (0 ms on the stop->type path); fall back to live capture
+# when invoked from voxtype's built-in hotkey without voxtype-toggle.sh.
 SCREEN_RAW=""
 DRAFT_RAW=""
 AT_SPI_PASSWORD=0
 PP_SCREEN_CONTEXT=$(sed -n 's/^PP_SCREEN_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
-if [ "$cls" = kitty ] && [ -n "$kpid" ]; then
-  sock="${XDG_RUNTIME_DIR:-/run/user/$UID}/mykitty-$kpid"
-  [ -S "$sock" ] && SCREEN_RAW=$(timeout 0.4 kitten @ --to "unix:$sock" get-text --match state:focused --extent screen 2>/dev/null || true)
-elif [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
-  ctx_json=$(timeout 0.35 python3 -I "$SCRIPT_DIR/voxtype_screen_ctx.py" "${kpid:-0}" "$cls" "$title" 2>/dev/null || true)
+PP_APP_CONTEXT=$(sed -n 's/^PP_APP_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
+PP_CLIPBOARD_CONTEXT=$(sed -n 's/^PP_CLIPBOARD_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
+
+ctx_json=""
+SC_CACHE="$RT/take_screen_ctx.json"
+if [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
+  if [ -f "$SC_CACHE" ] && [ $(( $(date +%s) - $(stat -c %Y "$SC_CACHE" 2>/dev/null || echo 0) )) -le 1200 ]; then
+    ctx_json=$(cat "$SC_CACHE" 2>/dev/null || true)
+  elif [ "$cls" = kitty ] && [ -n "$kpid" ]; then
+    sock="${XDG_RUNTIME_DIR:-/run/user/$UID}/mykitty-$kpid"
+    [ -S "$sock" ] && SCREEN_RAW=$(timeout 0.4 kitten @ --to "unix:$sock" get-text --match state:focused --extent screen 2>/dev/null || true)
+  else
+    ctx_json=$(timeout 0.35 python3 -I "$SCRIPT_DIR/voxtype_screen_ctx.py" "${kpid:-0}" "$cls" "$title" 2>/dev/null || true)
+  fi
   if [ -n "$ctx_json" ]; then
     AT_SPI_PASSWORD=$(printf '%s' "$ctx_json" | jq -r 'if .password then 1 else 0 end' 2>/dev/null || echo 0)
     DRAFT_RAW=$(printf '%s' "$ctx_json" | jq -r '.draft // empty' 2>/dev/null || true)
@@ -150,43 +176,80 @@ elif [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
   fi
 fi
 
-# ── Private: a password manager, a sign-in page, a password prompt ──────
-# Nothing leaves the machine and nothing is kept: no cleanup model, no
-# clipboard, no history, the take's audio deleted, and the next take does
-# not get this one as <previous> context. PP_PRIVATE_GUARD=0 turns it off.
-if [ "${PP_PRIVATE_GUARD:-1}" = 1 ]; then
-  why=""
-  if [ "$AT_SPI_PASSWORD" = 1 ]; then
-    why="password field (AT-SPI)"
-  else
-    why=$(printf '%s' "$SCREEN_RAW" | python3 -I "$GATE" private "$cls" "$title" 2>/dev/null || true)
+# Selection & fresh (<=15s) clipboard raw text (redacted inside gate prepare)
+SEL_RAW=""
+CLIP_RAW=""
+if [ "${PP_APP_CONTEXT:-0}" = 1 ] && [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
+  if [ -f "$RT/take_selection" ] && [ $(( $(date +%s) - $(stat -c %Y "$RT/take_selection" 2>/dev/null || echo 0) )) -le 900 ]; then
+    SEL_RAW=$(head -c 600 "$RT/take_selection" 2>/dev/null || true)
   fi
+  if [ "${PP_CLIPBOARD_CONTEXT:-1}" = 1 ] && command -v wl-paste >/dev/null 2>&1; then
+    cur_clip=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 || true)
+    if [ -n "${cur_clip//[[:space:]]/}" ]; then
+      cur_hash=$(printf '%s' "$cur_clip" | sha256sum | awk '{print $1}')
+      seen_hash=$(awk 'NR==1{print $1}' "$RT/clip_seen" 2>/dev/null || true)
+      seen_ts=$(awk 'NR==2{print $1}' "$RT/clip_seen" 2>/dev/null || echo 0)
+      start_hash=$(awk 'NR==1{print $1}' "$RT/take_clip_start" 2>/dev/null || true)
+      now_s=$(date +%s)
+      if [ "$cur_hash" != "$seen_hash" ]; then
+        (umask 077; printf '%s\n%s\n' "$cur_hash" "$now_s" > "$RT/clip_seen")
+        seen_ts=$now_s
+      fi
+      if [ "$cur_hash" != "$start_hash" ] || [ $(( now_s - seen_ts )) -le 15 ]; then
+        CLIP_RAW="$cur_clip"
+      fi
+    fi
+  fi
+fi
+
+# Single Python call runs private check, strip, snippet, hard_apply, app/screen/draft/sel/clip redaction, terms, and hints
+PREP_JSON=$(jq -nc \
+  --arg raw "$raw" --arg mode "$MODE" --arg cls "$cls" --arg title "$title" \
+  --arg screen_raw "$SCREEN_RAW" --arg draft_raw "$DRAFT_RAW" \
+  --arg sel_raw "$SEL_RAW" --arg clip_raw "$CLIP_RAW" \
+  --argjson app_ctx "$([ "${PP_APP_CONTEXT:-0}" = 1 ] && echo true || echo false)" \
+  --argjson screen_ctx "$([ "${PP_SCREEN_CONTEXT:-1}" = 1 ] && echo true || echo false)" \
+  --argjson private_guard "$([ "${PP_PRIVATE_GUARD:-1}" = 1 ] && echo true || echo false)" \
+  --argjson atspi_password "$([ "$AT_SPI_PASSWORD" = 1 ] && echo true || echo false)" \
+  '{raw:$raw, mode:$mode, cls:$cls, title:$title, screen_raw:$screen_raw, draft_raw:$draft_raw,
+    sel_raw:$sel_raw, clip_raw:$clip_raw, app_ctx:$app_ctx, screen_ctx:$screen_ctx,
+    private_guard:$private_guard, atspi_password:$atspi_password}' \
+  | python3 -I "$GATE" prepare 2>/dev/null || true)
+
+if [ -n "$PREP_JSON" ]; then
+  why=$(printf '%s' "$PREP_JSON" | jq -r '.private_why // empty' 2>/dev/null || true)
   if [ -n "$why" ]; then
     printf '%s  private  %s: typed as heard, not sent or kept\n' "$(date +%T)" "$why" >> "$PP_LOG"
     date +%s > "$RT/pp_private"
     rm -f "$RT/last_take.wav"
     VIA=private
-    # An edit instruction is not text to type into a password field.
     [ "$MODE" = command ] && emit ""
     emit "$raw"
   fi
+  if [ "$(printf '%s' "$PREP_JSON" | jq -r 'if .empty then 1 else 0 end' 2>/dev/null)" = 1 ]; then
+    emit ""
+  fi
+  snip_hit=$(printf '%s' "$PREP_JSON" | jq -r 'if .snippet != null then .snippet else empty end' 2>/dev/null || true)
+  if [ -n "$snip_hit" ] && [ "$(printf '%s' "$PREP_JSON" | jq -r 'if .snippet != null then 1 else 0 end' 2>/dev/null)" = 1 ]; then
+    VIA=snippet
+    emit "$snip_hit"
+  fi
+  HEARD=$(printf '%s' "$PREP_JSON" | jq -r '.heard // empty' 2>/dev/null || printf '%s' "$raw")
+  raw=$(printf '%s' "$PREP_JSON" | jq -r '.hard // empty' 2>/dev/null || printf '%s' "$HEARD")
+  PP_TITLE_PAIR=$(printf '%s' "$PREP_JSON" | jq -r '.title_pair // empty' 2>/dev/null || true)
+  APP=$(printf '%s' "$PREP_JSON" | jq -r '.app // empty' 2>/dev/null || true)
+  SCREEN=$(printf '%s' "$PREP_JSON" | jq -r '.screen // empty' 2>/dev/null || true)
+  DRAFT=$(printf '%s' "$PREP_JSON" | jq -r '.draft // empty' 2>/dev/null || true)
+  SEL_CTX=$(printf '%s' "$PREP_JSON" | jq -r '.selection // empty' 2>/dev/null || true)
+  CLIP_CTX=$(printf '%s' "$PREP_JSON" | jq -r '.clipboard // empty' 2>/dev/null || true)
+  PP_SCREEN_TERMS=$(printf '%s' "$PREP_JSON" | jq -r '.screen_terms // empty' 2>/dev/null || true)
+  HINTS=$(printf '%s' "$PREP_JSON" | jq -r '.hints // empty' 2>/dev/null || true)
+else
+  HEARD="$raw"
+  PP_TITLE_PAIR=""; APP=""; SCREEN=""; DRAFT=""; SEL_CTX=""; CLIP_CTX=""; PP_SCREEN_TERMS=""; HINTS=""
 fi
-
-# Pre-clean: a whisper sign-off ("thanks for watching", "you're welcome") is
-# dropped. A real "Thank you." or "Bye." stays. Sure names (hyperlane ->
-# Hyprland) are rewritten here, before the model, so a hint cannot miss them.
-# HEARD is the text before that rewrite: the title hint is matched against
-# what the recognizer wrote ("kite eye"), not the repaired spelling.
-stripped=$(printf '%s' "$raw" | python3 -I "$GATE" strip) && raw=$stripped
 [ -z "${raw//[[:space:]]/}" ] && emit "$raw"
-# A snippet said on its own is typed as written (~/.config/voxtype/snippets).
-if [ "$MODE" != command ] && [ -s "${VOXTYPE_SNIPPETS:-$HOME/.config/voxtype/snippets}" ] \
-   && snip=$(printf '%s' "$raw" | python3 -I "$GATE" snippet 2>/dev/null); then
-  VIA=snippet
-  emit "$snip"
-fi
-HEARD=$raw
-hard=$(printf '%s' "$raw" | python3 -I "$GATE" hard) && raw=$hard
+export PP_TITLE_PAIR PP_SCREEN_TERMS
 
 # The OSD pill shows this while "Polishing" (the watcher clears it at idle).
 printf '%s\n' "$raw" 2>/dev/null >"$RT/live_text"
@@ -285,81 +348,22 @@ fi
 DICT="<dictation>$raw</dictation>"
 [ -n "${CTX//[[:space:]]/}" ] && DICT="<previous>$CTX</previous>
 $DICT"
-# Focused app, plus at most one "heard" -> term pair when a title word
-# sounds like what was said. The path and the rest of the title stay on
-# this machine: PP_APP_CONTEXT=0 in postprocess.env turns the block off.
-# (Read here: postprocess.env is sourced further down, after MESSAGES.)
-PP_APP_CONTEXT=$(sed -n 's/^PP_APP_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
-PP_TITLE_PAIR=
 if [ "${PP_APP_CONTEXT:-0}" = 1 ]; then
-  # Captured at record start by voxtype-toggle.sh. Reading the live window
-  # here used to repair jargon for whichever app was focused after the hotkey.
-  # (cls and title were read above, from the window captured at record start.)
-  # Matched against HEARD (before sure-name rewrites). The pair is also how
-  # the span gate knows "kite eye" -> kaitai is a repair, not a rewrite.
-  meta=$(printf '%s' "${HEARD:-$raw}" | python3 -I "$GATE" app "$cls" "$title" 2>/dev/null || true)
-  PP_TITLE_PAIR=${meta%%$'\x1e'*}
-  APP=${meta#*$'\x1e'}
-  export PP_TITLE_PAIR
   [ -n "${APP//[[:space:]]/}" ] && DICT="<app>$APP</app>
 $DICT"
-  # Active window visible text + current input-box draft + highlighted selection
-  # + freshly copied clipboard (<=15s old or copied during dictation), all
-  # secret-redacted. PP_SCREEN_CONTEXT=0 / PP_CLIPBOARD_CONTEXT=0 turn them off.
-  PP_SCREEN_TERMS=""
-  SEL_CTX=""
-  CLIP_CTX=""
-  PP_CLIPBOARD_CONTEXT=$(sed -n 's/^PP_CLIPBOARD_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
   if [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
-    if [ -n "${SCREEN_RAW//[[:space:]]/}" ]; then
-      SCREEN=$(printf '%s' "$SCREEN_RAW" | python3 -I "$GATE" screen 2>/dev/null || true)
-      [ -n "${SCREEN//[[:space:]]/}" ] && DICT="<screen>$SCREEN</screen>
+    [ -n "${SCREEN//[[:space:]]/}" ] && DICT="<screen>$SCREEN</screen>
 $DICT"
-    fi
-    if [ -n "${DRAFT_RAW//[[:space:]]/}" ]; then
-      DRAFT=$(printf '%s' "$DRAFT_RAW" | python3 -I "$GATE" screen 2>/dev/null || true)
-      [ -n "${DRAFT//[[:space:]]/}" ] && DICT="<draft>$DRAFT</draft>
+    [ -n "${DRAFT//[[:space:]]/}" ] && DICT="<draft>$DRAFT</draft>
 $DICT"
-    fi
-    if [ -f "$RT/take_selection" ] && [ $(( $(date +%s) - $(stat -c %Y "$RT/take_selection" 2>/dev/null || echo 0) )) -le 900 ]; then
-      SEL_CTX=$(python3 -I "$GATE" screen < "$RT/take_selection" 2>/dev/null | head -c 450 || true)
-      [ -n "${SEL_CTX//[[:space:]]/}" ] && DICT="<selection>$SEL_CTX</selection>
+    [ -n "${SEL_CTX//[[:space:]]/}" ] && DICT="<selection>$SEL_CTX</selection>
 $DICT"
-    fi
-    if [ "${PP_CLIPBOARD_CONTEXT:-1}" = 1 ]; then
-      cur_clip=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 || true)
-      if [ -n "${cur_clip//[[:space:]]/}" ]; then
-        cur_hash=$(printf '%s' "$cur_clip" | sha256sum | awk '{print $1}')
-        seen_hash=$(awk 'NR==1{print $1}' "$RT/clip_seen" 2>/dev/null || true)
-        seen_ts=$(awk 'NR==2{print $1}' "$RT/clip_seen" 2>/dev/null || echo 0)
-        start_hash=$(awk 'NR==1{print $1}' "$RT/take_clip_start" 2>/dev/null || true)
-        now_s=$(date +%s)
-        if [ "$cur_hash" != "$seen_hash" ]; then
-          (umask 077; printf '%s\n%s\n' "$cur_hash" "$now_s" > "$RT/clip_seen")
-          seen_ts=$now_s
-        fi
-        # Only attach clipboard if copied during this take OR within 15s before it.
-        if [ "$cur_hash" != "$start_hash" ] || [ $(( now_s - seen_ts )) -le 15 ]; then
-          CLIP_CTX=$(printf '%s' "$cur_clip" | python3 -I "$GATE" screen 2>/dev/null | head -c 500 || true)
-          [ -n "${CLIP_CTX//[[:space:]]/}" ] && DICT="<clipboard>$CLIP_CTX</clipboard>
+    [ -n "${CLIP_CTX//[[:space:]]/}" ] && DICT="<clipboard>$CLIP_CTX</clipboard>
 $DICT"
-        fi
-      fi
-    fi
     DICT="<now>$(date '+%a %Y-%m-%d %H:%M')</now>
 $DICT"
-    if [ -n "${SCREEN:-}${DRAFT:-}${SEL_CTX:-}${CLIP_CTX:-}${title:-}" ]; then
-      PP_SCREEN_TERMS=$(printf '%s\n%s\n%s\n%s\n%s' "${title:-}" "${SCREEN:-}" "${DRAFT:-}" "${SEL_CTX:-}" "${CLIP_CTX:-}" | python3 -I "$GATE" terms 2>/dev/null || true)
-    fi
   fi
-  export PP_SCREEN_TERMS
 fi
-export PP_TITLE_PAIR PP_SCREEN_TERMS
-# Learned mishearings. Sure names were rewritten above, so a pair that still
-# matches is a choice ("swimming", "clawed") or a name the rewrite missed.
-# Ambiguous pairs are listed first, and a function-word phrase is never a
-# hint. The bench calls this same command, so the two cannot drift.
-HINTS=$(printf '%s' "$raw" | python3 -I "$GATE" hints 2>/dev/null || true)
 [ -n "$HINTS" ] && DICT="<hints>$HINTS</hints>
 $DICT"
 MESSAGES=$(jq -nc --arg p "$PROMPT" --arg r "$DICT" --arg mode "$MODE" '[

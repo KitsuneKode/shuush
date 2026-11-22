@@ -818,9 +818,93 @@ def snippet(text: str, table: dict[str, str] | None = None) -> str | None:
     return table.get(words) if words and len(words.split()) <= 8 else None
 
 
+def prepare_payload(req: dict) -> dict:
+    """Run all pre-LLM deterministic steps in a single Python invocation.
+
+    Replaces ~9 separate python3 subprocess startups per dictation with one call,
+    cutting ~350-450 ms of wall-clock latency while keeping identical semantics.
+    """
+    raw = req.get("raw", "") or ""
+    mode = req.get("mode", "default") or "default"
+    cls = req.get("cls", "") or ""
+    title = req.get("title", "") or ""
+    screen_raw = req.get("screen_raw", "") or ""
+    draft_raw = req.get("draft_raw", "") or ""
+    sel_raw = req.get("sel_raw", "") or ""
+    clip_raw = req.get("clip_raw", "") or ""
+    app_ctx = bool(req.get("app_ctx", False))
+    screen_ctx = bool(req.get("screen_ctx", True))
+    private_guard = bool(req.get("private_guard", True))
+    atspi_password = bool(req.get("atspi_password", False))
+
+    private_why = ""
+    if private_guard:
+        if atspi_password:
+            private_why = "password field (AT-SPI)"
+        else:
+            private_why = private_reason(cls, title, screen_raw)
+    if private_why:
+        return {"private_why": private_why}
+
+    stripped = strip_hallucinations(raw)
+    if not stripped.strip():
+        return {"private_why": "", "stripped": stripped, "empty": True}
+
+    if mode != "command":
+        snip = snippet(stripped)
+        if snip is not None:
+            return {"private_why": "", "stripped": stripped, "snippet": snip}
+
+    heard = stripped
+    hard = hard_apply(heard)
+
+    title_pair = ""
+    app_str = ""
+    screen_str = ""
+    draft_str = ""
+    sel_str = ""
+    clip_str = ""
+    screen_terms = ""
+    if app_ctx:
+        title_pair, app_str = app_fields(heard, cls, title)
+        if screen_ctx:
+            if screen_raw.strip():
+                screen_str = screen_block(screen_raw)
+            if draft_raw.strip():
+                draft_str = screen_block(draft_raw)
+            if sel_raw.strip():
+                sel_str = screen_block(sel_raw)[:450]
+            if clip_raw.strip():
+                clip_str = screen_block(clip_raw)[:500]
+            combined = "\n".join(x for x in (title, screen_str, draft_str, sel_str, clip_str) if x)
+            if combined:
+                screen_terms = extract_screen_terms(combined)
+
+    hints = hint_line(hard)
+    return {
+        "private_why": "",
+        "stripped": stripped,
+        "snippet": None,
+        "heard": heard,
+        "hard": hard,
+        "title_pair": title_pair,
+        "app": app_str,
+        "screen": screen_str,
+        "draft": draft_str,
+        "selection": sel_str,
+        "clipboard": clip_str,
+        "screen_terms": screen_terms,
+        "hints": hints,
+    }
+
+
 def main(argv: list[str]) -> int:
     cmd = argv[1] if len(argv) > 1 else ""
-    if cmd == "strip":
+    if cmd == "prepare":
+        import json
+        req = json.loads(_read_stdin() or "{}")
+        sys.stdout.write(json.dumps(prepare_payload(req), ensure_ascii=False))
+    elif cmd == "strip":
         sys.stdout.write(strip_hallucinations(_read_stdin()))
     elif cmd == "hard":
         sys.stdout.write(hard_apply(_read_stdin()))
@@ -1086,6 +1170,23 @@ def _selftest() -> int:
             os.environ.pop("PP_SCREEN_TERMS", None)
         else:
             os.environ["PP_SCREEN_TERMS"] = old_st
+
+    prep = prepare_payload({
+        "raw": "open the kite eye scheduler in hyprland",
+        "mode": "terminal",
+        "cls": "Cursor",
+        "title": "kaitai-inference/src/scheduler.rs",
+        "screen_raw": "export API_KEY=sk-abcdefghijklmnopqrstuv\nfn dispatch_waybar()",
+        "app_ctx": True,
+        "screen_ctx": True,
+        "private_guard": True,
+    })
+    check("prepare single-call batch", str(prep), lambda _: (
+        prep["private_why"] == ""
+        and prep["title_pair"] == "kite eye\tkaitai"
+        and "sk-abc" not in prep["screen"]
+        and "dispatchwaybar" in prep["screen_terms"]
+    ))
 
     if fails:
         print("\n".join(fails))
