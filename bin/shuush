@@ -10,12 +10,34 @@ resolve_libexec() {
   dir="$(cd "$(dirname "$self")/.." && pwd)"
   if [ -d "$dir/libexec" ]; then
     printf '%s\n' "$dir/libexec"
+  elif [ -d "$dir/lib/shuush/libexec" ]; then
+    printf '%s\n' "$dir/lib/shuush/libexec"
+  elif [ -d "/usr/lib/shuush/libexec" ]; then
+    printf '%s\n' "/usr/lib/shuush/libexec"
+  elif [ -d "/usr/share/shuush/libexec" ]; then
+    printf '%s\n' "/usr/share/shuush/libexec"
   else
     printf '%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}/shuush/libexec"
   fi
 }
 
+resolve_share() {
+  local self dir
+  self="$(readlink -f "${BASH_SOURCE[0]}")"
+  dir="$(cd "$(dirname "$self")/.." && pwd)"
+  if [ -d "$dir/osd/kitsune-hud" ]; then
+    printf '%s\n' "$dir"
+  elif [ -d "$dir/share/shuush/osd/kitsune-hud" ]; then
+    printf '%s\n' "$dir/share/shuush"
+  elif [ -d "/usr/share/shuush/osd/kitsune-hud" ]; then
+    printf '%s\n' "/usr/share/shuush"
+  else
+    printf '%s\n' ""
+  fi
+}
+
 LIBEXEC="$(resolve_libexec)"
+SHARE_DIR="$(resolve_share)"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
 
 usage() {
@@ -132,7 +154,15 @@ doctor() {
 wire_config() {
   local cfg="$CONF/config.toml"
   local pp_cmd="$LIBEXEC/voxtype-postprocess.sh"
-  mkdir -p "$CONF"
+  mkdir -p "$CONF/osd/kitsune-hud"
+  # Seed KitsuneHud & starter files if missing (supports AUR /usr installs too)
+  if [ -n "$SHARE_DIR" ]; then
+    [ -f "$CONF/osd/kitsune-hud/KitsuneHud.qml" ] || install -m 0644 "$SHARE_DIR/osd/kitsune-hud/KitsuneHud.qml" "$CONF/osd/kitsune-hud/KitsuneHud.qml"
+    [ -f "$CONF/osd/kitsune-hud/voxtype-osd.toml" ] || install -m 0644 "$SHARE_DIR/osd/kitsune-hud/voxtype-osd.toml" "$CONF/osd/kitsune-hud/voxtype-osd.toml"
+    [ -f "$CONF/postprocess.env" ] || install -m 0644 "$SHARE_DIR/config/postprocess.env.example" "$CONF/postprocess.env"
+  fi
+  [ -f "$CONF/vocabulary.txt" ] || printf '# Exact spellings for technical terms & proper nouns (one per line)\n' > "$CONF/vocabulary.txt"
+  [ -f "$CONF/snippets" ] || printf '# Voice snippets: trigger -> expansion text\n' > "$CONF/snippets"
   if [ ! -f "$cfg" ]; then
     echo "No $cfg found — run 'voxtype setup' first, then re-run 'shuush wire-config'." >&2
     exit 1

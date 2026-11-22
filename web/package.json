@@ -7,7 +7,7 @@
     "dev": "astro dev",
     "build": "astro build",
     "preview": "astro preview",
-    "indexnow": "curl -fsS -X POST https://api.indexnow.org/indexnow -H 'Content-Type: application/json; charset=utf-8' -d '{\"host\":\"shuush.kitsunekode.in\",\"key\":\"8f4c2a9e7b1d4056a3e8c7f192d4b605\",\"keyLocation\":\"https://shuush.kitsunekode.in/8f4c2a9e7b1d4056a3e8c7f192d4b605.txt\",\"urlList\":[\"https://shuush.kitsunekode.in/\",\"https://shuush.kitsunekode.in/blog/\",\"https://shuush.kitsunekode.in/blog/why-we-built-shuush/\",\"https://shuush.kitsunekode.in/blog/anti-paraphrase-span-gate/\",\"https://shuush.kitsunekode.in/blog/omarchy-hyprland-superwhisper-alternative/\"]}'"
+    "indexnow": "curl -fsS -X POST https://api.indexnow.org/indexnow -H 'Content-Type: application/json; charset=utf-8' -d '{\"host\":\"shuush.kitsunekode.in\",\"key\":\"8f4c2a9e7b1d4056a3e8c7f192d4b605\",\"keyLocation\":\"https://shuush.kitsunekode.in/8f4c2a9e7b1d4056a3e8c7f192d4b605.txt\",\"urlList\":[\"https://shuush.kitsunekode.in/\",\"https://shuush.kitsunekode.in/blog/\",\"https://shuush.kitsunekode.in/blog/why-we-built-shuush/\",\"https://shuush.kitsunekode.in/blog/voxtype-post-process-ollama-groq-screen-context/\",\"https://shuush.kitsunekode.in/blog/anti-paraphrase-span-gate/\",\"https://shuush.kitsunekode.in/blog/omarchy-hyprland-superwhisper-alternative/\"]}'"
   },
   "dependencies": {
     "@astrojs/rss": "4.0.19",

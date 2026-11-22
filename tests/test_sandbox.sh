@@ -18,7 +18,7 @@ ok "voxtype_pp_gate.py selftest passed"
 
 echo "=== 3. Sandbox Install: Stock voxtype (Whisper / AMD-Intel Vulkan) ==="
 TMP1="$(mktemp -d)"
-trap 'rm -rf "$TMP1" "${TMP2:-}" "${TMP3:-}" "${TMP4:-}"' EXIT
+trap 'rm -rf "$TMP1" "${TMP2:-}" "${TMP3:-}" "${TMP4:-}" "${TMP5:-}"' EXIT
 mkdir -p "$TMP1/.config/voxtype"
 cat > "$TMP1/.config/voxtype/config.toml" <<'TOML'
 engine = "whisper"
@@ -210,6 +210,24 @@ PY
 # Verify no personal bio leaked into default postprocess script
 ! grep -q "Manash" "$ROOT/libexec/voxtype-postprocess.sh"
 ok "Stock voxtype v1.3.1 wiring, replacements sync (inline + sub-table), proxy no-secrets & neutral prompt verified"
+
+echo "=== 8. System / AUR Package Layout (/usr/bin + /usr/lib/shuush + /usr/share/shuush) ==="
+TMP5="$(mktemp -d)"
+mkdir -p "$TMP5/root/usr/bin" "$TMP5/root/usr/lib/shuush/libexec" "$TMP5/root/usr/share/shuush/osd/kitsune-hud" "$TMP5/root/usr/share/shuush/config" "$TMP5/home/.config/voxtype"
+install -m 0755 "$ROOT/bin/shuush" "$TMP5/root/usr/bin/shuush"
+install -m 0755 "$ROOT/libexec/voxtype-postprocess.sh" "$TMP5/root/usr/lib/shuush/libexec/voxtype-postprocess.sh"
+install -m 0644 "$ROOT/osd/kitsune-hud/KitsuneHud.qml" "$TMP5/root/usr/share/shuush/osd/kitsune-hud/KitsuneHud.qml"
+install -m 0644 "$ROOT/osd/kitsune-hud/voxtype-osd.toml" "$TMP5/root/usr/share/shuush/osd/kitsune-hud/voxtype-osd.toml"
+install -m 0644 "$ROOT/config/postprocess.env.example" "$TMP5/root/usr/share/shuush/config/postprocess.env.example"
+printf '[output]\nmode = "type"\n[osd]\nfrontend = "auto"\nstyle = "default"\n' > "$TMP5/home/.config/voxtype/config.toml"
+
+HOME="$TMP5/home" XDG_CONFIG_HOME="$TMP5/home/.config" "$TMP5/root/usr/bin/shuush" wire-config >/dev/null
+test -f "$TMP5/home/.config/voxtype/osd/kitsune-hud/KitsuneHud.qml"
+test -f "$TMP5/home/.config/voxtype/postprocess.env"
+grep -q 'lib/shuush/libexec/voxtype-postprocess\.sh' "$TMP5/home/.config/voxtype/config.toml"
+grep -q 'style = "kitsune-hud"' "$TMP5/home/.config/voxtype/config.toml"
+bash -n "$ROOT/packaging/aur/shuush-git/PKGBUILD" "$ROOT/packaging/aur/shuush-git/shuush-git.install"
+ok "AUR /usr layout resolves libexec/share cleanly, seeds KitsuneHud + postprocess.env, and PKGBUILD syntax passes"
 
 echo ""
 echo "ALL $PASS SANDBOX TEST SUITES PASSED"

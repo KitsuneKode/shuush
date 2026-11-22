@@ -9,6 +9,7 @@ Shuush is a free, MIT-licensed desktop intelligence layer for Arch Linux, Omarch
 - [Shuush Home & Benchmarks](https://shuush.kitsunekode.in/): Interactive hotkey demo, 333-take hardware telemetry, Wispr Flow and Superwhisper comparison, GTK4 Studio preview, and 3-step installation.
 - [Writing Index](https://shuush.kitsunekode.in/blog/): Filterable archive of Shuush engineering notes, benchmarks, and Wayland dictation guides.
 - [Why We Built Shuush](https://shuush.kitsunekode.in/blog/why-we-built-shuush/): Architecture overview, 5-source bounded context design, real-world laptop benchmarks, and zero-fork separation from voxtype.
+- [Adding Local Ollama, Groq & Screen Context Post-Processing to Voxtype (v1.3+)](https://shuush.kitsunekode.in/blog/voxtype-post-process-ollama-groq-screen-context/): Complete zero-ambiguity guide to `[output.post_process]`, `shuush wire-config`, air-gapped Ollama vs Groq failover, and `voxtype v1.3+` upgrade compatibility.
 - [Why Raw LLM Dictation Cleanup Fails (Anti-Paraphrase Span Gate)](https://shuush.kitsunekode.in/blog/anti-paraphrase-span-gate/): How `voxtype_pp_gate.py` prevents silent LLM rewrites and how `voxtype_learn.py` prevents ordinary-English dictionary poisoning.
 - [Replacing Superwhisper's 10k Word Cap on Omarchy & Hyprland](https://shuush.kitsunekode.in/blog/omarchy-hyprland-superwhisper-alternative/): Step-by-step zero-fork setup guide for Arch, Omarchy, Hyprland, Sway, and Niri with air-gapped Ollama or cloud failover.
 

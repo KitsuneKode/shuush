@@ -1,0 +1,22 @@
+post_install() {
+  cat <<'EOF'
+==> Shuush installed. Next steps:
+  1. Ensure stock voxtype is configured:
+       voxtype setup
+  2. Wire Shuush into ~/.config/voxtype/config.toml (creates a backup first):
+       shuush wire-config
+  3. Enable user services and accessibility context:
+       systemctl --user daemon-reload
+       systemctl --user enable --now voxtype.service shuush-llm-proxy.service shuush-live-osd.service
+       gsettings set org.gnome.desktop.interface toolkit-accessibility true
+  4. Verify and open Studio:
+       shuush doctor && shuush studio
+  Hyprland binds example: /usr/share/shuush/config/hyprland-binds.conf
+EOF
+}
+
+post_upgrade() {
+  cat <<'EOF'
+==> Shuush upgraded. Run 'systemctl --user daemon-reload && shuush doctor' to verify.
+EOF
+}
