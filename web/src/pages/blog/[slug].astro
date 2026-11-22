@@ -33,7 +33,7 @@ const jsonLd = {
       publisher: {
         '@type': 'Organization',
         name: 'Shuush',
-        logo: { '@type': 'ImageObject', url: new URL('/apple-touch-icon.png', Astro.site).toString() },
+        logo: { '@type': 'ImageObject', url: new URL('/icon-512.png', Astro.site).toString() },
       },
       image: new URL(post.data.heroImage, Astro.site).toString(),
       keywords: post.data.tags.join(', '),
