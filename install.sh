@@ -67,6 +67,9 @@ install -m 0644 "$SRC/osd/kitsune-hud/voxtype-osd.toml" "$CONF_DIR/osd/kitsune-h
 sed "s|@BIN_DIR@|$BIN_DIR|g" "$SRC/config/shuush-studio.desktop" > "$APP_DIR/shuush-studio.desktop"
 sed "s|@LIBEXEC@|$PREFIX/libexec|g" "$SRC/config/shuush-llm-proxy.service" > "$UNIT_DIR/shuush-llm-proxy.service"
 sed "s|@LIBEXEC@|$PREFIX/libexec|g" "$SRC/config/shuush-live-osd.service" > "$UNIT_DIR/shuush-live-osd.service"
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+fi
 
 if [ "$WIRE_CONFIG" = 1 ]; then
   "$BIN_DIR/shuush" wire-config
@@ -76,6 +79,10 @@ echo ""
 echo "Installed shuush successfully!"
 echo "  CLI:     $BIN_DIR/shuush"
 echo "  Studio:  $BIN_DIR/shuush-studio"
+case ":$PATH:" in
+  *":$BIN_DIR:"*) ;;
+  *) echo "  PATH:    Add $BIN_DIR to your PATH (e.g. export PATH=\"$BIN_DIR:\$PATH\")" ;;
+esac
 if [ -d "${KUWAI_ROOT:-$HOME/.local/share/kuwai}" ] || [ -d "$HOME/Projects/rice/hypr/kuwai" ]; then
   echo "  Kuwai:   Detected! Add to ~/.config/hypr/user.lua:"
   echo "           K.voxtype_scripts = K.home .. \"/.local/share/shuush/libexec/\""

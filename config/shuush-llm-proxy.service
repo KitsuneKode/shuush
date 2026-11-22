@@ -10,4 +10,4 @@ Restart=on-failure
 RestartSec=2
 
 [Install]
-WantedBy=voxtype.service
+WantedBy=voxtype.service graphical-session.target

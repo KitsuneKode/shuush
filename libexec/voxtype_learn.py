@@ -32,9 +32,10 @@ import os
 import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
-CONF = Path.home() / ".config/voxtype"
+CONF = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "voxtype"
 STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "voxtype"
 TSV = CONF / "corrections.tsv"
 CANDIDATES = STATE / "learn-candidates.json"
@@ -407,33 +408,96 @@ def tally(swaps: list[str], screen_terms: str = "") -> list[tuple[str, str]]:
 
 
 def sync_replacements() -> int:
-    """Sync non-ambiguous sure-name corrections into config.toml [text] replacements."""
+    """Sync non-ambiguous sure-name corrections into config.toml [text] replacements.
+
+    Supports all voxtype config layouts (v1.0–v1.3+):
+      - inline `replacements = { ... }` under [text]
+      - `[text.replacements]` sub-table (written by voxtype 1.3.1 `voxtype history rule`)
+      - stock default.toml where `# replacements = ...` is still commented out
+    """
     if not CONFIG_TOML.exists():
         return 0
     text = CONFIG_TOML.read_text(encoding="utf-8", errors="replace")
-    m = re.search(r"^(replacements\s*=\s*\{)([^}]*)(\})", text, re.M)
-    if not m:
-        return 0
-    current: dict[str, str] = {}
-    for km in re.finditer(r'"((?:[^"\\]|\\.)*)"\s*=\s*"((?:[^"\\]|\\.)*)"', m.group(2)):
-        current[km.group(1).lower()] = km.group(2)
     common = _common_words()
-    added = 0
+    learned: dict[str, str] = {}
     for h, (meant, _src, _n) in sorted(load().items()):
         if h in AMBIGUOUS or not h or not meant:
             continue
         toks = words(h)
         if len(toks) == 1 and toks[0] in common:
             continue
-        if h not in current:
-            added += 1
-        current[h] = meant
+        learned[h] = meant
+    if not learned:
+        return 0
+
     def esc(s: str) -> str:
         return s.replace("\\", "\\\\").replace('"', '\\"')
-    inner = ", ".join(f'"{esc(k)}" = "{esc(v)}"' for k, v in sorted(current.items()))
-    new_line = f"{m.group(1)} {inner} {m.group(3)}"
-    updated = text[:m.start()] + new_line + text[m.end():]
+
+    header_re = re.compile(r"^\s*\[([^\]]+)\]\s*(?:#.*)?$")
+    m_inline = re.search(r"^(replacements\s*=\s*\{)([^}]*)(\})", text, re.M)
+    m_sub = re.search(r"^\s*\[text\.replacements\]\s*(?:#.*)?$", text, re.M)
+
+    added = 0
+    if m_sub:
+        lines = text.splitlines(keepends=True)
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        start = next(i for i, l in enumerate(lines) if header_re.match(l) and header_re.match(l).group(1).strip() == "text.replacements")
+        end = next((i for i in range(start + 1, len(lines)) if header_re.match(lines[i])), len(lines))
+        body = lines[start + 1 : end]
+        existing: dict[str, int] = {}
+        for idx, l in enumerate(body):
+            km = re.match(r'^\s*"((?:[^"\\]|\\.)*)"\s*=\s*"((?:[^"\\]|\\.)*)"', l)
+            if km:
+                existing[km.group(1).lower()] = idx
+        insert_at = len(body)
+        while insert_at > 0 and not body[insert_at - 1].strip():
+            insert_at -= 1
+        extra: list[str] = []
+        for h, meant in learned.items():
+            entry = f'"{esc(h)}" = "{esc(meant)}"\n'
+            if h in existing:
+                body[existing[h]] = entry
+            else:
+                added += 1
+                extra.append(entry)
+        body[insert_at:insert_at] = extra
+        updated = "".join(lines[: start + 1] + body + lines[end:])
+    elif m_inline:
+        current: dict[str, str] = {}
+        for km in re.finditer(r'"((?:[^"\\]|\\.)*)"\s*=\s*"((?:[^"\\]|\\.)*)"', m_inline.group(2)):
+            current[km.group(1).lower()] = km.group(2)
+        for h, meant in learned.items():
+            if h not in current:
+                added += 1
+            current[h] = meant
+        inner = ", ".join(f'"{esc(k)}" = "{esc(v)}"' for k, v in sorted(current.items()))
+        new_line = f"{m_inline.group(1)} {inner} {m_inline.group(3)}"
+        updated = text[:m_inline.start()] + new_line + text[m_inline.end():]
+    else:
+        added = len(learned)
+        inner = ", ".join(f'"{esc(k)}" = "{esc(v)}"' for k, v in sorted(learned.items()))
+        repl_line = f"replacements = {{ {inner} }}\n"
+        lines = text.splitlines(keepends=True)
+        if lines and not lines[-1].endswith("\n"):
+            lines[-1] += "\n"
+        text_hdr = next((i for i, l in enumerate(lines) if header_re.match(l) and header_re.match(l).group(1).strip() == "text"), None)
+        if text_hdr is not None:
+            end = next((i for i in range(text_hdr + 1, len(lines)) if header_re.match(lines[i])), len(lines))
+            ins = end
+            while ins > text_hdr + 1 and not lines[ins - 1].strip():
+                ins -= 1
+            lines.insert(ins, repl_line)
+            updated = "".join(lines)
+        else:
+            sep = "\n" if lines and lines[-1].strip() else ""
+            updated = "".join(lines) + f"{sep}[text]\n{repl_line}"
+
     if updated != text:
+        try:
+            tomllib.loads(updated)
+        except tomllib.TOMLDecodeError:
+            return 0
         tmp = CONFIG_TOML.with_suffix(".tmp")
         tmp.write_text(updated, encoding="utf-8")
         tmp.replace(CONFIG_TOML)

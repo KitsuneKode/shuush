@@ -38,7 +38,8 @@ import re
 import sys
 from pathlib import Path
 
-TSV = Path.home() / ".config/voxtype/corrections.tsv"
+CONF = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "voxtype"
+TSV = CONF / "corrections.tsv"
 
 # Heard forms that are real English. A blind replace breaks the sentence
 # where the word was actually meant ("I went swimming", "next year's plan").
@@ -643,7 +644,7 @@ def _read_stdin() -> str:
 # hints and the model, where the context decides. Also runs on the raw text
 # when no model answered.
 
-VOCAB_FILE = os.path.expanduser("~/.config/voxtype/vocabulary.txt")
+VOCAB_FILE = str(CONF / "vocabulary.txt")
 
 
 def vocab_terms() -> list[str]:
@@ -785,7 +786,7 @@ def private_reason(cls: str, title: str, screen: str = "") -> str:
 # cleanup model in between. ~/.config/voxtype/snippets, one "trigger: text"
 # a line; "\n" in the text is a new line. "insert", "type", "paste" or
 # "snippet" in front of the trigger, and "please" after it, are allowed.
-SNIPPETS = Path(os.environ.get("VOXTYPE_SNIPPETS", Path.home() / ".config/voxtype/snippets"))
+SNIPPETS = Path(os.environ.get("VOXTYPE_SNIPPETS", CONF / "snippets"))
 
 
 def _snip_key(s: str) -> str:

@@ -18,6 +18,7 @@
 set -u
 
 RT="${XDG_RUNTIME_DIR:-/run/user/$UID}/voxtype"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
 STATE="$RT/state"
 LIVE="$RT/live_text"
 SESSION_START="$RT/session_start"
@@ -26,15 +27,14 @@ POLL=0.1
 INHIBIT_PID=""
 ACTIVE=""
 
-PP_ORDER="local groq"; PP_LOCAL_URL="http://127.0.0.1:11434"
-PP_LOCAL_MODEL="qwen3:4b-instruct-2507-q4_K_M"
-# shellcheck source=/dev/null
-[ -f ~/.config/voxtype/postprocess.env ] && . ~/.config/voxtype/postprocess.env
-
 # Load the local cleanup model while the user is still talking, so a cold
-# start (seconds) never lands on the stop→text path. A no-prompt generate
-# request just loads the model and refreshes keep_alive. No-op if Ollama is down.
+# start (seconds) never lands on the stop→text path. Reloads postprocess.env
+# per take so toggling offline mode or provider order in Studio applies at once.
 prewarm() {
+  PP_ORDER="local groq"; PP_LOCAL_URL="http://127.0.0.1:11434"
+  PP_LOCAL_MODEL="qwen3:4b-instruct-2507-q4_K_M"
+  # shellcheck source=/dev/null
+  [ -f "$CONF/postprocess.env" ] && . "$CONF/postprocess.env"
   # Groq: open/refresh the proxy's keep-alive TLS connection while the user talks.
   case " $PP_ORDER " in *" groq "*)
     curl -fsS --max-time 5 http://127.0.0.1:11435/warm >/dev/null 2>&1 & ;;

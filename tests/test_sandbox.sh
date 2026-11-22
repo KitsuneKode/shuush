@@ -18,7 +18,7 @@ ok "voxtype_pp_gate.py selftest passed"
 
 echo "=== 3. Sandbox Install: Stock voxtype (Whisper / AMD-Intel Vulkan) ==="
 TMP1="$(mktemp -d)"
-trap 'rm -rf "$TMP1" "${TMP2:-}" "${TMP3:-}"' EXIT
+trap 'rm -rf "$TMP1" "${TMP2:-}" "${TMP3:-}" "${TMP4:-}"' EXIT
 mkdir -p "$TMP1/.config/voxtype"
 cat > "$TMP1/.config/voxtype/config.toml" <<'TOML'
 engine = "whisper"
@@ -124,6 +124,92 @@ assert vs.write_toml_str("osd", "position", "top-center")
 assert vs.read_toml_str("osd", "position") == "top-center"
 PY
 ok "Cross-distro fallback wordlist, phonetic learning, Studio CSS, chmod 0600 secrets, and TOML writer verified"
+
+echo "=== 7. Real Stock voxtype v1.3.1 default.toml, Proxy No-Secrets & Neutral Prompt ==="
+TMP4="$(mktemp -d)"
+mkdir -p "$TMP4/.config/voxtype"
+cat > "$TMP4/.config/voxtype/config.toml" <<'TOML'
+state_file = "auto"
+
+[whisper]
+model = "large-v3-turbo"
+
+[output]
+mode = "type"
+
+# [output.post_process]
+# command = "ollama run llama3.2:1b 'Clean up this dictation'"
+# timeout_ms = 30000
+
+[text]
+# replacements = { "vox type" = "voxtype" }
+filter_filler_words = true
+repair_sentence_breaks = true
+
+[osd]
+frontend = "auto"
+style = "default"
+layout = "compact"
+
+[history]
+enabled = true
+retention_days = 30
+exclude_apps = ["KeePassXC", "Bitwarden"]
+TOML
+
+HOME="$TMP4" XDG_CONFIG_HOME="$TMP4/.config" XDG_DATA_HOME="$TMP4/.local/share" XDG_STATE_HOME="$TMP4/.local/state" \
+  "$ROOT/install.sh" --wire-config >/dev/null
+
+# Also test idempotency on a second --wire-config run
+HOME="$TMP4" XDG_CONFIG_HOME="$TMP4/.config" XDG_DATA_HOME="$TMP4/.local/share" XDG_STATE_HOME="$TMP4/.local/state" \
+  "$TMP4/.local/bin/shuush" wire-config >/dev/null
+
+HOME="$TMP4" XDG_CONFIG_HOME="$TMP4/.config" XDG_STATE_HOME="$TMP4/.local/state" python3 - "$ROOT" "$TMP4/.config/voxtype/config.toml" <<'PY'
+import importlib.util, pathlib, sys, tomllib
+
+root = pathlib.Path(sys.argv[1])
+cfg = pathlib.Path(sys.argv[2])
+parsed = tomllib.loads(cfg.read_text(encoding="utf-8"))
+
+# Verify voxtype v1.3.1 sections preserved + Shuush sections properly wired
+assert parsed["output"]["post_process"]["command"].endswith("voxtype-postprocess.sh")
+assert parsed["output"]["post_process"]["timeout_ms"] == 20000
+for prof in ("terminal", "chat", "command"):
+    assert parsed["profiles"][prof]["post_process_command"].endswith(f"voxtype-postprocess.sh {prof}")
+assert parsed["osd"]["style"] == "kitsune-hud"
+assert parsed["osd"]["frontend"] == "auto"  # preserves auto fallback for non-Quickshell users
+assert parsed["history"]["enabled"] is True
+assert parsed["history"]["exclude_apps"] == ["KeePassXC", "Bitwarden"]
+
+# Verify sync_replacements works on stock v1.3.1 config where # replacements was commented out
+sys.path.insert(0, str(root / "libexec"))
+import voxtype_learn as learn
+learn.remember("webar", "Waybar", "user")
+added = learn.sync_replacements()
+assert added >= 1, f"expected replacement added on stock v1.3.1 config, got {added}"
+parsed2 = tomllib.loads(cfg.read_text(encoding="utf-8"))
+assert parsed2["text"]["replacements"]["webar"] == "Waybar"
+
+# Verify sync_replacements also supports v1.3.1 [text.replacements] sub-table format
+cfg.write_text('[text]\nfilter_filler_words = true\n\n[text.replacements]\n"cone ogres" = "CODEOWNERS"\n', encoding="utf-8")
+added_sub = learn.sync_replacements()
+assert added_sub >= 1
+parsed3 = tomllib.loads(cfg.read_text(encoding="utf-8"))
+assert parsed3["text"]["replacements"]["cone ogres"] == "CODEOWNERS"
+assert parsed3["text"]["replacements"]["webar"] == "Waybar"
+
+# Verify voxtype-llm-proxy.py handles missing secrets.env cleanly (no FileNotFoundError)
+spec = importlib.util.spec_from_file_location("proxy", str(root / "libexec/voxtype-llm-proxy.py"))
+proxy = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(proxy)
+assert proxy.api_keys() == []
+status, body = proxy.UP.request("POST", "/openai/v1/chat/completions", b"{}")
+assert status == 503 and b"no_api_key" in body
+PY
+
+# Verify no personal bio leaked into default postprocess script
+! grep -q "Manash" "$ROOT/libexec/voxtype-postprocess.sh"
+ok "Stock voxtype v1.3.1 wiring, replacements sync (inline + sub-table), proxy no-secrets & neutral prompt verified"
 
 echo ""
 echo "ALL $PASS SANDBOX TEST SUITES PASSED"

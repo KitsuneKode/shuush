@@ -23,6 +23,7 @@ it is limited too. Keys from separate accounts have separate quotas (verified
 """
 import http.client
 import json
+import os
 import re
 import threading
 import time
@@ -35,7 +36,14 @@ IDLE_REFRESH_S = 45      # reconnect proactively if idle longer than this on /wa
 
 
 def api_keys() -> list[str]:
-    text = (Path.home() / ".config/voxtype/secrets.env").read_text()
+    conf = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "voxtype"
+    secrets = conf / "secrets.env"
+    if not secrets.is_file():
+        return []
+    try:
+        text = secrets.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
     return re.findall(r'^GROQ_API_KEY\d*\s*=\s*"?([^"\n]+)"?', text, re.M)
 
 
@@ -55,7 +63,9 @@ class Upstream:
         self.conn.connect()
 
     def request(self, method: str, path: str, body: bytes | None) -> tuple[int, bytes]:
-        keys = api_keys() or [""]
+        keys = api_keys()
+        if not keys:
+            return 503, b'{"error":"no_api_key"}'
         with self.lock:
             for _ in keys:
                 status, data = self._send(method, path, body, keys[self.key_index % len(keys)])
@@ -92,7 +102,11 @@ class Upstream:
     def stream(self, path: str, body: bytes, start, write) -> None:
         """Relay a streamed completion: start(status, content_type) once,
         then write(bytes) per piece as Groq sends it."""
-        keys = api_keys() or [""]
+        keys = api_keys()
+        if not keys:
+            start(503, "application/json")
+            write(b'{"error":"no_api_key"}')
+            return
         with self.lock:
             for n in range(len(keys)):
                 resp = self._open("POST", path, body, keys[self.key_index % len(keys)])

@@ -139,47 +139,98 @@ wire_config() {
   fi
   cp -a "$cfg" "$cfg.bak.$(date +%Y%m%d-%H%M%S)"
   python3 - "$cfg" "$pp_cmd" <<'PY'
-import re, sys
+import re, sys, tomllib
 from pathlib import Path
 
 cfg = Path(sys.argv[1])
 pp = sys.argv[2]
-text = cfg.read_text(encoding="utf-8")
+lines = cfg.read_text(encoding="utf-8").splitlines(keepends=True)
+if lines and not lines[-1].endswith("\n"):
+    lines[-1] += "\n"
 
-block = f'''[output.post_process]
-command = "{pp}"
-timeout_ms = 20000
-'''
+HEADER_RE = re.compile(r"^\s*\[([^\]]+)\]\s*(?:#.*)?$")
 
-if re.search(r'^\[output\.post_process\]', text, re.M):
-    text = re.sub(
-        r'(\[output\.post_process\][^\[]*?^\s*command\s*=\s*)"[^"]*"',
-        rf'\1"{pp}"',
-        text,
-        count=1,
-        flags=re.M | re.S,
-    )
-else:
-    text = text.rstrip() + "\n\n" + block
 
+def set_section_keys(lines: list[str], section: str, updates: list[tuple[str, str]]) -> list[str]:
+    """Set or update key = value lines inside an exact uncommented [section], preserving comments."""
+    start = end = None
+    for i, line in enumerate(lines):
+        m = HEADER_RE.match(line)
+        if m:
+            name = m.group(1).strip()
+            if start is not None:
+                end = i
+                break
+            if name == section:
+                start = i
+    if start is None:
+        if lines and lines[-1].strip():
+            lines.append("\n")
+        lines.append(f"[{section}]\n")
+        for k, v in updates:
+            lines.append(f"{k} = {v}\n")
+        return lines
+    if end is None:
+        end = len(lines)
+
+    body = lines[start + 1 : end]
+    remaining = dict(updates)
+    new_body: list[str] = []
+    for line in body:
+        replaced = False
+        for k in list(remaining):
+            if re.match(rf"^\s*{re.escape(k)}\s*=", line):
+                new_body.append(f"{k} = {remaining.pop(k)}\n")
+                replaced = True
+                break
+        if not replaced:
+            new_body.append(line)
+    if remaining:
+        insert_at = len(new_body)
+        while insert_at > 0 and not new_body[insert_at - 1].strip():
+            insert_at -= 1
+        additions = [f"{k} = {v}\n" for k, v in remaining.items()]
+        new_body[insert_at:insert_at] = additions
+    return lines[: start + 1] + new_body + lines[end:]
+
+
+def has_section_key(lines: list[str], section: str, key: str) -> bool:
+    in_sec = False
+    for line in lines:
+        m = HEADER_RE.match(line)
+        if m:
+            in_sec = m.group(1).strip() == section
+            continue
+        if in_sec and re.match(rf"^\s*{re.escape(key)}\s*=", line):
+            return True
+    return False
+
+
+qpp = pp.replace("\\", "\\\\").replace('"', '\\"')
+lines = set_section_keys(lines, "output.post_process", [
+    ("command", f'"{qpp}"'),
+    ("timeout_ms", "20000"),
+])
 for prof in ("terminal", "chat", "command"):
-    hdr = f"[profiles.{prof}]"
-    if hdr in text:
-        text = re.sub(
-            rf'(\[profiles\.{prof}\][^\[]*?^\s*post_process_command\s*=\s*)"[^"]*voxtype-postprocess\.sh[^"]*"',
-            rf'\1"{pp} {prof}"',
-            text,
-            count=1,
-            flags=re.M | re.S,
-        )
-    else:
-        text += f'\n{hdr}\npost_process_command = "{pp} {prof}"\n'
+    lines = set_section_keys(lines, f"profiles.{prof}", [
+        ("post_process_command", f'"{qpp} {prof}"'),
+    ])
 
-if "[osd]" not in text:
-    text += '\n[osd]\nfrontend = "quickshell"\nstyle = "kitsune-hud"\nposition = "bottom-center"\nmargin_px = 20\n'
+osd_updates: list[tuple[str, str]] = [("style", '"kitsune-hud"')]
+if not has_section_key(lines, "osd", "frontend"):
+    osd_updates.insert(0, ("frontend", '"auto"'))
+if not has_section_key(lines, "osd", "position"):
+    osd_updates.append(("position", '"bottom-center"'))
+if not has_section_key(lines, "osd", "margin_px"):
+    osd_updates.append(("margin_px", "20"))
+lines = set_section_keys(lines, "osd", osd_updates)
+
+updated = "".join(lines)
+# Validate TOML syntax before replacing user's live config.toml
+tomllib.loads(updated)
 
 tmp = cfg.with_suffix(".tmp")
-tmp.write_text(text, encoding="utf-8")
+tmp.write_text(updated, encoding="utf-8")
 tmp.replace(cfg)
 print(f"Wired post_process, profiles, and kitsune-hud OSD in {cfg}")
 PY

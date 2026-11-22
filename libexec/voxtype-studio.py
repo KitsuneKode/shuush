@@ -28,7 +28,7 @@ sys.path.insert(0, str(SCRIPTS))
 import voxtype_learn as learn  # noqa: E402
 import voxtype_pp_gate as gate  # noqa: E402
 
-CONF = Path.home() / ".config/voxtype"
+CONF = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "voxtype"
 STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "voxtype"
 RT = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "voxtype"
 HISTORY = STATE / "history.jsonl"
