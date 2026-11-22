@@ -16,7 +16,11 @@
 </p>
 
 <p align="center">
-  <img src="assets/architecture.svg" alt="Shuush + voxtype architecture" width="100%" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/architecture-dark.svg" />
+    <source media="(prefers-color-scheme: light)" srcset="assets/architecture.svg" />
+    <img src="assets/architecture.svg" alt="Shuush + voxtype architecture" width="100%" />
+  </picture>
 </p>
 
 <p align="center">
