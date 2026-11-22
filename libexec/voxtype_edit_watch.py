@@ -161,6 +161,7 @@ def main() -> int:
     import voxtype_screen_ctx as sc
 
     last: list[tuple[str, str]] = []
+    stable: list[tuple[str, str]] = []    # same fix on two reads: not mid-edit
     seen_once = False
     t0 = time.monotonic()
     for tick in TICKS:
@@ -179,10 +180,11 @@ def main() -> int:
             continue
         seen_once = True
         if hunks and hunks == last:
-            break              # same fix on two reads in a row: settled
+            stable = hunks
+            break
         last = hunks
-    if last:
-        learn_from(last)
+    if stable:
+        learn_from(stable)
     try:
         if PIDFILE.read_text().strip() == str(os.getpid()):
             PIDFILE.unlink()

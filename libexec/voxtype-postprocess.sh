@@ -130,7 +130,7 @@ emit() {
   [ "$STREAMED" = 1 ] || printf '%s' "$text"
   [ -z "${text//[[:space:]]/}" ] && exit 0
   # A private take is typed and forgotten: not on the clipboard, not in history.
-  [ "$VIA" = private ] && exit 0
+  [ "$VIA" = private ] && { rm -f "$RT/clip_backup.bin" "$RT/clip_backup.mime"; exit 0; }
   rm -f "$RT/pp_private"
   # Record our own emitted hash (ts=0) BEFORE wl-copy so the next take never
   # mistakes our own dictation for freshly copied user <clipboard> context.
@@ -141,16 +141,20 @@ emit() {
   if command -v wl-copy >/dev/null 2>&1; then
     wl-copy -- "$text" </dev/null >/dev/null 2>&1 &
     if [ "${keep_clip:-1}" = 0 ] && [ -f "$RT/clip_backup.mime" ] && [ -f "$RT/clip_backup.bin" ]; then
+      # Own copies: the next take may snapshot again before this restore runs.
+      local rb="$RT/clip_restore.$$"
+      mv -f "$RT/clip_backup.bin" "$rb.bin" 2>/dev/null && mv -f "$RT/clip_backup.mime" "$rb.mime" 2>/dev/null
       (
         sleep 0.5
         cur_now=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 | sha256sum | awk '{print $1}' || true)
-        if [ "$cur_now" = "$emit_hash" ]; then
-          bmime=$(cat "$RT/clip_backup.mime" 2>/dev/null || true)
-          if [ -n "$bmime" ]; then
-            wl-copy --type "$bmime" < "$RT/clip_backup.bin" >/dev/null 2>&1 || true
-          fi
+        bmime=$(cat "$rb.mime" 2>/dev/null || true)
+        if [ "$cur_now" = "$emit_hash" ] && [ -n "$bmime" ]; then
+          wl-copy --type "$bmime" < "$rb.bin" >/dev/null 2>&1 || true
+          # The restored clipboard is old, not freshly copied <clipboard> context.
+          rhash=$(head -c 800 "$rb.bin" | sha256sum | awk '{print $1}')
+          (umask 077; printf '%s\n0\n' "$rhash" > "$RT/clip_seen")
         fi
-        rm -f "$RT/clip_backup.mime" "$RT/clip_backup.bin"
+        rm -f "$rb.bin" "$rb.mime"
       ) </dev/null >/dev/null 2>&1 &
     fi
   fi
@@ -754,7 +758,7 @@ for provider in $PP_ORDER; do
         else
             printf '%s  %s  rejected(invariants)  llm=%dms\n' "$(date +%T)" "$provider" "$LLM_MS" >> "$PP_LOG"
             out=""
-            continue
+            break
         fi
     fi
     if sane; then

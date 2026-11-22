@@ -46,7 +46,9 @@ active_window_json() {
 }
 
 start() {  # [profile]
-    rm -f "$rt/handsfree"
+    # Gone before the background capture refills it: a take that ends first
+    # must not read the previous field's caret, draft or password state.
+    rm -f "$rt/handsfree" "$rt/take_screen_ctx.json"
     win=$(active_window_json)
     [ -n "$win" ] || win='{}'
     # Which window this take belongs to. The pill reads the class, and the
@@ -74,6 +76,12 @@ start() {  # [profile]
             # into a terminal), else the first real type (an image, a file list).
             btypes=$(timeout 0.15 wl-paste --list-types 2>/dev/null | grep -Ev '^(TARGETS|TIMESTAMP|SAVE_TARGETS|MULTIPLE)$' || true)
             bmime=$(printf '%s\n' "$btypes" | grep -m1 -xE 'text/plain;charset=utf-8|text/plain|UTF8_STRING' || printf '%s\n' "$btypes" | head -1)
+            # A password manager's copy must keep its auto-clear; our own
+            # previous dictation is not worth restoring.
+            if printf '%s\n' "$btypes" | grep -qx 'x-kde-passwordManagerHint' \
+                || [ "$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 | sha256sum | awk '{print $1}')" = "$(awk 'NR==1{print $1}' "$rt/clip_self_hash" 2>/dev/null)" ]; then
+                bmime=""
+            fi
             if [ -n "$bmime" ]; then
                 if timeout 0.25 wl-paste --no-newline --type "$bmime" 2>/dev/null | head -c 4194304 > "$rt/clip_backup.bin" && [ -s "$rt/clip_backup.bin" ]; then
                     printf '%s' "$bmime" > "$rt/clip_backup.mime"

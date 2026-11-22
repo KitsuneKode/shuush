@@ -78,7 +78,7 @@ NEGATIONS = frozenset(
     "cant dont doesnt didnt isnt arent wasnt werent wont wouldnt couldnt "
     "shouldnt havent hasnt hadnt mustnt neednt aint".split()
 )
-FIRST_PERSON = frozenset("i me my mine myself im ive ill id".split())
+FIRST_PERSON = frozenset("i me my mine myself im ive ill id lemme gimme".split())
 _RESERVED_TAG_RE = re.compile(
     r"<(/?(?:dictation|previous|app|hints|screen|draft|selection|clipboard|now|instruction)\b)",
     re.I,
@@ -256,8 +256,10 @@ def _filler_word(key: str) -> bool:
     return bool(re.fullmatch(r"u+h+|h+u+|u+m+|e+r+|a+h+|h+m+", key))
 
 
-def _contains_marker(keys: list[str]) -> bool:
+def _contains_marker(keys: list[str], strict: bool = False) -> bool:
     for marker in MARKERS:
+        if strict and marker == ("actually",):
+            continue
         n = len(marker)
         for i in range(len(keys) - n + 1):
             if keys[i:i + n] != list(marker):
@@ -277,7 +279,8 @@ def delete_ok(keys: list[str], i1: int, i2: int) -> bool:
         return True
     if tuple(span) in FILLER_PHRASES:
         return True
-    if _contains_marker(span):
+    # "not actually" is a polarity, not a take-back: cutting it needs a real marker.
+    if _contains_marker(span, strict=any(k in NEGATIONS and k != "no" for k in span)):
         return True
     # A stutter is this word next to the copy that stays. The aligner may
     # drop either the first or the second copy.
@@ -432,8 +435,11 @@ def _sound_ok(raw_keys: list[str], model_keys: list[str]) -> bool:
     a, b = "".join(raw_keys), "".join(model_keys)
     if not a or not b or _meaning_flip(a, b):
         return False
-    # Never let fuzzy sound similarity change digits ("15" -> "16").
-    da, db = _digits_in(a), _digits_in(b)
+    # Never let fuzzy sound similarity change digits ("15" -> "16"); spoken
+    # digits count on the raw side ("e c two" -> "EC2", "gpt four" -> "GPT-4").
+    da = "".join(k if k.isdigit() else str(_ONES_VAL[k]) if k in _ONES_VAL and k != "o" else _digits_in(k)
+                 for k in raw_keys)
+    db = _digits_in(b)
     if (da or db) and da != db:
         return False
     if len(raw_keys) == 1 and len(model_keys) == 1 and _same_stem_rewrite(a, b):
@@ -544,6 +550,8 @@ def _screen_or_vocab_ok(raw_keys: list[str], model_keys: list[str]) -> bool:
 def replace_ok(raw_keys: list[str], model_keys: list[str], pairs: list[tuple[str, str]]) -> bool:
     if not raw_keys or not model_keys:
         return False
+    if "".join(raw_keys) == "".join(model_keys):
+        return not _undoes_pair(raw_keys, model_keys, pairs)
     # Never let a replacement flip polarity ("can't" -> "can", "don't" -> "do", "isn't" -> "is").
     if _negation_count(raw_keys) != _negation_count(model_keys):
         return False
@@ -596,7 +604,10 @@ def output_invariants_ok(raw: str, out: str) -> bool:
     out_neg = _negation_count(ok)
     if raw_neg != out_neg:
         has_stutter = any(rk[i] in NEGATIONS and rk[i] == rk[i + 1] for i in range(len(rk) - 1))
-        if not (_contains_marker(rk) or (has_stutter and out_neg < raw_neg)):
+        # "no actually ..." may drop the "no"; "not actually broken" may not drop the "not".
+        polar_same = _negation_count([k for k in rk if k != "no"]) == _negation_count([k for k in ok if k != "no"])
+        if not (_contains_marker(rk, strict=True) or (_contains_marker(rk) and polar_same)
+                or (has_stutter and out_neg < raw_neg)):
             return False
     raw_fp = sum(1 for k in rk if k in FIRST_PERSON)
     out_fp = sum(1 for k in ok if k in FIRST_PERSON)
@@ -702,7 +713,7 @@ def _stitch(raw: str, rw: list[Tok], model: str, mw: list[Tok], pieces: list[tup
             # If the next model chunk starts with sentence-ending punctuation
             # (e.g. model dropped "and" in "do this and also" -> "do this. Also"),
             # keep the period before the restored word instead of after it.
-            if out and idx + 1 < len(pieces) and pieces[idx + 1][0] == "m":
+            if kind == "d" and out and idx + 1 < len(pieces) and pieces[idx + 1][0] == "m":
                 na, nb = pieces[idx + 1][1], pieces[idx + 1][2]
                 if na > 0 and na < nb:
                     gap = model[mw[na - 1].end:mw[na].start]
@@ -719,7 +730,7 @@ def _stitch(raw: str, rw: list[Tok], model: str, mw: list[Tok], pieces: list[tup
                 and re.search(r"(?<![A-Za-z])" + re.escape(chunk.split()[0].lower()) + r"(?![A-Za-z])", raw):
             chunk = chunk[0].lower() + chunk[1:]
         out = _glue(out, chunk)
-    if pieces and pieces[-1][0] == "r" and mw:
+    if pieces and pieces[-1][0] in ("r", "d") and mw:
         tail = model[mw[-1].end:]
         punct = tail.strip()
         if punct and re.fullmatch(r"[.!?…]+", punct) and not re.search(r"[.!?…]$", out.rstrip()):
@@ -750,7 +761,7 @@ def constrain(raw: str, model: str, pairs: list[tuple[str, str]] | None = None) 
             pieces.append(("m", j1, j2))
         elif op == "delete":
             if not delete_ok(raw_keys, i1, i2):
-                pieces.append(("r", i1, i2))
+                pieces.append(("d", i1, i2))
         elif op == "insert":
             keys = [t.key for t in mw[j1:j2]]
             if insert_ok(keys):
@@ -1417,6 +1428,25 @@ def _selftest() -> int:
     check("tag neutralization escapes reserved only",
           neutralize_tags("<div>keep</div> </screen> <dictation>x</dictation> Vec<T>"),
           lambda s: "<div>keep</div>" in s and "Vec<T>" in s and "</screen>" not in s and "<dictation>" not in s)
+    check("rejected replacement keeps the period after it",
+          constrain("we need the tasks then we deploy", "We need the things. Then we deploy."),
+          lambda s: s == "We need the tasks. Then we deploy.")
+    check("spoken digits inside names allowed",
+          constrain("deploy to e c two then ping me", "Deploy to EC2. Then ping me."),
+          lambda s: s == "Deploy to EC2. Then ping me.")
+    check("not actually cut blocked",
+          str(output_invariants_ok("it's not actually broken", "It's broken.")
+              or "not" not in constrain("it's not actually broken", "It's broken.")),
+          lambda s: s == "False")
+    check("no actually self-correction allowed",
+          str(output_invariants_ok("no actually use the cache", "Use the cache.")),
+          lambda s: s == "True")
+    check("lemme is first person",
+          str(output_invariants_ok("lemme check the logs", "Let me check the logs.")),
+          lambda s: s == "True")
+    check("with out respelled",
+          constrain("ship it with out tests", "Ship it without tests."),
+          lambda s: "without" in s)
     check("numbers only detection",
           f"{is_numbers_only('192.168.1.1')},{is_numbers_only('three hundred')},{is_numbers_only('42 89')}",
           lambda s: s == "True,False,True")
