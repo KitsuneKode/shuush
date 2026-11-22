@@ -8,6 +8,7 @@ const blog = defineCollection({
     title: z.string(),
     description: z.string(),
     pubDate: z.string(),
+    updatedDate: z.string().optional(),
     readTime: z.string(),
     tags: z.array(z.string()),
     heroImage: z.string().default('/assets/architecture.png'),

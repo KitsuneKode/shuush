@@ -1,4 +1,7 @@
 ---
+import '@fontsource-variable/familjen-grotesk';
+import '@fontsource-variable/geist-mono';
+import '@fontsource/newsreader/400-italic.css';
 import '../styles/global.css';
 import LogoMark from '../components/LogoMark.astro';
 
@@ -44,9 +47,6 @@ const onBlog = Astro.url.pathname.startsWith('/blog');
   <meta name="twitter:title" content={title} />
   <meta name="twitter:description" content={description} />
   <meta name="twitter:image" content={absoluteOgImage} />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400..700&family=Geist+Mono:wght@400..600&family=Newsreader:ital,opsz,wght@1,6..72,400&display=swap" rel="stylesheet" />
   {jsonLd && <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />}
 </head>
 <body>

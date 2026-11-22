@@ -72,6 +72,31 @@ const jsonLd = {
         acceptedAnswer: { '@type': 'Answer', text: f.a },
       })),
     },
+    {
+      '@type': 'HowTo',
+      name: 'How to install Shuush on Linux and Wayland (Arch, Omarchy, Hyprland, Sway, Niri)',
+      description: 'Install local GPU voice dictation and GTK4 Studio on top of stock voxtype-bin in three steps.',
+      step: [
+        {
+          '@type': 'HowToStep',
+          position: 1,
+          name: 'Run pre-flight doctor and install stock voxtype',
+          text: 'Run curl -fsSL https://shuush.kitsunekode.in/doctor.sh | bash, install voxtype-bin with Wayland/GTK4/AT-SPI dependencies, and run voxtype setup.',
+        },
+        {
+          '@type': 'HowToStep',
+          position: 2,
+          name: 'Install Shuush in one line',
+          text: 'Run curl -fsSL https://shuush.kitsunekode.in/install.sh | bash to install Shuush, KitsuneHud, systemd units, and wire config.toml with an automatic backup.',
+        },
+        {
+          '@type': 'HowToStep',
+          position: 3,
+          name: 'Verify and open Shuush Studio',
+          text: 'Run shuush doctor && shuush studio to pick Air-Gapped Ollama offline mode or enter cloud failover API keys (saved chmod 600).',
+        },
+      ],
+    },
   ],
 };
 
@@ -177,6 +202,7 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
         <figure class="stage hero-video rise" style="--i:5; margin-inline:0; margin-block-end:0;">
           <figcaption class="stage-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>shuush-launch.mp4<span class="rec">1080p</span></figcaption>
           <video class="stage-media" controls muted loop playsinline preload="metadata" poster="/assets/shuush-outro.png" width="1920" height="1080" data-autoplay aria-label="Shuush launch video: dictating into a terminal on Hyprland">
+            <source src="/assets/shuush-launch.webm" type="video/webm" />
             <source src="/assets/shuush-launch.mp4" type="video/mp4" />
           </video>
         </figure>

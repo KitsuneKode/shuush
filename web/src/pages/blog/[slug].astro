@@ -27,7 +27,7 @@ const jsonLd = {
       headline: post.data.title,
       description: post.data.description,
       datePublished: post.data.pubDate,
-      dateModified: post.data.pubDate,
+      dateModified: post.data.updatedDate ?? post.data.pubDate,
       mainEntityOfPage: url,
       author: { '@type': 'Person', name: 'KitsuneKode', url: 'https://github.com/KitsuneKode' },
       publisher: {
