@@ -66,13 +66,31 @@ start() {  # [profile]
         else
             rm -f "$rt/take_selection"
         fi
+        CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
+        keep_clip=$(sed -n 's/^PP_KEEP_ON_CLIPBOARD=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
+        if [ "${keep_clip:-1}" = 0 ] && command -v wl-paste >/dev/null 2>&1; then
+            # Snapshot the clipboard so emit() can restore it 500ms after typing.
+            # Plain text when offered (a text/html-only restore pastes nothing
+            # into a terminal), else the first real type (an image, a file list).
+            btypes=$(timeout 0.15 wl-paste --list-types 2>/dev/null | grep -Ev '^(TARGETS|TIMESTAMP|SAVE_TARGETS|MULTIPLE)$' || true)
+            bmime=$(printf '%s\n' "$btypes" | grep -m1 -xE 'text/plain;charset=utf-8|text/plain|UTF8_STRING' || printf '%s\n' "$btypes" | head -1)
+            if [ -n "$bmime" ]; then
+                if timeout 0.25 wl-paste --no-newline --type "$bmime" 2>/dev/null | head -c 4194304 > "$rt/clip_backup.bin" && [ -s "$rt/clip_backup.bin" ]; then
+                    printf '%s' "$bmime" > "$rt/clip_backup.mime"
+                else
+                    rm -f "$rt/clip_backup.bin" "$rt/clip_backup.mime"
+                fi
+            else
+                rm -f "$rt/clip_backup.bin" "$rt/clip_backup.mime"
+            fi
+        fi
         clip=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 || true)
         if [ -n "${clip//[[:space:]]/}" ]; then
             chash=$(printf '%s' "$clip" | sha256sum | awk '{print $1}')
+            self_hash=$(awk 'NR==1{print $1}' "$rt/clip_self_hash" 2>/dev/null || true)
             prev_hash=$(awk 'NR==1{print $1}' "$rt/clip_seen" 2>/dev/null || true)
-            prev_ts=$(awk 'NR==2{print $1}' "$rt/clip_seen" 2>/dev/null || echo 0)
             now_s=$(date +%s)
-            if [ "$chash" != "$prev_hash" ]; then
+            if [ "$chash" != "$self_hash" ] && [ "$chash" != "$prev_hash" ]; then
                 printf '%s\n%s\n' "$chash" "$now_s" > "$rt/clip_seen"
             fi
             printf '%s\n%s\n' "$chash" "$now_s" > "$rt/take_clip_start"
@@ -80,7 +98,6 @@ start() {  # [profile]
             rm -f "$rt/take_clip_start"
         fi
         # Pre-capture screen & draft context in the background while talking
-        CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
         sc_on=$(sed -n 's/^PP_SCREEN_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
         if [ "${sc_on:-1}" = 1 ]; then
             w_cls=$(printf '%s' "$win" | jq -r '.class // empty' 2>/dev/null || true)
@@ -160,6 +177,17 @@ case "$verb" in
             # "keep listening". The pill reads handsfree.
             now_ms > "$rt/handsfree"
             exit 0
+        fi
+        # Short release tail so the last syllable isn't clipped when lifting off F9.
+        # Skipped automatically if voxtype-fork's native adaptive release_tail_ms is configured.
+        CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
+        if ! grep -qE '^\s*release_tail_ms\s*=' "$CONF/config.toml" 2>/dev/null; then
+            tail_ms="${VOXTYPE_RELEASE_TAIL_MS:-}"
+            [ -z "$tail_ms" ] && tail_ms=$(sed -n 's/^PP_RELEASE_TAIL_MS=\([0-9]*\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
+            tail_ms="${tail_ms:-200}"
+            if [ "$tail_ms" -gt 0 ] 2>/dev/null; then
+                sleep "$(awk -v m="$tail_ms" 'BEGIN{printf "%.3f", m/1000}')"
+            fi
         fi
         exec voxtype record stop ;;
 

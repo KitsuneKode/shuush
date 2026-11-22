@@ -1146,6 +1146,9 @@ Item {
             id: contentTex
             sourceItem: content
             hideSource: shimmer.on
+            // Only re-render the texture while the shimmer reads it: idle and
+            // listening frames would otherwise redraw `content` offscreen too.
+            live: shimmer.on
             visible: false
         }
         Item {

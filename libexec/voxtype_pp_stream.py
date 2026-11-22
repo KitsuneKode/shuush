@@ -279,19 +279,23 @@ def run(url: str, body: dict, raw: str, key: str, marker: str | None = None) -> 
         cursor_before = aligner.cursor
         if not aligner.accepts(chunk, whole_rest):
             return False
-        # The 50% overlap check still lets a synonym through. The span gate
-        # puts that word back before it is typed; typing it cannot be undone.
-        try:
-            import voxtype_pp_gate as gate
-            covered = aligner.covered_text(cursor_before, aligner.cursor)
-            if covered.strip():
-                stripped = chunk.lstrip()
-                lead = chunk[:len(chunk) - len(stripped)]
-                gated = gate.constrain(covered, stripped)
-                if gated:
-                    chunk = lead + gated
-        except Exception:
-            pass
+        # The 50% overlap check still lets a synonym, negation flip, or
+        # invented first-person reply through. Run the span gate + invariants
+        # before the words are typed; typing cannot be undone.
+        if _gate is not None:
+            try:
+                covered = aligner.covered_text(cursor_before, aligner.cursor)
+                if covered.strip():
+                    stripped = chunk.lstrip()
+                    lead = chunk[:len(chunk) - len(stripped)]
+                    gated = _gate.constrain(covered, stripped)
+                    if gated:
+                        if not _gate.output_invariants_ok(covered, gated):
+                            aligner.cursor = cursor_before
+                            return False
+                        chunk = lead + gated
+            except Exception:
+                pass
         out.emit(chunk)
         return True
 

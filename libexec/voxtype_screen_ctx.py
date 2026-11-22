@@ -65,6 +65,22 @@ def _safe_text(node, atspi_text, max_chars: int = 800) -> str:
         return ""
 
 
+def _caret_split(node, atspi_text, before: int, after: int) -> tuple[str, str] | None:
+    """(text before the caret, text after it), or None when the caret is unknown."""
+    try:
+        tif = node.get_text_iface()
+        if tif is None:
+            return None
+        n = atspi_text.get_character_count(tif)
+        caret = atspi_text.get_caret_offset(tif)
+        if n < 0 or not 0 <= caret <= n:
+            return None
+        return (atspi_text.get_text(tif, max(0, caret - before), caret) or "",
+                atspi_text.get_text(tif, caret, min(n, caret + after)) or "")
+    except Exception:
+        return None
+
+
 def _has_state(node, st) -> bool:
     try:
         ss = node.get_state_set()
@@ -73,22 +89,13 @@ def _has_state(node, st) -> bool:
         return False
 
 
-def collect(pid: int, cls: str, title: str, budget_s: float = 0.25, max_nodes: int = 500) -> dict:
-    empty = {"password": False, "draft": "", "screen": "", "source": "none"}
-    try:
-        import gi
-        gi.require_version("Atspi", "2.0")
-        from gi.repository import Atspi
-    except Exception:
-        return empty
-
-    deadline = time.monotonic() + budget_s
+def _roots(Atspi, pid: int, cls: str, title: str, deadline: float) -> list:
+    """Top-level frames of the target app, best match first ([] when not found)."""
     try:
         desktop = Atspi.get_desktop(0)
         count = desktop.get_child_count()
     except Exception:
-        return empty
-
+        return []
     cls_l = (cls or "").lower()
     title_l = (title or "").lower()
     target_app = None
@@ -112,7 +119,7 @@ def collect(pid: int, cls: str, title: str, budget_s: float = 0.25, max_nodes: i
 
     app = target_app or fallback_app
     if not app:
-        return empty
+        return []
 
     # Prefer the specific top-level frame matching the window title or active state.
     roots = []
@@ -132,9 +139,26 @@ def collect(pid: int, cls: str, title: str, budget_s: float = 0.25, max_nodes: i
         roots = matched or active_wins or [app]
     except Exception:
         roots = [app]
+    return roots
+
+
+def collect(pid: int, cls: str, title: str, budget_s: float = 0.25, max_nodes: int = 500) -> dict:
+    empty = {"password": False, "draft": "", "screen": "", "source": "none"}
+    try:
+        import gi
+        gi.require_version("Atspi", "2.0")
+        from gi.repository import Atspi
+    except Exception:
+        return empty
+
+    deadline = time.monotonic() + budget_s
+    roots = _roots(Atspi, pid, cls, title, deadline)
+    if not roots:
+        return empty
 
     password = False
     draft = ""
+    before_caret = ""
     lines: list[str] = []
     seen: set[str] = set()
     visited = 0
@@ -168,6 +192,9 @@ def collect(pid: int, cls: str, title: str, budget_s: float = 0.25, max_nodes: i
                 raw_draft = _safe_text(node, Atspi.Text, 450)
                 if raw_draft.strip():
                     draft = gate.screen_block(raw_draft, lines=6, limit=400)
+                split = _caret_split(node, Atspi.Text, 80, 0)
+                if split is not None:
+                    before_caret = split[0]
 
             if role in TEXT_ROLES:
                 txt = _safe_text(node, Atspi.Text, 400) if role in ("paragraph", "document-text", "terminal", "text", "entry") else ""
@@ -195,7 +222,58 @@ def collect(pid: int, cls: str, title: str, budget_s: float = 0.25, max_nodes: i
         "draft": draft,
         "screen": screen,
         "source": "atspi" if (draft or screen) else "none",
+        # Raw, never sent to a model: emit() only reads its last character(s).
+        "before_caret": before_caret,
     }
+
+
+def focused_field(pid: int, cls: str, title: str, budget_s: float = 0.4,
+                  max_nodes: int = 800, max_chars: int = 4000) -> dict | None:
+    """Text of the focused editable field in the target window.
+
+    {"password": True} for a password field, {"text": ...} otherwise, None when
+    no focused editable field was found within the budget.
+    """
+    try:
+        import gi
+        gi.require_version("Atspi", "2.0")
+        from gi.repository import Atspi
+    except Exception:
+        return None
+    deadline = time.monotonic() + budget_s
+    stack = list(reversed(_roots(Atspi, pid, cls, title, deadline)))
+    visited = 0
+    while stack and visited < max_nodes and time.monotonic() < deadline:
+        node = stack.pop()
+        visited += 1
+        try:
+            role = node.get_role_name() or ""
+            if role in SKIP_SUBTREE_ROLES:
+                continue
+            ss = node.get_state_set()
+            if ss and ss.contains(Atspi.StateType.DEFUNCT):
+                continue
+            if ss and ss.contains(Atspi.StateType.FOCUSED):
+                if role == "password-text":
+                    return {"password": True}
+                if ss.contains(Atspi.StateType.EDITABLE) or role in EDITABLE_ROLES:
+                    split = _caret_split(node, Atspi.Text, max_chars // 2, max_chars // 2)
+                    if split is None:
+                        text = _safe_text(node, Atspi.Text, max_chars)
+                    else:
+                        text = split[0] + split[1]
+                    return {"password": False, "text": text}
+            if ss and not ss.contains(Atspi.StateType.SHOWING) and role not in (
+                    "application", "frame", "window", "panel", "filler", "scroll-pane",
+                    "document-web", "document-frame"):
+                continue
+            for c in range(min(node.get_child_count(), 60) - 1, -1, -1):
+                ch = node.get_child_at_index(c)
+                if ch:
+                    stack.append(ch)
+        except Exception:
+            continue
+    return None
 
 
 def main(argv: list[str]) -> int:

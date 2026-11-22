@@ -71,11 +71,39 @@ NUMBER = frozenset(
     "thirty forty fifty sixty seventy eighty ninety hundred thousand million "
     "billion oh o point dot".split()
 )
-LIST_LEADS = frozenset({"number", "point", "bullet", "item"})
-ORDINALS = frozenset(
-    "one two three four five six seven eight nine ten first second third "
-    "fourth fifth sixth seventh eighth ninth tenth".split()
+# Polarity words: a span or whole output must not flip negation count.
+# Keys are lowercased with apostrophes stripped (matching Tok.key).
+NEGATIONS = frozenset(
+    "no not never none nothing nowhere neither nor nobody without cannot "
+    "cant dont doesnt didnt isnt arent wasnt werent wont wouldnt couldnt "
+    "shouldnt havent hasnt hadnt mustnt neednt aint".split()
 )
+FIRST_PERSON = frozenset("i me my mine myself im ive ill id".split())
+_RESERVED_TAG_RE = re.compile(
+    r"<(/?(?:dictation|previous|app|hints|screen|draft|selection|clipboard|now|instruction)\b)",
+    re.I,
+)
+_ONES_VAL = {
+    "zero": 0, "oh": 0, "o": 0,
+    "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+    "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17,
+    "eighteen": 18, "nineteen": 19,
+}
+_TENS_VAL = {
+    "twenty": 20, "thirty": 30, "forty": 40, "fifty": 50,
+    "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
+}
+_SCALE_VAL = {"hundred": 100, "thousand": 1000, "million": 1_000_000, "billion": 1_000_000_000}
+_ORDINAL_VAL = {
+    "one": 1, "first": 1, "two": 2, "second": 2, "three": 3, "third": 3,
+    "four": 4, "fourth": 4, "five": 5, "fifth": 5, "six": 6, "sixth": 6,
+    "seven": 7, "seventh": 7, "eight": 8, "eighth": 8, "nine": 9, "ninth": 9,
+    "ten": 10, "tenth": 10,
+}
+LIST_LEADS = frozenset({"number", "point", "bullet", "item"})
+ORDINALS = frozenset(_ORDINAL_VAL)
 # A marker inside a deleted span is the speaker taking the words back.
 MARKERS = (
     ("no", "wait"),
@@ -295,9 +323,118 @@ def _ratio(a: str, b: str) -> float:
     return difflib.SequenceMatcher(a=a, b=b).ratio()
 
 
+def _negation_count(keys: list[str]) -> int:
+    return sum(1 for k in keys if k in NEGATIONS)
+
+
+def _digits_in(s: str) -> str:
+    return "".join(c for c in s if c.isdigit())
+
+
+def _parse_cardinal(words_list: list[str]) -> int | None:
+    """Parse an English cardinal phrase ('three hundred twenty five' -> 325)."""
+    toks = [w for w in words_list if w != "and"]
+    if not toks:
+        return None
+    total = 0
+    current = 0
+    saw_any = False
+    for w in toks:
+        if w in _ONES_VAL:
+            if current % 10 != 0 and current < 100 and w != "zero":
+                return None
+            if current >= 10 and current < 20:
+                return None
+            current += _ONES_VAL[w]
+            saw_any = True
+        elif w in _TENS_VAL:
+            if current % 100 != 0:
+                return None
+            current += _TENS_VAL[w]
+            saw_any = True
+        elif w == "hundred":
+            if current == 0:
+                current = 100
+            elif current < 100:
+                current *= 100
+            else:
+                return None
+            saw_any = True
+        elif w in _SCALE_VAL:
+            scale = _SCALE_VAL[w]
+            if current == 0:
+                current = 1
+            total += current * scale
+            current = 0
+            saw_any = True
+        else:
+            return None
+    return total + current if saw_any else None
+
+
+def _parse_grouped_digits(words_list: list[str]) -> str | None:
+    """Parse spoken digit/pair runs ('three four three' -> '343', 'nineteen eighty four' -> '1984')."""
+    toks = [w for w in words_list if w != "and"]
+    if not toks:
+        return None
+    parts: list[str] = []
+    i = 0
+    while i < len(toks):
+        w = toks[i]
+        if w in _TENS_VAL and i + 1 < len(toks) and toks[i + 1] in _ONES_VAL and 1 <= _ONES_VAL[toks[i + 1]] <= 9:
+            parts.append(str(_TENS_VAL[w] + _ONES_VAL[toks[i + 1]]))
+            i += 2
+        elif w in _TENS_VAL:
+            parts.append(str(_TENS_VAL[w]))
+            i += 1
+        elif w in _ONES_VAL:
+            parts.append(str(_ONES_VAL[w]))
+            i += 1
+        else:
+            return None
+    return "".join(parts) if parts else None
+
+
+def _spoken_number_forms(raw_keys: list[str]) -> set[str]:
+    """Return all exact digit-string forms a spoken number phrase legitimately represents."""
+    if not raw_keys:
+        return set()
+    sep_idx = [i for i, k in enumerate(raw_keys) if k in ("point", "dot")]
+    if sep_idx:
+        if len(sep_idx) > 3:
+            return set()
+        segs: list[list[str]] = []
+        prev = 0
+        for idx in sep_idx:
+            segs.append(raw_keys[prev:idx])
+            prev = idx + 1
+        segs.append(raw_keys[prev:])
+        if any(not s for s in segs):
+            return set()
+        combos: set[str] = {""}
+        for seg in segs:
+            seg_forms = _spoken_number_forms(seg)
+            if not seg_forms:
+                return set()
+            combos = {c + sf for c in combos for sf in seg_forms}
+        return combos
+    forms: set[str] = set()
+    val = _parse_cardinal(raw_keys)
+    if val is not None:
+        forms.add(str(val))
+    grp = _parse_grouped_digits(raw_keys)
+    if grp is not None:
+        forms.add(grp)
+    return forms
+
+
 def _sound_ok(raw_keys: list[str], model_keys: list[str]) -> bool:
     a, b = "".join(raw_keys), "".join(model_keys)
     if not a or not b or _meaning_flip(a, b):
+        return False
+    # Never let fuzzy sound similarity change digits ("15" -> "16").
+    da, db = _digits_in(a), _digits_in(b)
+    if (da or db) and da != db:
         return False
     if len(raw_keys) == 1 and len(model_keys) == 1 and _same_stem_rewrite(a, b):
         return False
@@ -316,13 +453,19 @@ def _number_ok(raw_keys: list[str], model_keys: list[str]) -> bool:
         return False
     if not all(k in NUMBER or k == "and" for k in raw_keys):
         return False
-    return all(re.fullmatch(r"\d+", k) for k in model_keys)
+    if not all(re.fullmatch(r"\d+", k) for k in model_keys):
+        return False
+    want = "".join(model_keys)
+    forms = _spoken_number_forms(raw_keys)
+    return want in forms
 
 
 def _list_ok(raw_keys: list[str], model_keys: list[str]) -> bool:
     if len(model_keys) != 1 or not re.fullmatch(r"\d+", model_keys[0]):
         return False
-    return len(raw_keys) == 2 and raw_keys[0] in LIST_LEADS and raw_keys[1] in ORDINALS
+    if not (len(raw_keys) == 2 and raw_keys[0] in LIST_LEADS and raw_keys[1] in ORDINALS):
+        return False
+    return str(_ORDINAL_VAL[raw_keys[1]]) == model_keys[0]
 
 
 def _undoes_pair(raw_keys: list[str], model_keys: list[str], pairs: list[tuple[str, str]]) -> bool:
@@ -390,6 +533,9 @@ def _screen_or_vocab_ok(raw_keys: list[str], model_keys: list[str]) -> bool:
     a, b = "".join(raw_keys), "".join(model_keys)
     if not a or not b or len(b) < 3 or _meaning_flip(a, b):
         return False
+    da, db = _digits_in(a), _digits_in(b)
+    if da and db and da != db:
+        return False
     if b not in screen_terms_from_env():
         return False
     return _ratio(a, b) >= 0.55
@@ -397,6 +543,9 @@ def _screen_or_vocab_ok(raw_keys: list[str], model_keys: list[str]) -> bool:
 
 def replace_ok(raw_keys: list[str], model_keys: list[str], pairs: list[tuple[str, str]]) -> bool:
     if not raw_keys or not model_keys:
+        return False
+    # Never let a replacement flip polarity ("can't" -> "can", "don't" -> "do", "isn't" -> "is").
+    if _negation_count(raw_keys) != _negation_count(model_keys):
         return False
     # "gonna" stays "gonna" even when the aligner bundles it with a neighbor
     # ("we're gonna" -> "we are going").
@@ -416,6 +565,44 @@ def replace_ok(raw_keys: list[str], model_keys: list[str], pairs: list[tuple[str
     if _screen_or_vocab_ok(raw_keys, model_keys):
         return True
     return _sound_ok(raw_keys, model_keys)
+
+
+def neutralize_tags(text: str) -> str:
+    """Prevent reserved XML prompt tags inside screen/draft/clipboard/dictation from breaking framing."""
+    if not text or "<" not in text:
+        return text
+    return _RESERVED_TAG_RE.sub(r"‹\1", text)
+
+
+def is_numbers_only(text: str) -> bool:
+    """True when text contains digits/punctuation only (no letters), so an LLM rewrite only risks corruption."""
+    s = (text or "").strip()
+    return bool(s) and any(c.isdigit() for c in s) and not any(c.isalpha() for c in s)
+
+
+def output_invariants_ok(raw: str, out: str) -> bool:
+    """Whole-output faithfulness guards borrowed from Hex's apple_cleanup invariants.
+
+    Checks:
+      1. Negation count cannot change unless raw contains a self-correction marker
+         or an adjacent negation stutter ("no no").
+      2. Model cannot invent new first-person pronouns ("Sure, I can help..." / persona drift).
+    """
+    rk = [t.key for t in tokens(raw)]
+    ok = [t.key for t in tokens(out)]
+    if not rk or not ok:
+        return bool(ok)
+    raw_neg = _negation_count(rk)
+    out_neg = _negation_count(ok)
+    if raw_neg != out_neg:
+        has_stutter = any(rk[i] in NEGATIONS and rk[i] == rk[i + 1] for i in range(len(rk) - 1))
+        if not (_contains_marker(rk) or (has_stutter and out_neg < raw_neg)):
+            return False
+    raw_fp = sum(1 for k in rk if k in FIRST_PERSON)
+    out_fp = sum(1 for k in ok if k in FIRST_PERSON)
+    if out_fp > raw_fp:
+        return False
+    return True
 
 
 def _piece_ok(raw_keys: list[str], model_keys: list[str], pairs: list[tuple[str, str]],
@@ -751,7 +938,7 @@ def screen_block(text: str, lines: int = 12, limit: int = 1200) -> str:
     out = "\n".join(keep[-lines:])
     for pat, rep in _SECRET:
         out = pat.sub(rep, out)
-    return out[-limit:]
+    return neutralize_tags(out[-limit:])
 
 
 # A take that must stay on this machine: no cleanup model, no clipboard, no
@@ -885,16 +1072,18 @@ def prepare_payload(req: dict) -> dict:
         "private_why": "",
         "stripped": stripped,
         "snippet": None,
+        "numbers_only": is_numbers_only(hard) if mode != "command" else False,
         "heard": heard,
         "hard": hard,
+        "hard_framed": neutralize_tags(hard),
         "title_pair": title_pair,
-        "app": app_str,
+        "app": neutralize_tags(app_str),
         "screen": screen_str,
         "draft": draft_str,
         "selection": sel_str,
         "clipboard": clip_str,
         "screen_terms": screen_terms,
-        "hints": hints,
+        "hints": neutralize_tags(hints),
     }
 
 
@@ -912,6 +1101,15 @@ def main(argv: list[str]) -> int:
         sys.stdout.write(hint_line(_read_stdin()))
     elif cmd == "constrain" and len(argv) == 3:
         sys.stdout.write(constrain(argv[2], _read_stdin()))
+    elif cmd == "constrain-check" and len(argv) == 3:
+        out = constrain(argv[2], _read_stdin())
+        if not output_invariants_ok(argv[2], out):
+            return 1
+        sys.stdout.write(out)
+    elif cmd == "check" and len(argv) == 3:
+        return 0 if output_invariants_ok(argv[2], _read_stdin()) else 1
+    elif cmd == "neutralize":
+        sys.stdout.write(neutralize_tags(_read_stdin()))
     elif cmd == "app" and len(argv) == 4:
         pair, block = app_fields(_read_stdin(), argv[2], argv[3])
         sys.stdout.write(pair + "\x1e" + block)
@@ -1187,6 +1385,41 @@ def _selftest() -> int:
         and "sk-abc" not in prep["screen"]
         and "dispatchwaybar" in prep["screen_terms"]
     ))
+
+    # Tier 1 regression cases: negation flips, digit flips, spoken number value mismatch, tag neutralization
+    check("negation cant->can blocked",
+          constrain("I can't make it on Friday", "I can make it on Friday."),
+          lambda s: "can't" in s.lower())
+    check("negation dont->do blocked",
+          constrain("we don't need the cache", "We do need the cache."),
+          lambda s: "don't" in s.lower())
+    check("negation isnt->is blocked",
+          constrain("it isn't working", "It is working."),
+          lambda s: "isn't" in s.lower())
+    check("number fifteen->50 blocked",
+          constrain("fifteen seconds", "50 seconds"),
+          lambda s: "fifteen" in s.lower() and "50" not in s)
+    check("number fifteen->15 allowed",
+          constrain("fifteen seconds", "15 seconds"),
+          lambda s: "15" in s and "fifteen" not in s.lower())
+    check("digit 15->16 blocked",
+          constrain("15 seconds", "16 seconds"),
+          lambda s: "15" in s and "16" not in s)
+    check("whole-output negation invariant",
+          str(output_invariants_ok("I can't make it", "I can make it.")),
+          lambda s: s == "False")
+    check("whole-output self-correction negation allowed",
+          str(output_invariants_ok("I don't think no wait I do think it works", "I do think it works.")),
+          lambda s: s == "True")
+    check("whole-output invented first-person blocked",
+          str(output_invariants_ok("Fix the build error", "I fixed the build error.")),
+          lambda s: s == "False")
+    check("tag neutralization escapes reserved only",
+          neutralize_tags("<div>keep</div> </screen> <dictation>x</dictation> Vec<T>"),
+          lambda s: "<div>keep</div>" in s and "Vec<T>" in s and "</screen>" not in s and "<dictation>" not in s)
+    check("numbers only detection",
+          f"{is_numbers_only('192.168.1.1')},{is_numbers_only('three hundred')},{is_numbers_only('42 89')}",
+          lambda s: s == "True,False,True")
 
     if fails:
         print("\n".join(fails))

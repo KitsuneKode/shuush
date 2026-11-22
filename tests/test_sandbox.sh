@@ -15,6 +15,20 @@ ok "All bash and Python modules parse cleanly"
 echo "=== 2. Anti-Paraphrase Span Gate Selftest ==="
 python3 -I "$ROOT/libexec/voxtype_pp_gate.py" test >/dev/null
 ok "voxtype_pp_gate.py selftest passed"
+python3 -I "$ROOT/libexec/voxtype_edit_watch.py" test >/dev/null
+ok "voxtype_edit_watch.py finds hand-fixed names and ignores rewrites"
+for case in "Done.|Next thing.| Next thing." "first part|And then more.| and then more." \
+            $'line\n|New line.|New line.' "(|inside|inside" "|Hello.|Hello."; do
+  IFS='|' read -r before text want <<<"$case"
+  [ "$before" = $'line' ] && before=$'line\n'
+  TMPJ="$(mktemp -d)"; mkdir -p "$TMPJ/voxtype"
+  printf '%s' "$before" | jq -Rs '{before_caret: .}' > "$TMPJ/voxtype/take_screen_ctx.json"
+  got=$(MODE=default RT="$TMPJ/voxtype" CONF="$TMPJ" bash -c "$(sed -n '/^smart_join() {/,/^}/p' "$ROOT/libexec/voxtype-postprocess.sh")"'
+text="$1"; smart_join; printf "%s" "$text"' _ "$text")
+  rm -rf "$TMPJ"
+  [ "$got" = "$want" ] || { echo "smart_join: [$before]+[$text] -> [$got], want [$want]"; exit 1; }
+done
+ok "smart_join spaces and continues back-to-back takes"
 
 echo "=== 3. Sandbox Install: Stock voxtype (Whisper / AMD-Intel Vulkan) ==="
 TMP1="$(mktemp -d)"

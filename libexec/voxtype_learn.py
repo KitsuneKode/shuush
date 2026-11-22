@@ -113,15 +113,22 @@ def _vocab_map() -> dict[str, str]:
     return out
 
 
-def _auto_learn_enabled() -> bool:
-    if not PP_ENV.exists():
-        return True
-    val = "1"
-    for line in PP_ENV.read_text(errors="replace").splitlines():
-        m = re.match(r"^PP_AUTO_LEARN=([^\s#]+)", line.strip())
+def env_flag(name: str, default: bool = True) -> bool:
+    """A 0/1 switch from postprocess.env (last assignment wins)."""
+    val = "1" if default else "0"
+    try:
+        text = PP_ENV.read_text(errors="replace")
+    except OSError:
+        return default
+    for line in text.splitlines():
+        m = re.match(rf"^{name}=([^\s#]+)", line.strip())
         if m:
             val = m.group(1).strip("\"'")
     return val == "1"
+
+
+def _auto_learn_enabled() -> bool:
+    return env_flag("PP_AUTO_LEARN")
 
 
 _SPOKEN_DIGITS = {

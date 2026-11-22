@@ -2357,6 +2357,9 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             ("PP_CLIPBOARD_CONTEXT", "Fresh clipboard context (≤15s)", "Use text copied right before or during dictation"),
             ("PP_PRIVATE_GUARD", "Privacy guard", "Bypass LLM on password fields & sign-in pages"),
             ("PP_AUTO_LEARN", "Safe grounded self-learning", "Auto-learn non-English mishearings seen 2+ times"),
+            ("PP_WATCH_EDITS", "Learn from your fixes", "Names you correct in the field after a take count as mishearings"),
+            ("PP_SMART_JOIN", "Smart join", "Space and continue back-to-back takes in the same field"),
+            ("PP_KEEP_ON_CLIPBOARD", "Keep dictation on clipboard", "Off: restore what you had copied after typing"),
         ]:
             sw = self._make_switch_row(ctx, title, sub, read_env_flag(key, "1") == "1", self._on_toggle_env, key)
             self.env_switches[key] = sw
@@ -2375,11 +2378,12 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             ("audio", "pause_media", "Pause media while recording", "Auto-pause music players during dictation"),
             ("audio", "duck_media", "Duck media volume (20%)", "Lower background audio when speaking"),
             ("audio.feedback", "enabled", "Start/stop audio cues", "Subtle chime when recording starts & stops"),
-            ("vad", "enabled", "Voice Activity Detection", "Drop silence-only taps under 300 ms"),
+            ("vad", "enabled", "Voice Activity Detection", "Drop takes with no speech (Silero, 160 ms minimum)"),
             ("text", "spoken_punctuation", "Spoken punctuation", "Convert 'period', 'comma', 'question mark'"),
             ("text", "filter_filler_words", "Daemon filler filter", "Strip um/uh before LLM cleanup"),
             ("output.post_process", "streaming", "Stream cleaned sentences", "Type first sentence while LLM finishes"),
             ("output", "shift_enter_newlines", "Shift+Enter for newlines", "Keep Enter from submitting in chat apps"),
+            ("text", "smart_auto_submit", "Say \"submit\" to send", "Ending a take with \"submit\" presses Enter"),
         ]:
             self._make_switch_row(aud, title, sub, read_toml_bool(sec, key, False), self._on_toggle_toml, (sec, key))
 

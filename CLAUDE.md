@@ -1,58 +1,35 @@
-# Shuush — Wayland-Native Voice Transcription Daemon
-
-## Status
-
-**ACTIVE — Phase 1 (eval set + benchmarks + learning track), since 2026-10-10.**
-**Read `docs/learnings/2026-10-10-daily-driver.md` first** (proven facts, numbers and pitfalls — skip rediscovering them).
-Then read `docs/handoff/2026-10-10-phase1-kickoff.md`:
-it holds the decisions already made, the questions to ask the user next,
-and the Phase 1 plan. The original spec (`docs/specs/2026-03-31-shuush-design.md`)
-is background only, because several of its choices were superseded.
-The current daily-driver setup (voxtype) is documented at `~/.config/voxtype/ARCHITECTURE.md`.
-The pill-preview voxtype fork (KitsuneKode/voxtype, branch `kitsune/pill-preview`) lives at `~/Projects/voxtype-fork` (handoff in `.kitsune/`).
-
-## What It Is
-
-Hold a hotkey → speak → release → transcribed text streams into whatever app is focused. Like WhisperFlow but native Wayland, CUDA-accelerated, and designed to evolve into a Jarvis wake-word voice assistant.
+# Shuush — Local GPU Voice Dictation Companion Layer on voxtype
 
 ## Architecture
 
-Rust Cargo workspace:
-- `shuushd` — daemon (audio capture, whisper-server client, text injection, GTK4 overlay)
-- `shuush` — CLI (thin Unix socket client)
-- `shuush-core` — shared types (IPC protocol, config, state enum)
+Shuush is an MIT-licensed Linux/Wayland intelligence, context, safety, and UI layer built on top of `voxtype` (and optionally enhanced by the companion `~/Projects/voxtype-fork` build).
 
-## Key Decisions
+### Repository Layout
+- `bin/shuush` — User CLI (`studio`, `doctor`, `wire-config`, `toggle`, `learn`, `services`, `uninstall`)
+- `install.sh` — Zero-sudo installer & live-sync script (`~/.local/share/shuush`, `~/.local/bin/shuush`, systemd user services, KitsuneHud OSD)
+- `libexec/`
+  - `voxtype-toggle.sh` — Push-to-talk / tap-for-handsfree / command-mode launcher; captures target window, primary selection, clipboard baseline/backup, and background AT-SPI/kitty screen+draft context at record start
+  - `voxtype-postprocess.sh` — Cleanup pipeline (`[output.post_process]`), DATA-framed prompt, failover chain (`local`, `groq`, `groq2`, `cerebras`, `opencode`, `openrouter`), budget control, streaming support, clipboard leak guard & restore, and history/review dispatch
+  - `voxtype_pp_gate.py` — Single-call deterministic `prepare` batch (privacy guard, hallucination strip, snippets, sure-name `hard_apply`, secret redaction, XML tag neutralization, screen terms, hints), anti-paraphrase span gate (`constrain` / `constrain-check` with negation, digit, numeric-value, and first-person invariants), vocabulary `finish`, and `fallback_clean`
+  - `voxtype_pp_stream.py` — Sentence-level SSE streaming aligner + span gate + invariant guard
+  - `voxtype_screen_ctx.py` — Bounded AT-SPI2 reader for focused draft text, text before the caret (smart join), visible screen text, the focused field (edit watcher), and `password-text` privacy detection
+  - `voxtype-llm-proxy.py` — Persistent warm-TLS HTTP proxy with multi-key 429 failover
+  - `voxtype_learn.py` — Grounded phonetic self-learning (`corrections.tsv`, `learn-candidates.json`, `learn-rejected.json`, `config.toml` `[text]` replacement sync)
+  - `voxtype-review.py` — History writer (`history.jsonl`), swap tally, starts the edit watcher, review notifications
+  - `voxtype_edit_watch.py` — Re-reads the target field for 5 min after a take; names you fix by hand go to `voxtype_learn.tally` (`PP_WATCH_EDITS`)
+  - `voxtype-studio.py` — Native GTK4 + Libadwaita Studio (History + overlay Inspector, Insights, Learning Inbox, Vocabulary, Snippets, Settings)
+  - `voxtype-live-osd.sh` / `voxtype-outline.sh` / `voxtype-waybar.sh` / `voxtype-cancel.sh` — OSD watcher, Hyprland border indicator, Waybar widget, cancel helper
+- `osd/kitsune-hud/` — Quickshell HUD pill (`KitsuneHud.qml`, `voxtype-osd.toml`)
+- `config/` — `postprocess.env.example` and starter config templates
+- `tests/test_sandbox.sh` — Isolated multi-environment sandbox test suite (never touches live `~/.config/voxtype`)
+- `packaging/aur/shuush-git/` — AUR `PKGBUILD`, `.SRCINFO`, install script
+- `web/` — Astro marketing & documentation site (`https://shuush.kitsunekode.in`, deployed on Cloudflare Pages)
 
-| Decision | Choice | Why |
-|----------|--------|-----|
-| Language | Rust | Performance, gtk4-rs, cpal, cross-platform core |
-| Transcription | `whisper-server` (already installed) | Model stays in VRAM, no build complexity |
-| Audio | CPAL (PipeWire on Arch) | Cross-platform audio I/O |
-| Text injection | ydotool → wtype → clipboard fallback | From hyprvoice pattern, avoids keyboard hijack |
-| Overlay | GTK4 + gtk4-layer-shell | True Wayland-native |
-| IPC | Unix socket, single-byte commands | From hyprvoice pattern |
-| Config | TOML at `~/.config/shuush/` | Standard Arch ecosystem |
-| Wake word (v2) | sherpa-onnx | Apache 2.0, native Rust bindings, no device limits |
+### Companion Fork (`~/Projects/voxtype-fork`)
+Branch `kitsune/pill-preview` (the installed build) adds the live pill preview (`streaming_commit = "on_stop"`), the Parakeet full-context final pass, CUDA idle VRAM unload, and non-spinning ONNX threads. Hex-derived ASR work (Parakeet padding, guarded stream acceptance, vocabulary rescoring) lives on `kitsune/hex-asr` until it is measured and merged.
 
-## System Requirements
-
-- `whisper.cpp-cuda` AUR package (provides `/usr/bin/whisper-server`)
-- `ggml-large-v3.bin` model file
-- `ydotool` + `ydotoold` (primary text injection)
-- `gtk4`, `gtk4-layer-shell` (overlay)
-- NVIDIA GPU + CUDA toolkit
-
-## Reference Implementations
-
-- [hyprvoice](https://github.com/leonardotrapani/hyprvoice) (Go) — daemon/CLI arch, IPC, injection fallback
-- [hyprwhspr](https://github.com/goodroot/hyprwhspr) (Python) — XKB layout detection, audio patterns
-
-## When to Start Building
-
-Use `writing-plans` skill to generate bite-sized implementation plan from the spec. Build order:
-1. `shuush-core` (types, IPC, config)
-2. `shuush` CLI (socket client)
-3. `shuushd` audio → transcribe → inject (no overlay)
-4. GTK4 overlay last
-5. Waybar module
+### Testing
+Run the full isolated test suite before committing:
+```bash
+bash tests/test_sandbox.sh
+```

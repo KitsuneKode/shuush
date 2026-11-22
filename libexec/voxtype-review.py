@@ -65,13 +65,27 @@ with hist.open("a") as f:
 # The model's own swaps are not hints. tally() is a no-op kept so this call
 # stays the one place a future learning rule would hook in. A raw fallback
 # has no repairs. Hints come from voxtype-learn fix / add.
-if via != "passthrough" and swaps:
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+try:
+    import voxtype_learn
+except Exception:
+    voxtype_learn = None
+if voxtype_learn and via != "passthrough" and swaps:
     try:
-        import sys
-        sys.path.insert(0, str(Path(__file__).resolve().parent))
-        import voxtype_learn
         voxtype_learn.tally(swaps, screen_terms=e.get("RV_SCREEN_TERMS", ""))
     except Exception:
+        pass
+
+# Watch the field for the next few minutes: a name you fix by hand there is
+# the strongest mishearing signal there is (voxtype_edit_watch.py).
+if (voxtype_learn and e.get("RV_MODE") != "command" and via != "snippet" and len(b) >= 3
+        and voxtype_learn.env_flag("PP_WATCH_EDITS") and voxtype_learn.env_flag("PP_SCREEN_CONTEXT")):
+    try:
+        subprocess.Popen([sys.executable, "-I", str(Path(__file__).resolve().parent / "voxtype_edit_watch.py")],
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError:
         pass
 
 if review:
