@@ -1,6 +1,6 @@
 pkgbase = shuush-git
 	pkgdesc = Local GPU dictation intelligence layer, 5-source screen context, anti-paraphrase cleanup & GTK4 Studio built on voxtype
-	pkgver = r1.0000000
+	pkgver = r15.c09ae9a
 	pkgrel = 1
 	url = https://shuush.kitsunekode.in
 	install = shuush-git.install

@@ -1,6 +1,6 @@
 # Maintainer: KitsuneKode <bhuyanmanash2002@gmail.com>
 pkgname=shuush-git
-pkgver=r1.0000000
+pkgver=r15.c09ae9a
 pkgrel=1
 pkgdesc="Local GPU dictation intelligence layer, 5-source screen context, anti-paraphrase cleanup & GTK4 Studio built on voxtype"
 arch=('any')
