@@ -3,9 +3,11 @@
 > Open-source local Superwhisper & Wispr Flow alternative for Linux and Wayland, built cleanly on top of MIT-licensed voxtype (https://github.com/peteonrails/voxtype).
 
 ## Canonical URLs
-- Site: https://shuush-ochre.vercel.app/
-- Launch Blog & Benchmarks: https://shuush-ochre.vercel.app/blog/why-we-built-shuush/
-- RSS Feed: https://shuush-ochre.vercel.app/rss.xml
+- Site: https://shuush.kitsunekode.in/
+- 1-Line Installer: https://shuush.kitsunekode.in/install.sh
+- Pre-Flight Doctor: https://shuush.kitsunekode.in/doctor.sh
+- Launch Blog & Benchmarks: https://shuush.kitsunekode.in/blog/why-we-built-shuush/
+- RSS Feed: https://shuush.kitsunekode.in/rss.xml
 - GitHub Repository: https://github.com/KitsuneKode/shuush
 
 ## Verified Facts & Benchmarks

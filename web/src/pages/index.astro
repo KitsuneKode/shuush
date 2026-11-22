@@ -1,5 +1,43 @@
 ---
 import BaseLayout from '../layouts/BaseLayout.astro';
+import LogoMark from '../components/LogoMark.astro';
+
+const SITE = 'https://shuush.kitsunekode.in/';
+const INSTALL_ONE_LINER = 'curl -fsSL https://shuush.kitsunekode.in/install.sh | bash';
+const INSTALL_FULL = [
+  'curl -fsSL https://shuush.kitsunekode.in/doctor.sh | bash',
+  'yay -S voxtype-bin wtype wl-clipboard jq python-gobject libadwaita gtk4 at-spi2-core',
+  'voxtype setup',
+  'curl -fsSL https://shuush.kitsunekode.in/install.sh | bash',
+  'shuush doctor && shuush studio',
+].join('\n');
+
+const faqs = [
+  {
+    q: 'What is the best open-source Superwhisper or Wispr Flow alternative for Linux?',
+    a: 'Shuush, built on stock voxtype, is a free, MIT-licensed Linux/Wayland alternative to Superwhisper and Wispr Flow. It runs local GPU speech recognition (Parakeet, Whisper, or Cohere GGUF) with no word caps, adds 5-source AT-SPI screen, selection, and clipboard context, anti-paraphrase LLM cleanup (100% offline Ollama or ~500 ms Groq failover), and a native GTK4 Studio.',
+  },
+  {
+    q: 'Does Shuush work on Omarchy, Hyprland, Sway, Niri, and non-NVIDIA GPUs?',
+    a: 'Yes. Shuush installs on top of stock voxtype-bin across NVIDIA CUDA, AMD ROCm/Vulkan, Intel Vulkan, and CPU-only laptops. Studio reads whichever voxtype engine you configured (parakeet, whisper, cohere, or moonshine), with first-party kuwai rice auto-discovery and standard Hyprland, Sway, and Niri support.',
+  },
+  {
+    q: 'Can Shuush run 100% offline without sending audio or text to the cloud?',
+    a: 'Yes. Speech recognition always runs locally via voxtype, and Shuush Studio has a 1-click air-gapped offline mode that pins cleanup to local Ollama (127.0.0.1:11434). Password fields detected via AT-SPI bypass LLM cleanup entirely and are never written to history.',
+  },
+  {
+    q: 'What are the default Shuush hotkeys?',
+    a: 'Super+Ctrl+D toggles dictation. Hold F9 for push-to-talk, or tap it (under 300 ms) for hands-free. Super+Ctrl+E is voice command, which rewrites your highlighted selection in place. Super+Alt+D opens Shuush Studio, and a double-tap of Esc cancels a take.',
+  },
+  {
+    q: 'Why build Shuush on top of voxtype instead of forking it?',
+    a: "voxtype already nails PipeWire audio capture, CUDA/Vulkan/CPU inference (Parakeet, Whisper, Cohere GGUF), and Wayland typing. Keeping Shuush as a companion layer means zero fork drift, instant compatibility with stock voxtype-bin from the Arch AUR and Omarchy, and proper credit to Peter Jackson's MIT daemon.",
+  },
+  {
+    q: 'How does the anti-paraphrase span gate prevent LLM hallucinations?',
+    a: 'voxtype_pp_gate.py aligns every cleaned reply back against the raw recognizer transcript. Ordinary English words are never rewritten unless grounded by a phonetic match in your vocabulary, the visible AT-SPI screen, your highlighted selection, or a fresh (15 seconds or newer) clipboard.',
+  },
+];
 
 const jsonLd = {
   '@context': 'https://schema.org',
@@ -7,6 +45,8 @@ const jsonLd = {
     {
       '@type': 'SoftwareApplication',
       name: 'Shuush',
+      url: SITE,
+      image: new URL('/logo.svg', SITE).toString(),
       applicationCategory: 'DeveloperApplication',
       operatingSystem: 'Linux (Wayland: Hyprland, Sway, Niri, Arch Linux, Omarchy)',
       license: 'https://opensource.org/licenses/MIT',
@@ -16,309 +56,670 @@ const jsonLd = {
       softwareVersion: '1.0.0',
       author: { '@type': 'Person', name: 'KitsuneKode', url: 'https://github.com/KitsuneKode' },
       codeRepository: 'https://github.com/KitsuneKode/shuush',
+      isBasedOn: {
+        '@type': 'SoftwareSourceCode',
+        name: 'voxtype',
+        codeRepository: 'https://github.com/peteonrails/voxtype',
+        license: 'https://opensource.org/licenses/MIT',
+        author: { '@type': 'Person', name: 'Peter Jackson' },
+      },
     },
     {
       '@type': 'FAQPage',
-      mainEntity: [
-        {
-          '@type': 'Question',
-          name: 'What is the best open-source Superwhisper or Wispr Flow alternative for Linux?',
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: 'Shuush built on stock voxtype is a free, MIT-licensed Linux/Wayland alternative to Superwhisper and Wispr Flow. It runs local GPU ASR (Parakeet, Whisper, or Cohere GGUF) with zero word caps, 5-source AT-SPI screen/selection/clipboard context, anti-paraphrase LLM cleanup (100% offline Ollama or ~500ms Groq failover), and a native GTK4 Studio.',
-          },
-        },
-        {
-          '@type': 'Question',
-          name: 'Does Shuush work on Omarchy, Hyprland, Sway, Niri, and non-NVIDIA GPUs?',
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: 'Yes. Shuush installs cleanly on top of stock voxtype-bin across NVIDIA CUDA, AMD ROCm/Vulkan, Intel Vulkan, and CPU-only laptops, with first-party kuwai rice auto-discovery and standard Hyprland/Sway/Niri support.',
-          },
-        },
-        {
-          '@type': 'Question',
-          name: 'Can Shuush run 100% offline without sending audio or text to the cloud?',
-          acceptedAnswer: {
-            '@type': 'Answer',
-            text: 'Yes. Speech recognition always runs locally via voxtype, and Shuush Studio includes a 1-click Air-Gapped Offline Mode toggle pinning cleanup strictly to local Ollama (127.0.0.1:11434). Password fields detected via AT-SPI bypass LLM cleanup entirely.',
-          },
-        },
-      ],
+      mainEntity: faqs.map((f) => ({
+        '@type': 'Question',
+        name: f.q,
+        acceptedAnswer: { '@type': 'Answer', text: f.a },
+      })),
     },
   ],
 };
+
+type Key = { id: string; label: string; accent?: boolean };
+const K = {
+  super: { id: 'super', label: 'Super' },
+  ctrl: { id: 'ctrl', label: 'Ctrl' },
+  alt: { id: 'alt', label: 'Alt' },
+  d: { id: 'd', label: 'D', accent: true },
+  e: { id: 'e', label: 'E', accent: true },
+  f9: { id: 'f9', label: 'F9', accent: true },
+} satisfies Record<string, Key>;
+
+const combos: { mode: string; keys: Key[]; name: string; hint: string; aria: string }[] = [
+  { mode: 'toggle', keys: [K.super, K.ctrl, K.d], name: 'Toggle dictation', hint: 'Press to start, again to deliver', aria: 'Super plus Ctrl plus D: toggle dictation' },
+  { mode: 'ptt', keys: [K.f9], name: 'Push-to-talk', hint: 'Hold to talk · tap for hands-free', aria: 'F9: hold for push-to-talk, tap for hands-free' },
+  { mode: 'command', keys: [K.super, K.ctrl, K.e], name: 'Voice command', hint: 'Rewrite the highlighted text', aria: 'Super plus Ctrl plus E: voice command' },
+  { mode: 'studio', keys: [K.super, K.alt, K.d], name: 'Shuush Studio', hint: 'Open the GTK4 control center', aria: 'Super plus Alt plus D: open Shuush Studio' },
+];
+
+const wave = [
+  [0.45, 0], [0.8, 120], [1, 260], [0.65, 80], [0.9, 340], [0.55, 200], [0.75, 40], [0.4, 300],
+];
+
+const studioShots = [
+  { id: 'diff', tab: 'Dictations', src: '/assets/studio-diff.png', alt: 'Shuush Studio dictation history with the inline Heard → Cleaned diff inspector', caption: 'Every take streams in live. Open one to see the word-level Heard → Cleaned diff, replay the audio, or teach a fix with Ctrl+Enter.' },
+  { id: 'insights', tab: 'Insights', src: '/assets/studio-insights.png', alt: 'Shuush Studio insights with 14-day volume and full-history auto-mine', caption: '14-day dictation volume and a full-history auto-mine that surfaces repairs worth learning.' },
+  { id: 'learning', tab: 'Learning', src: '/assets/studio-learning.png', alt: 'Shuush Studio self-learning inbox and corrections memory', caption: 'A self-learning inbox with phonetic guards. Reject a rule once and it stays rejected, with undo.' },
+  { id: 'settings', tab: 'Settings', src: '/assets/studio-settings.png', alt: 'Shuush Studio settings with drag-and-drop provider failover and offline mode', caption: 'Drag-and-drop provider failover, API keys kept at chmod 600, and a 1-click air-gapped Ollama mode.' },
+];
+
+const specs = [
+  { val: '19,498', unit: 'words', label: 'Dictated for real' },
+  { val: '333', unit: 'takes', label: 'Measured sessions' },
+  { val: '516', unit: 'ms', label: 'Cleanup · P50', cls: 'hot' },
+  { val: '1,060', unit: 'ms', label: 'Cleanup · P90' },
+  { val: '2.3', unit: 'GB', label: 'VRAM · Parakeet fp16' },
+  { val: '98.8', unit: '%', label: 'Cleanup reliability', cls: 'ok' },
+];
+
+const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg><svg class="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
 ---
 <BaseLayout
   title="Shuush — Open-Source Local Superwhisper & Wispr Flow Alternative for Linux"
   description="Free, MIT open-source local GPU voice dictation studio and context-aware cleanup layer built on voxtype for Linux & Wayland (Hyprland, Omarchy, Sway, Niri). 19,498 real words benchmarked, 516ms P50, air-gapped Ollama mode."
   jsonLd={jsonLd}
 >
-  <main>
+  <main id="main">
+    <!-- ── Hero ─────────────────────────────────────────── -->
     <section class="hero">
-      <div class="wrap hero-inner">
-        <span class="kicker-pill">Built on MIT <strong>voxtype</strong> · Zero cloud word limits · First-party <strong>kuwai</strong> support</span>
-        <h1>Local GPU dictation that actually knows your codebase.</h1>
-        <p class="lead">
-          The open-source Superwhisper &amp; Wispr Flow experience for Linux &amp; Wayland.
-          Parakeet, Whisper, or Cohere GGUF locally on your GPU — paired with 5-source screen context,
-          anti-paraphrase cleanup, phonetic self-learning, and a native GTK4 Studio.
-        </p>
+      <div class="wrap">
+        <div class="hero-grid">
+          <div class="hero-copy">
+            <span class="badge rise" style="--i:0"><span class="dot" aria-hidden="true"></span>Built on MIT <strong>voxtype</strong> · unlimited words</span>
+            <h1 class="rise" style="--i:1">Local GPU dictation that actually <em class="hush">knows</em> your codebase.</h1>
+            <p class="lead rise" style="--i:2">
+              The open-source Superwhisper &amp; Wispr Flow experience for Linux and Wayland. Parakeet, Whisper, or Cohere
+              on your own GPU, grounded by what's on your screen, cleaned up without rewriting what you meant.
+            </p>
+            <div class="cta-row rise" style="--i:3">
+              <a href="#install" class="btn btn-primary">Install in 60 seconds <span class="arrow" aria-hidden="true">→</span></a>
+              <a href="/blog/why-we-built-shuush/" class="btn btn-ghost">Benchmarks &amp; architecture</a>
+            </div>
+            <div class="cmd rise" style="--i:4" role="group" aria-label="Install command">
+              <span class="prompt" aria-hidden="true">$</span>
+              <code>{INSTALL_ONE_LINER}</code>
+              <button class="copy" type="button" data-copy={INSTALL_ONE_LINER} aria-label="Copy install command" set:html={copyIcons} />
+            </div>
+          </div>
 
-        <div class="cta-row">
-          <a href="#install" class="btn btn-primary">Install in 60 seconds</a>
-          <a href="/blog/why-we-built-shuush/" class="btn btn-secondary">Read benchmarks &amp; architecture</a>
+          <div class="plate rise" style="--i:3" id="keys" role="group" aria-labelledby="keys-title">
+            <h2 id="keys-title" class="sr-only">Try the Shuush hotkeys</h2>
+            <div class="hud" id="hud" data-state="idle">
+              <span class="hud-sig" aria-hidden="true">
+                <span class="wave">{wave.map(([h, d]) => <i style={`--h:${h};--d:${d}`}></i>)}</span>
+                <svg class="hud-check" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" fill="currentColor" opacity=".16"/><path d="M7.5 12.5l3 3 6-6.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+              <span class="hud-label" id="hud-label"><b>Ready</b> · press the keys, or click them</span>
+              <span class="hud-time" id="hud-time" aria-hidden="true">0:00</span>
+            </div>
+            <div class="combos">
+              {combos.map((c) => (
+                <button class="combo" type="button" data-mode={c.mode} aria-pressed="false" aria-label={c.aria}>
+                  <span class="combo-keys" aria-hidden="true">
+                    {c.keys.map((k, i) => (
+                      <>
+                        {i > 0 && <span class="combo-plus">+</span>}
+                        <span class:list={['key', { accent: k.accent }]} data-key={k.id}><span class="key-face">{k.label}</span></span>
+                      </>
+                    ))}
+                  </span>
+                  <span class="combo-name">{c.name}<span class="combo-hint">{c.hint}</span></span>
+                </button>
+              ))}
+            </div>
+            <p class="mode-detail" id="mode-detail" aria-live="polite">
+              Four bindings are the whole interface. <strong>Press them on your keyboard</strong>, or click a key to watch the pill react.
+            </p>
+            <div class="plate-foot"><span>bound by kuwai/voxtype.lua</span><span>Esc ×2 cancels a take</span></div>
+          </div>
         </div>
 
-        <div class="cmd-bar" role="region" aria-label="Install command">
-          <code class="mono" id="install-cmd">git clone https://github.com/KitsuneKode/shuush &amp;&amp; cd shuush &amp;&amp; ./install.sh --wire-config</code>
-          <button class="copy-btn" id="copy-cmd" aria-label="Copy install command" data-copied="false">
-            <svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            <svg class="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><polyline points="20 6 9 17 4 12"/></svg>
-          </button>
-        </div>
-
-        <div class="stage-frame" style="inline-size:100%;margin-block-start:20px;">
-          <video class="stage-media" controls autoplay muted loop playsinline poster="/assets/shuush-outro.png">
+        <figure class="stage hero-video rise" style="--i:5; margin-inline:0; margin-block-end:0;">
+          <figcaption class="stage-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>shuush-launch.mp4<span class="rec">1080p</span></figcaption>
+          <video class="stage-media" controls muted loop playsinline preload="metadata" poster="/assets/shuush-outro.png" width="1920" height="1080" data-autoplay aria-label="Shuush launch video: dictating into a terminal on Hyprland">
             <source src="/assets/shuush-launch.mp4" type="video/mp4" />
           </video>
-        </div>
-
-        <div class="stats-grid tnum">
-          <div class="stat-card">
-            <div class="stat-label">Real-world usage</div>
-            <div class="stat-val">19,498</div>
-            <div class="stat-sub">words dictated (~8.1 hrs saved)</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">End-to-end cleanup (P50)</div>
-            <div class="stat-val">516 ms</div>
-            <div class="stat-sub">24 ms when already clean · 98.8% reliable</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Local GPU VRAM</div>
-            <div class="stat-val">2.3 GB</div>
-            <div class="stat-sub">Parakeet fp16 on RTX 4050 · Vulkan &amp; CPU too</div>
-          </div>
-          <div class="stat-card">
-            <div class="stat-label">Monthly word limit</div>
-            <div class="stat-val">∞</div>
-            <div class="stat-sub">MIT open-source · 1-click offline Ollama mode</div>
-          </div>
-        </div>
+        </figure>
       </div>
     </section>
 
+    <!-- ── Benchmarks ───────────────────────────────────── -->
+    <section class="block" id="benchmarks">
+      <div class="wrap">
+        <div class="sec-head split">
+          <span class="kicker"><span class="idx">01</span> Benchmarks</span>
+          <h2>Measured on a daily-driver laptop, not a slide.</h2>
+          <p class="sec-sub">Telemetry from real dictation, not a synthetic test. When a take is already clean, Shuush skips the LLM entirely and delivers in 24 ms.</p>
+        </div>
+        <div class="specs">
+          {specs.map((s) => (
+            <div class:list={['spec', s.cls]}>
+              <span class="spec-val">{s.val}<small>{s.unit}</small></span>
+              <span class="spec-label">{s.label}</span>
+            </div>
+          ))}
+        </div>
+        <p class="rig">Intel i5-13450HX · RTX 4050 Laptop 6 GB · 23 GiB RAM · Arch + Hyprland · ~8.1 hours saved vs 40 WPM typing</p>
+      </div>
+    </section>
+
+    <!-- ── Studio ───────────────────────────────────────── -->
     <section class="block" id="studio">
       <div class="wrap">
-        <div class="sec-head">
-          <span class="kicker">Native GTK4 + Libadwaita Control Center</span>
-          <h2>Shuush Studio — live diffs, insights, and 1-click offline mode.</h2>
-          <p class="sec-sub">Zero Electron bloat. Dictations stream in live via <code>Gio.FileMonitor</code>, diffs highlight every repaired symbol, and self-learning syncs grounded jargon straight into <code>voxtype</code>'s daemon replacements.</p>
+        <div class="sec-head split">
+          <span class="kicker"><span class="idx">02</span> Shuush Studio</span>
+          <h2>Native GTK4. Live diffs. One switch to go offline.</h2>
+          <p class="sec-sub">No Electron. Dictations stream in through <code>Gio.FileMonitor</code>, every repaired symbol is highlighted, and grounded jargon syncs straight into voxtype's daemon replacements.</p>
         </div>
 
-        <div class="seg-bar" role="tablist" aria-label="Studio screens" id="studio-tabs">
-          <div class="seg-indicator" id="studio-ind"></div>
-          <button class="seg-tab" role="tab" aria-selected="true" data-img="/assets/studio-diff.png" data-alt="Shuush Studio Dictations and Inline Diff Inspector">Dictations &amp; Diff</button>
-          <button class="seg-tab" role="tab" aria-selected="false" data-img="/assets/studio-insights.png" data-alt="Shuush Studio Insights and Full-History Auto-Mine">Insights &amp; Auto-Mine</button>
-          <button class="seg-tab" role="tab" aria-selected="false" data-img="/assets/studio-learning.png" data-alt="Shuush Studio Self-Learning Inbox and Corrections">Learning Memory</button>
-          <button class="seg-tab" role="tab" aria-selected="false" data-img="/assets/studio-settings.png" data-alt="Shuush Studio Settings, Drag-and-Drop Failover, and Offline Mode">Settings &amp; Offline</button>
+        <div class="studio-row">
+          <div class="seg" role="tablist" aria-label="Studio screens" id="studio-tabs">
+            <span class="seg-ind" aria-hidden="true"></span>
+            {studioShots.map((s, i) => (
+              <button class="seg-tab" type="button" role="tab" id={`tab-${s.id}`} aria-controls="studio-panel" aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1} data-caption={s.caption}>{s.tab}</button>
+            ))}
+          </div>
+          <p class="studio-caption" id="studio-caption" aria-live="polite">{studioShots[0].caption}</p>
         </div>
 
-        <div class="stage-frame">
-          <img id="studio-img" class="stage-media" src="/assets/studio-diff.png" alt="Shuush Studio Dictations and Inline Diff Inspector" width="1140" height="750" />
+        <div class="stage" id="studio-panel" role="tabpanel" aria-labelledby="tab-diff">
+          <div class="shots">
+            {studioShots.map((s, i) => (
+              <img class="stage-media" src={s.src} alt={s.alt} width="1140" height="750" loading="lazy" decoding="async" data-active={i === 0 ? 'true' : 'false'} aria-hidden={i === 0 ? undefined : 'true'} />
+            ))}
+          </div>
         </div>
       </div>
     </section>
 
+    <!-- ── KitsuneHud + context explorer ────────────────── -->
     <section class="block" id="pill">
       <div class="wrap">
-        <div class="sec-head">
-          <span class="kicker">Real 60fps Capture · KitsuneHud Quickshell Pill + Anti-Paraphrase Span Gate</span>
+        <div class="sec-head split">
+          <span class="kicker"><span class="idx">03</span> KitsuneHud &amp; span gate</span>
           <h2>Feels native to Wayland. Never rewrites what you meant.</h2>
-          <p class="sec-sub">Recorded live on an Arch + Hyprland laptop via <code>gpu-screen-recorder</code>. Every cleanup reply passes a deterministic span gate so LLMs fix mishearings using your screen context without hallucinating rewrites.</p>
+          <p class="sec-sub">Recorded at 60 fps on Arch + Hyprland with <code>gpu-screen-recorder</code>. Every cleanup passes a deterministic span gate, so the model can fix mishearings from your screen without paraphrasing you.</p>
         </div>
 
-        <div class="two-col">
+        <div class="duo">
           <div class="card">
-            <span class="kicker">Live GPU-Recorded KitsuneHud Pill (60fps)</span>
-            <video class="stage-media" autoplay loop muted playsinline poster="/assets/osd-pill-strip.png">
+            <h3>The pill, as it really runs</h3>
+            <p>Listening, live word wash, polishing, delivered. Quickshell, GPU-recorded, unedited.</p>
+            <video class="stage-media" muted loop playsinline preload="auto" width="1120" height="372" data-autoplay aria-label="KitsuneHud pill cycling through listening, live preview, polishing and delivered states">
               <source src="/assets/osd-pill-states.mp4" type="video/mp4" />
             </video>
-            <div class="ctx-row">
-              <span class="pill pill-blue">PipeWire PCM waveform</span>
-              <span class="pill">Word-wash live preview</span>
-              <span class="pill pill-green">Pen-stroke checkmark</span>
-              <span class="pill pill-amber">Double-tap Esc guard</span>
-            </div>
+            <ol class="states">
+              <li style="--c:var(--coral)"><b>Listening</b>Live PipeWire waveform + target window</li>
+              <li style="--c:var(--coral-hi)"><b>Live preview</b>Staggered word-by-word color wash</li>
+              <li style="--c:var(--amber)"><b>Polishing</b>Anti-paraphrase cleanup, ~500 ms</li>
+              <li style="--c:var(--mint)"><b>Delivered</b>Gathered checkmark, shrink-to-dot exit</li>
+            </ol>
+            <div class="chips"><span class="chip c-amber">Esc ×2 cancels a take</span><span class="chip">Quickshell · Wayland layer-shell</span></div>
           </div>
 
           <div class="card">
-            <span class="kicker">Interactive 5-Source Context &amp; Span Gate Explorer</span>
-            <div class="seg-bar" role="tablist" id="diff-tabs" style="align-self:flex-start;">
-              <div class="seg-indicator" id="diff-ind"></div>
-              <button class="seg-tab" role="tab" aria-selected="true" data-case="code">Terminal Code</button>
-              <button class="seg-tab" role="tab" aria-selected="false" data-case="cmd">Voice Command</button>
-              <button class="seg-tab" role="tab" aria-selected="false" data-case="priv">Password Guard</button>
+            <h3>Five context sources, one gate</h3>
+            <p>App, AT-SPI screen and draft, selection, a ≤15 s clipboard, and the date. Pick a scenario.</p>
+            <div class="seg" role="tablist" aria-label="Context scenarios" id="ctx-tabs">
+              <span class="seg-ind" aria-hidden="true"></span>
+              <button class="seg-tab" type="button" role="tab" aria-selected="true" tabindex="0" data-case="code" aria-controls="ctx-panel">Terminal code</button>
+              <button class="seg-tab" type="button" role="tab" aria-selected="false" tabindex="-1" data-case="cmd" aria-controls="ctx-panel">Voice command</button>
+              <button class="seg-tab" type="button" role="tab" aria-selected="false" tabindex="-1" data-case="priv" aria-controls="ctx-panel">Password guard</button>
             </div>
-            <div class="diff-box" id="diff-view"></div>
-            <div class="ctx-row" id="diff-pills"></div>
-            <p class="stat-sub" id="diff-note" style="margin:0;"></p>
+            <div id="ctx-panel" role="tabpanel" style="display:grid;gap:14px;">
+              <div class="diff" id="ctx-diff"></div>
+              <div class="chips" id="ctx-chips"></div>
+              <p class="note" id="ctx-note"></p>
+            </div>
           </div>
         </div>
       </div>
     </section>
 
+    <!-- ── Compare ──────────────────────────────────────── -->
     <section class="block" id="compare">
       <div class="wrap">
         <div class="sec-head">
-          <span class="kicker">Side-by-Side Comparison</span>
+          <span class="kicker"><span class="idx">04</span> Compare</span>
           <h2>Wispr Flow vs Superwhisper vs Shuush + voxtype</h2>
         </div>
         <div class="table-wrap">
           <table>
             <thead>
-              <tr><th>Capability</th><th>Wispr Flow</th><th>Superwhisper (Omarchy)</th><th>Shuush + voxtype</th></tr>
+              <tr><th scope="col">Capability</th><th scope="col">Wispr Flow</th><th scope="col">Superwhisper (Omarchy)</th><th scope="col" class="col-us">Shuush + voxtype</th></tr>
             </thead>
             <tbody>
-              <tr><td>Price &amp; monthly word cap</td><td>$15/mo</td><td>10,000 free words/mo</td><td class="hl">Free · MIT · Unlimited</td></tr>
-              <tr><td>Native Linux / Wayland</td><td>No (macOS/Win)</td><td>Omarchy / macOS</td><td class="hl">Hyprland · Sway · Niri · Omarchy · Arch</td></tr>
-              <tr><td>GPU &amp; ASR freedom</td><td>Cloud only</td><td>Apple Silicon / Cloud</td><td class="hl">NVIDIA CUDA · AMD/Intel Vulkan · CPU</td></tr>
-              <tr><td>Context sources</td><td>App + screen</td><td>App + selection + clipboard</td><td class="hl">App + AT-SPI Screen &amp; Draft + Selection + ≤15s Clipboard + Date</td></tr>
-              <tr><td>Offline privacy mode</td><td>No</td><td>Paid local tier</td><td class="hl">1-click Air-Gapped Ollama + AT-SPI password bypass</td></tr>
-              <tr><td>Self-learning dictionary</td><td>Proprietary</td><td>Manual / AI audit</td><td class="hl">Phonetic auto-mine + reject list + daemon [text] sync</td></tr>
+              <tr><th scope="row">Price &amp; word cap</th><td>$15/mo</td><td>10,000 free words/mo</td><td class="col-us">Free · MIT · unlimited</td></tr>
+              <tr><th scope="row">Native Linux / Wayland</th><td>No (macOS / Windows)</td><td>Omarchy / macOS</td><td class="col-us">Hyprland · Sway · Niri · Omarchy · Arch</td></tr>
+              <tr><th scope="row">GPU &amp; ASR freedom</th><td>Cloud only</td><td>Apple Silicon / cloud</td><td class="col-us">NVIDIA CUDA · AMD/Intel Vulkan · CPU</td></tr>
+              <tr><th scope="row">Context sources</th><td>App + screen</td><td>App + selection + clipboard</td><td class="col-us">App + AT-SPI screen &amp; draft + selection + ≤15 s clipboard + date</td></tr>
+              <tr><th scope="row">Offline privacy mode</th><td>No</td><td>Paid local tier</td><td class="col-us">1-click air-gapped Ollama + AT-SPI password bypass</td></tr>
+              <tr><th scope="row">Self-learning dictionary</th><td>Proprietary</td><td>Manual / AI audit</td><td class="col-us">Phonetic auto-mine + reject list + daemon <code>[text]</code> sync</td></tr>
             </tbody>
           </table>
         </div>
       </div>
     </section>
 
+    <!-- ── Install ──────────────────────────────────────── -->
     <section class="block" id="install">
       <div class="wrap">
+        <div class="sec-head split">
+          <span class="kicker"><span class="idx">05</span> Install</span>
+          <h2>Three steps on stock <code class="h-code">voxtype-bin</code>.</h2>
+          <p class="sec-sub">Shuush sits on top of voxtype instead of replacing it. Each project owns one job, so nothing is duplicated and nothing drifts.</p>
+        </div>
+
+        <div class="install-grid">
+          <div class="term">
+            <div class="term-head">
+              <span>~/ · zsh · Arch / Omarchy</span>
+              <button class="copy" type="button" data-copy={INSTALL_FULL} aria-label="Copy all install commands" set:html={copyIcons} />
+            </div>
+<pre><span class="c"># 0 · optional pre-flight check</span>
+<span class="p">$ </span>curl -fsSL https://shuush.kitsunekode.in/doctor.sh | bash
+<span class="c"># 1 · voxtype + Wayland deps</span>
+<span class="p">$ </span>yay -S voxtype-bin wtype wl-clipboard jq python-gobject libadwaita gtk4 at-spi2-core
+<span class="p">$ </span>voxtype setup
+<span class="c"># 2 · shuush on top (1 line)</span>
+<span class="p">$ </span>curl -fsSL https://shuush.kitsunekode.in/install.sh | bash
+<span class="c"># 3 · verify, then open Studio</span>
+<span class="p">$ </span>shuush doctor &amp;&amp; shuush studio</pre>
+          </div>
+          <div class="card">
+            <h3>Runs where you do</h3>
+            <dl class="facts">
+              <dt>Compositors</dt><dd>Hyprland · Sway · Niri · Omarchy</dd>
+              <dt>GPUs</dt><dd>NVIDIA CUDA · AMD ROCm/Vulkan · Intel Vulkan · CPU</dd>
+              <dt>Engines</dt><dd>Parakeet · Whisper · Cohere GGUF · Moonshine</dd>
+              <dt>Cleanup</dt><dd>Local Ollama, or Groq → OpenRouter failover</dd>
+            </dl>
+          </div>
+        </div>
+
+        <div class="own">
+          <div class="card">
+            <h3><span class="sw" style="background:var(--ink-2)" aria-hidden="true"></span>voxtype</h3>
+            <p class="by">by Peter Jackson · MIT</p>
+            <ul><li>PipeWire audio capture</li><li>CUDA / Vulkan / CPU speech recognition</li><li>Wayland typing</li></ul>
+          </div>
+          <div class="card">
+            <h3><span class="sw" style="background:var(--coral)" aria-hidden="true"></span>shuush</h3>
+            <p class="by">this project · MIT</p>
+            <ul><li>5-source context pipeline</li><li>Anti-paraphrase span gate</li><li>Phonetic self-learning</li><li>KitsuneHud pill &amp; GTK4 Studio</li></ul>
+          </div>
+          <div class="card">
+            <h3><span class="sw" style="background:var(--mint)" aria-hidden="true"></span>kuwai</h3>
+            <p class="by">your rice, or any config</p>
+            <ul><li>Hyprland binds &amp; window rules</li><li>Optional island OSD hosting</li><li>First-party auto-discovery of <code>shuush/libexec</code></li></ul>
+          </div>
+        </div>
+
+        <div class="credit">
+          <p><strong>Shuush wouldn't exist without voxtype.</strong> It's a companion layer, not a fork: zero drift, works with stock <code>voxtype-bin</code>, and the MIT credit stays where it belongs.</p>
+          <a class="btn btn-ghost btn-sm" href="https://github.com/peteonrails/voxtype">peteonrails/voxtype <span class="arrow" aria-hidden="true">↗</span></a>
+        </div>
+
+        <figure class="stage" style="margin:16px 0 0;">
+          <img class="stage-media" src="/assets/architecture.svg" alt="Shuush + voxtype pipeline: local ASR, 5-source context, cleanup and span gate, Studio, and the self-learning memory loop" width="1120" height="420" loading="lazy" decoding="async" />
+        </figure>
+      </div>
+    </section>
+
+    <!-- ── FAQ ──────────────────────────────────────────── -->
+    <section class="block" id="faq">
+      <div class="wrap">
         <div class="sec-head">
-          <span class="kicker">Out-of-the-Box Setup</span>
-          <h2>Works on stock <code class="mono">voxtype-bin</code> in 3 commands.</h2>
-          <p class="sec-sub">Powered by <a href="https://github.com/peteonrails/voxtype" style="text-decoration:underline;color:var(--fg);">peteonrails/voxtype</a> (MIT). First-party auto-discovery built into <strong>kuwai</strong> — zero duplicated scripts.</p>
+          <span class="kicker"><span class="idx">06</span> FAQ</span>
+          <h2>Direct answers before you install.</h2>
         </div>
-        <div class="stage-frame">
-          <img class="stage-media" src="/assets/architecture.svg" alt="Shuush + voxtype 4-stage pipeline architecture" />
-        </div>
-        <div class="two-col" style="margin-block-start:18px;">
-          <div class="card">
-            <span class="kicker">1 · Arch / Omarchy / Hyprland / Sway / Niri</span>
-            <pre class="diff-box mono" style="margin:0;font-size:12.5px;overflow:auto;">yay -S voxtype-bin wtype wl-clipboard jq python-gobject libadwaita gtk4 at-spi2-core
-voxtype setup
-git clone https://github.com/KitsuneKode/shuush.git &amp;&amp; cd shuush
-./install.sh --wire-config
-shuush doctor &amp;&amp; shuush studio</pre>
-          </div>
-          <div class="card">
-            <span class="kicker">2 · First-Party kuwai Rice Separation of Concerns</span>
-            <pre class="diff-box mono" style="margin:0;font-size:12.5px;overflow:auto;">-- kuwai/hypr/kuwai/voxtype.lua auto-discovers:
---   ~/.local/share/shuush/libexec/
---
--- kuwai owns: island OSD hosting (VOXTYPE_OSD_HOST),
---             rules, and Hyprland binds.
--- shuush owns: Studio, cleanup pipeline, learning &amp; HUD.</pre>
-          </div>
+        <div class="faq">
+          {faqs.map((f, i) => (
+            <details open={i === 0}>
+              <summary>{f.q}<span class="pm" aria-hidden="true"></span></summary>
+              <p>{f.a}</p>
+            </details>
+          ))}
         </div>
       </div>
     </section>
 
-    <section class="block" id="faq">
-      <div class="wrap">
-        <div class="sec-head">
-          <span class="kicker">Frequently Asked Questions</span>
-          <h2>Direct answers before you install.</h2>
+    <!-- ── Outro ────────────────────────────────────────── -->
+    <section class="block">
+      <div class="wrap outro">
+        <LogoMark class="mark" />
+        <h2>Say it once. It lands <em class="hush">exact</em>.</h2>
+        <p class="lead" style="text-align:center;">Free, local, and yours to fork. Two minutes from clone to your first clean take.</p>
+        <div class="cmd" role="group" aria-label="Install command">
+          <span class="prompt" aria-hidden="true">$</span>
+          <code>{INSTALL_ONE_LINER}</code>
+          <button class="copy" type="button" data-copy={INSTALL_ONE_LINER} aria-label="Copy install command" set:html={copyIcons} />
         </div>
-        <details open>
-          <summary>Why build Shuush on top of voxtype instead of forking it?</summary>
-          <p><code>voxtype</code> already nails low-level PipeWire audio capture, CUDA/Vulkan/CPU inference (Parakeet, Whisper, Cohere GGUF), and Wayland typing. Keeping Shuush as a clean companion layer means zero fork drift, instant compatibility with stock <code>voxtype-bin</code> from Arch AUR and Omarchy, and proper attribution to Peter Jackson's MIT daemon.</p>
-        </details>
-        <details>
-          <summary>How does the anti-paraphrase span gate prevent LLM hallucinations?</summary>
-          <p><code>voxtype_pp_gate.py</code> aligns every cleaned reply back against the raw recognizer transcript. Ordinary English words are never rewritten unless grounded by a phonetic match in your vocabulary, visible AT-SPI screen, highlighted selection, or fresh (≤15s) clipboard.</p>
-        </details>
-        <details>
-          <summary>Does this work on AMD, Intel, or CPU-only laptops?</summary>
-          <p>Yes. Studio detects NVIDIA CUDA, AMD ROCm/Vulkan, Intel Vulkan iGPUs, and CPU setups automatically and reads whichever <code>voxtype</code> engine you configured (<code>parakeet</code>, <code>whisper</code>, <code>cohere</code>, or <code>moonshine</code>).</p>
-        </details>
+        <div class="cta-row" style="justify-content:center;">
+          <a href="https://github.com/KitsuneKode/shuush" class="btn btn-primary">Star on GitHub <span class="arrow" aria-hidden="true">↗</span></a>
+          <a href="/blog/" class="btn btn-ghost">Read the blog</a>
+        </div>
       </div>
     </section>
   </main>
 
   <script>
-    function initSegBar(barId: string, indId: string, onSelect: (btn: HTMLButtonElement) => void) {
-      const bar = document.getElementById(barId);
-      const ind = document.getElementById(indId);
-      if (!bar || !ind) return;
-      const tabs = Array.from(bar.querySelectorAll<HTMLButtonElement>('.seg-tab'));
-      const move = (btn: HTMLButtonElement) => {
-        ind.style.width = `${btn.offsetWidth}px`;
-        ind.style.transform = `translateX(${btn.offsetLeft - 4}px)`;
-      };
-      tabs.forEach((btn) => {
-        btn.addEventListener('click', () => {
-          tabs.forEach((t) => t.setAttribute('aria-selected', String(t === btn)));
-          move(btn);
-          onSelect(btn);
-        });
-      });
-      const active = tabs.find((t) => t.getAttribute('aria-selected') === 'true') ?? tabs[0];
-      if (active) requestAnimationFrame(() => move(active));
-      window.addEventListener('resize', () => {
-        const cur = tabs.find((t) => t.getAttribute('aria-selected') === 'true') ?? tabs[0];
-        if (cur) move(cur);
-      });
-    }
+    const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-    initSegBar('studio-tabs', 'studio-ind', (btn) => {
-      const img = document.getElementById('studio-img') as HTMLImageElement | null;
-      if (img && btn.dataset.img) {
-        img.src = btn.dataset.img;
-        img.alt = btn.dataset.alt ?? '';
-      }
+    /* ── copy → check morph ─────────────────────────── */
+    document.querySelectorAll<HTMLButtonElement>('button[data-copy]').forEach((btn) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      btn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(btn.dataset.copy ?? '');
+        } catch {
+          return;
+        }
+        btn.dataset.copied = 'true';
+        const label = btn.getAttribute('aria-label') ?? '';
+        btn.setAttribute('aria-label', 'Copied');
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          btn.dataset.copied = 'false';
+          btn.setAttribute('aria-label', label);
+        }, 1800);
+      });
     });
 
-    const CASES: Record<string, { html: string; pills: string[]; note: string }> = {
-      code: {
-        html: '<span class="del">um</span> Open <span class="del">webar</span> <span class="ins">Waybar</span> in <span class="del">next year</span> <span class="ins">Next.js</span> and <span class="del">uh</span> check why <span class="del">box type pp gate</span> <span class="ins">voxtype_pp_gate</span> is dropping the <span class="del">hyperline</span> <span class="ins">Hyprland</span> flag.',
-        pills: ['App: T3 Code', 'AT-SPI <screen>', 'Selection: voxtype_pp_gate.py', '482 ms · Groq proxy'],
-        note: 'All 4 symbol repairs were grounded in vocabulary.txt + visible screen terms; ordinary English phrasing stayed untouched.',
-      },
-      cmd: {
-        html: '<span class="del">So basically we are trying to make sure the timeout doesnt hang forever when the proxy is down</span><br/><span class="ins">Enforce a bounded timeout so a stalled proxy fails over immediately to direct Groq.</span>',
-        pills: ['Mode: Voice Command (Super+Ctrl+E)', 'Highlighted <selection>', 'Replaced in place'],
-        note: 'Highlight any text, press Super+Ctrl+E, say "make this tighter and punchier", and Shuush rewrites the selection in place.',
-      },
-      priv: {
-        html: 'AT-SPI detected focused <strong>password / sign-in</strong> field → <span class="ins">LLM bypassed · typed locally · excluded from history &amp; clipboard</span>.',
-        pills: ['PP_PRIVATE_GUARD=1', 'Zero network calls', 'Not written to history.jsonl'],
-        note: 'Password managers, sudo prompts, and sign-in inputs never leave your machine — even when cloud cleanup is enabled.',
-      },
-    };
-
-    function renderCase(key: string) {
-      const c = CASES[key] ?? CASES.code;
-      const view = document.getElementById('diff-view');
-      const pills = document.getElementById('diff-pills');
-      const note = document.getElementById('diff-note');
-      if (view) view.innerHTML = c.html;
-      if (pills) pills.innerHTML = c.pills.map((p, i) => `<span class="pill ${i === 0 ? 'pill-blue' : ''}">${p}</span>`).join('');
-      if (note) note.textContent = c.note;
+    /* ── videos play only while visible ─────────────── */
+    if (!reduceMotion && 'IntersectionObserver' in window) {
+      const io = new IntersectionObserver(
+        (entries) => {
+          for (const e of entries) {
+            const v = e.target as HTMLVideoElement;
+            if (e.isIntersecting) v.play().catch(() => {});
+            else v.pause();
+          }
+        },
+        { threshold: 0.35 },
+      );
+      document.querySelectorAll('video[data-autoplay]').forEach((v) => io.observe(v));
     }
 
-    initSegBar('diff-tabs', 'diff-ind', (btn) => renderCase(btn.dataset.case ?? 'code'));
-    renderCase('code');
+    /* ── segmented tabs with gliding indicator ──────── */
+    function segmented(root: HTMLElement | null, onSelect: (tab: HTMLButtonElement, index: number) => void) {
+      if (!root) return;
+      const ind = root.querySelector<HTMLElement>('.seg-ind');
+      const tabs = Array.from(root.querySelectorAll<HTMLButtonElement>('[role="tab"]'));
+      const current = () => tabs.find((t) => t.getAttribute('aria-selected') === 'true') ?? tabs[0];
+      const place = (tab: HTMLButtonElement) => {
+        if (!ind) return;
+        ind.style.inlineSize = `${tab.offsetWidth}px`;
+        ind.style.transform = `translateX(${tab.offsetLeft}px)`;
+      };
+      const select = (tab: HTMLButtonElement, focus = false) => {
+        tabs.forEach((t) => {
+          const on = t === tab;
+          t.setAttribute('aria-selected', String(on));
+          t.tabIndex = on ? 0 : -1;
+        });
+        place(tab);
+        if (focus) tab.focus();
+        onSelect(tab, tabs.indexOf(tab));
+      };
+      tabs.forEach((tab, i) => {
+        tab.addEventListener('click', () => select(tab));
+        tab.addEventListener('keydown', (e) => {
+          const next =
+            e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : e.key === 'Home' ? 0 : e.key === 'End' ? tabs.length - 1 : null;
+          if (next === null) return;
+          e.preventDefault();
+          select(tabs[(next + tabs.length) % tabs.length], true);
+        });
+      });
+      place(current());
+      requestAnimationFrame(() => ind?.classList.add('ready'));
+      new ResizeObserver(() => place(current())).observe(root);
+    }
 
-    const copyBtn = document.getElementById('copy-cmd');
-    const cmdEl = document.getElementById('install-cmd');
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    copyBtn?.addEventListener('click', () => {
-      navigator.clipboard?.writeText(cmdEl?.textContent?.trim() ?? '').catch(() => {});
-      copyBtn.setAttribute('data-copied', 'true');
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => copyBtn.setAttribute('data-copied', 'false'), 1800);
+    /* studio */
+    const shots = Array.from(document.querySelectorAll<HTMLImageElement>('#studio-panel img'));
+    const studioCaption = document.getElementById('studio-caption');
+    const studioPanel = document.getElementById('studio-panel');
+    segmented(document.getElementById('studio-tabs'), (tab, index) => {
+      shots.forEach((img, i) => {
+        img.dataset.active = String(i === index);
+        if (i === index) img.removeAttribute('aria-hidden');
+        else img.setAttribute('aria-hidden', 'true');
+      });
+      if (studioCaption) studioCaption.textContent = tab.dataset.caption ?? '';
+      studioPanel?.setAttribute('aria-labelledby', tab.id);
+    });
+    // Warm the other screenshots once the section is close, so switching never flashes.
+    if ('IntersectionObserver' in window && studioPanel) {
+      const warm = new IntersectionObserver((entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        shots.forEach((img) => (img.loading = 'eager'));
+        warm.disconnect();
+      }, { rootMargin: '600px' });
+      warm.observe(studioPanel);
+    }
+
+    /* context explorer */
+    const CASES: Record<string, { html: string; chips: [string, string][]; note: string }> = {
+      code: {
+        html:
+          '<span class="lbl">Heard → cleaned</span><span class="del">um</span> Open <span class="del">webar</span> <span class="ins">Waybar</span> in <span class="del">next year</span> <span class="ins">Next.js</span> and <span class="del">uh</span> check why <span class="del">box type pp gate</span> <span class="ins">voxtype_pp_gate</span> is dropping the <span class="del">hyperline</span> <span class="ins">Hyprland</span> flag.',
+        chips: [['c-coral', 'App: T3 Code'], ['', 'AT-SPI &lt;screen&gt;'], ['', 'selection: voxtype_pp_gate.py'], ['c-mint', '482 ms']],
+        note: 'All four symbol repairs were grounded in vocabulary.txt and visible screen terms. Ordinary English stayed untouched.',
+      },
+      cmd: {
+        html:
+          '<span class="lbl">Selection → rewritten in place</span><span class="del">So basically we are trying to make sure the timeout doesnt hang forever when the proxy is down</span><br/><span class="ins">Enforce a bounded timeout so a stalled proxy fails over immediately to direct Groq.</span>',
+        chips: [['c-coral', 'Super+Ctrl+E'], ['', 'highlighted &lt;selection&gt;'], ['c-mint', 'replaced in place']],
+        note: 'Highlight text, press Super+Ctrl+E, say “make this tighter”, and Shuush rewrites the selection where it sits.',
+      },
+      priv: {
+        html:
+          '<span class="lbl">Focused field → password</span>AT-SPI detected a focused <strong>password / sign-in</strong> field. <span class="ok-txt">LLM bypassed, typed locally, excluded from history and clipboard.</span>',
+        chips: [['c-amber', 'PP_PRIVATE_GUARD=1'], ['c-mint', 'zero network calls'], ['', 'not in history.jsonl']],
+        note: 'Password managers, sudo prompts, and sign-in inputs never leave your machine, even with cloud cleanup enabled.',
+      },
+    };
+    const ctxDiff = document.getElementById('ctx-diff');
+    const ctxChips = document.getElementById('ctx-chips');
+    const ctxNote = document.getElementById('ctx-note');
+    function renderCase(key: string, animate: boolean) {
+      const c = CASES[key] ?? CASES.code;
+      if (ctxDiff) ctxDiff.innerHTML = c.html;
+      if (ctxChips) ctxChips.innerHTML = c.chips.map(([cls, t]) => `<span class="chip ${cls}">${t}</span>`).join('');
+      if (ctxNote) ctxNote.textContent = c.note;
+      if (animate && !reduceMotion) {
+        ctxDiff?.animate(
+          [{ opacity: 0, filter: 'blur(3px)', transform: 'translateY(4px)' }, { opacity: 1, filter: 'blur(0)', transform: 'none' }],
+          { duration: 260, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' },
+        );
+      }
+    }
+    renderCase('code', false);
+    segmented(document.getElementById('ctx-tabs'), (tab) => renderCase(tab.dataset.case ?? 'code', true));
+
+    /* ── tactile hotkey plate ───────────────────────── */
+    type Mode = 'toggle' | 'ptt' | 'command' | 'studio';
+    const hud = document.getElementById('hud');
+    const hudLabel = document.getElementById('hud-label');
+    const hudTime = document.getElementById('hud-time');
+    const detail = document.getElementById('mode-detail');
+    const combos = Array.from(document.querySelectorAll<HTMLButtonElement>('.combo'));
+    const IDLE = '<b>Ready</b> · press the keys, or click them';
+    const DETAIL: Record<Mode, string> = {
+      toggle: '<strong>Toggle dictation.</strong> Press once to start listening into the focused window, press again and the cleaned text is typed for you.',
+      ptt: '<strong>Push-to-talk.</strong> Hold F9 while you speak and release to deliver. A quick tap (under 300 ms) switches to hands-free until you tap again.',
+      command: '<strong>Voice command.</strong> Highlight any text, press Super+Ctrl+E, and say what to do with it. The selection is rewritten in place.',
+      studio: '<strong>Shuush Studio.</strong> Opens the GTK4 control center: live history, diffs, learning memory, and the offline switch (Alt+1…6 to jump tabs).',
+    };
+
+    let timers: ReturnType<typeof setTimeout>[] = [];
+    let clock: ReturnType<typeof setInterval> | undefined;
+    let listening: Mode | null = null;
+    let handsFree = false;
+    let stopOnRelease = false;
+    let holdStartedAt = 0;
+
+    const later = (ms: number, fn: () => void) => timers.push(setTimeout(fn, ms));
+    function reset() {
+      timers.forEach(clearTimeout);
+      timers = [];
+      clearInterval(clock);
+      clock = undefined;
+    }
+    function setHud(state: 'idle' | 'listening' | 'polishing' | 'delivered', html: string) {
+      if (!hud || !hudLabel) return;
+      hud.dataset.state = state;
+      hudLabel.innerHTML = html;
+    }
+    function setPressed(mode: Mode | null) {
+      combos.forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.mode === mode)));
+    }
+    function startClock() {
+      const t0 = performance.now();
+      if (hudTime) hudTime.textContent = '0:00';
+      clock = setInterval(() => {
+        const s = Math.floor((performance.now() - t0) / 1000);
+        if (hudTime) hudTime.textContent = `0:${String(Math.min(s, 59)).padStart(2, '0')}`;
+      }, 250);
+    }
+    function settle(after: number) {
+      later(after, () => {
+        setHud('idle', IDLE);
+        setPressed(null);
+        if (hudTime) hudTime.textContent = '0:00';
+      });
+    }
+    function listen(mode: Mode, html: string) {
+      reset();
+      listening = mode;
+      setPressed(mode);
+      if (detail) detail.innerHTML = DETAIL[mode];
+      setHud('listening', html);
+      startClock();
+    }
+    function deliver(html: string) {
+      reset();
+      listening = null;
+      handsFree = false;
+      setHud('polishing', '<b>Polishing</b> · context + span gate');
+      later(560, () => {
+        setHud('delivered', html);
+        settle(1800);
+      });
+    }
+
+    function run(mode: Mode) {
+      if (mode === 'toggle') {
+        if (listening === 'toggle') return deliver('<b>Delivered</b> · typed into T3 Code');
+        listen('toggle', '<b>Listening</b> · T3 Code');
+        later(3200, () => deliver('<b>Delivered</b> · typed into T3 Code'));
+      } else if (mode === 'command') {
+        listen('command', '<b>Voice command</b> · “make this tighter”');
+        later(1800, () => deliver('<b>Rewritten</b> · selection replaced in place'));
+      } else if (mode === 'studio') {
+        reset();
+        listening = null;
+        setPressed('studio');
+        if (detail) detail.innerHTML = DETAIL.studio;
+        setHud('delivered', '<b>Shuush Studio</b> · opened');
+        settle(2000);
+      }
+    }
+
+    function holdStart() {
+      holdStartedAt = performance.now();
+      if (listening === 'ptt' && handsFree) {
+        stopOnRelease = true;
+        return;
+      }
+      listen('ptt', '<b>Push-to-talk</b> · holding F9');
+    }
+    function holdEnd() {
+      if (listening !== 'ptt') return;
+      if (stopOnRelease) {
+        stopOnRelease = false;
+        return deliver('<b>Delivered</b> · hands-free take');
+      }
+      if (performance.now() - holdStartedAt < 300) {
+        handsFree = true;
+        setHud('listening', '<b>Hands-free</b> · tap F9 again to stop');
+        later(5000, () => deliver('<b>Delivered</b> · hands-free take'));
+        return;
+      }
+      deliver('<b>Delivered</b> · push-to-talk take');
+    }
+
+    const keyEls = (id: string) => document.querySelectorAll<HTMLElement>(`.key[data-key="${id}"]`);
+    const setKey = (id: string, down: boolean) => keyEls(id).forEach((k) => (k.dataset.down = String(down)));
+    const comboKeys = (c: HTMLElement) => Array.from(c.querySelectorAll<HTMLElement>('.key'));
+    const releaseAll = () => document.querySelectorAll<HTMLElement>('.key[data-down="true"]').forEach((k) => (k.dataset.down = 'false'));
+
+    combos.forEach((combo) => {
+      const mode = combo.dataset.mode as Mode;
+      const keys = comboKeys(combo);
+      const press = (down: boolean) => keys.forEach((k) => (k.dataset.down = String(down)));
+
+      combo.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0) return;
+        combo.setPointerCapture(e.pointerId);
+        press(true);
+        if (mode === 'ptt') holdStart();
+      });
+      const up = () => {
+        if (!keys.some((k) => k.dataset.down === 'true')) return;
+        press(false);
+        if (mode === 'ptt') holdEnd();
+      };
+      combo.addEventListener('pointerup', up);
+      combo.addEventListener('pointercancel', up);
+
+      combo.addEventListener('click', (e) => {
+        const fromKeyboard = e.detail === 0;
+        if (fromKeyboard) {
+          // Enter/Space: replay the chord so the caps still travel.
+          keys.forEach((k, i) => {
+            setTimeout(() => (k.dataset.down = 'true'), i * 55);
+            setTimeout(() => (k.dataset.down = 'false'), i * 55 + 170);
+          });
+          if (mode === 'ptt') {
+            holdStart();
+            holdEnd();
+            return;
+          }
+        }
+        if (mode !== 'ptt') run(mode);
+      });
+    });
+
+    const KEYMAP: Record<string, string> = { Meta: 'super', OS: 'super', Super: 'super', Control: 'ctrl', Alt: 'alt', F9: 'f9', d: 'd', D: 'd', e: 'e', E: 'e' };
+    const isTyping = (t: EventTarget | null) =>
+      t instanceof HTMLElement && (t.isContentEditable || t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT');
+
+    document.addEventListener('keydown', (e) => {
+      if (isTyping(e.target)) return;
+      const id = KEYMAP[e.key];
+      if (!id) return;
+      setKey(id, true);
+      if (e.repeat) return;
+      if (id === 'f9') {
+        e.preventDefault();
+        holdStart();
+      } else if (id === 'd' && e.metaKey && e.ctrlKey) run('toggle');
+      else if (id === 'e' && e.metaKey && e.ctrlKey) run('command');
+      else if (id === 'd' && e.metaKey && e.altKey) run('studio');
+    });
+    document.addEventListener('keyup', (e) => {
+      const id = KEYMAP[e.key];
+      if (!id) return;
+      if (id === 'super') releaseAll();
+      else setKey(id, false);
+      if (id === 'f9') holdEnd();
+    });
+    window.addEventListener('blur', () => {
+      releaseAll();
+      if (listening === 'ptt' && !handsFree) holdEnd();
     });
   </script>
 </BaseLayout>

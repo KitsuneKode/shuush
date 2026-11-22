@@ -7,7 +7,7 @@ export async function GET(context: APIContext) {
   return rss({
     title: 'Shuush — Engineering & Benchmarks',
     description: 'Open-source local Superwhisper & Wispr Flow alternative for Linux/Wayland, built on voxtype.',
-    site: context.site ?? 'https://shuush-ochre.vercel.app',
+    site: context.site ?? 'https://shuush.kitsunekode.in',
     items: posts.map((post) => ({
       title: post.data.title,
       pubDate: new Date(post.data.pubDate),

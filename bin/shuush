@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # shuush — Superwhisper / Wispr Flow intelligence & GTK4 Studio layer for voxtype.
 # Built on top of voxtype (MIT, https://voxtype.io).
+# Website: https://shuush.kitsunekode.in
 set -euo pipefail
 
 resolve_libexec() {
@@ -27,36 +28,105 @@ Usage:
   shuush cancel [now]
   shuush postprocess [default|terminal|chat|command]
   shuush learn [list|pending|add HEARD MEANT|accept HEARD|reject HEARD|forget HEARD|fix|sync-toml]
-  shuush doctor
-  shuush wire-config       Wire [output.post_process] & profiles into ~/.config/voxtype/config.toml
+  shuush doctor [--json]   Check voxtype, GPU, compositor, Wayland, AT-SPI, services & secrets
+  shuush wire-config       Wire [output.post_process], profiles & OSD into ~/.config/voxtype/config.toml
 EOF
 }
 
-doctor() {
-  local ok=0 warn=0
-  check() {
-    local cond="$1" label="$2" hint="${3:-}"
-    if eval "$cond" >/dev/null 2>&1; then
-      printf '  [ok]   %s\n' "$label"
-      ok=$((ok + 1))
+detect_gpu() {
+  if command -v nvidia-smi >/dev/null 2>&1; then
+    local g
+    g="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1 || true)"
+    printf 'NVIDIA CUDA (%s)' "${g:-detected}"
+  elif [ -e /dev/kfd ]; then
+    printf 'AMD ROCm / Vulkan'
+  elif ls /dev/dri/renderD* >/dev/null 2>&1; then
+    printf 'Vulkan iGPU'
+  else
+    printf 'CPU'
+  fi
+}
+
+detect_compositor() {
+  if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] || command -v hyprctl >/dev/null 2>&1; then
+    if [ -d "${KUWAI_ROOT:-$HOME/.local/share/kuwai}" ] || [ -d "$HOME/Projects/rice/hypr/kuwai" ]; then
+      printf 'Hyprland (kuwai first-party)'
     else
-      printf '  [warn] %s%s\n' "$label" "${hint:+ — $hint}"
+      printf 'Hyprland'
+    fi
+  elif [ -n "${NIRI_SOCKET:-}" ] || command -v niri >/dev/null 2>&1; then
+    printf 'Niri'
+  elif [ -n "${SWAYSOCK:-}" ] || command -v swaymsg >/dev/null 2>&1; then
+    printf 'Sway'
+  elif [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    printf 'Wayland (%s)' "${XDG_CURRENT_DESKTOP:-generic}"
+  else
+    printf 'Unknown / non-Wayland'
+  fi
+}
+
+doctor() {
+  local json=0
+  [ "${1:-}" = "--json" ] && json=1
+  local g="" y="" b="" d="" r=""
+  if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "$json" = 0 ]; then
+    g=$'\033[32m'; y=$'\033[33m'; b=$'\033[1m'; d=$'\033[2m'; r=$'\033[0m'
+  fi
+
+  local ok=0 warn=0 items=()
+  local gpu comp vver
+  gpu="$(detect_gpu)"
+  comp="$(detect_compositor)"
+  vver="$(voxtype --version 2>/dev/null | head -1 || echo 'not installed')"
+
+  check() {
+    local id="$1" cond="$2" label="$3" hint="${4:-}"
+    if eval "$cond" >/dev/null 2>&1; then
+      ok=$((ok + 1))
+      if [ "$json" = 1 ]; then
+        items+=("{\"id\":\"$id\",\"status\":\"ok\",\"label\":$(jq -Rn --arg s "$label" '$s')}")
+      else
+        printf '  %s[ok]%s   %s\n' "$g" "$r" "$label"
+      fi
+    else
       warn=$((warn + 1))
+      if [ "$json" = 1 ]; then
+        items+=("{\"id\":\"$id\",\"status\":\"warn\",\"label\":$(jq -Rn --arg s "$label" '$s'),\"fix\":$(jq -Rn --arg s "$hint" '$s')}")
+      else
+        printf '  %s[warn]%s %s%s\n' "$y" "$r" "$label" "${hint:+ — $hint}"
+      fi
     fi
   }
-  echo "shuush doctor (libexec: $LIBEXEC)"
-  check 'command -v voxtype' "voxtype binary installed" "install voxtype-bin (AUR / Omarchy)"
-  check 'systemctl --user is-active --quiet voxtype.service' "voxtype.service active" "systemctl --user enable --now voxtype.service"
-  check 'command -v wl-copy && command -v wl-paste' "wl-clipboard (wl-copy / wl-paste)" "pacman -S wl-clipboard"
-  check 'command -v wtype || command -v ydotool || command -v dotool' "Wayland text injector (wtype/ydotool/dotool)" "pacman -S wtype"
-  check 'command -v jq' "jq available" "pacman -S jq"
-  check 'python3 -c "import gi; gi.require_version(\"Gtk\",\"4.0\"); gi.require_version(\"Adw\",\"1\")"' "GTK4 + Libadwaita Python bindings" "pacman -S python-gobject libadwaita gtk4"
-  check 'python3 -c "import gi; gi.require_version(\"Atspi\",\"2.0\"); from gi.repository import Atspi"' "AT-SPI screen & focused draft context (Atspi 2.0)" "pacman -S at-spi2-core python-gobject"
-  check '[ "$(gsettings get org.gnome.desktop.interface toolkit-accessibility 2>/dev/null)" = "true" ]' "AT-SPI toolkit-accessibility enabled" "gsettings set org.gnome.desktop.interface toolkit-accessibility true"
-  check '[ -f "$CONF/config.toml" ]' "voxtype config.toml exists" "run: voxtype setup"
-  check 'grep -q "postprocess" "$CONF/config.toml" 2>/dev/null' "post_process wired in config.toml" "run: shuush wire-config"
-  check '[ -f "$CONF/secrets.env" ] || curl -fsS --max-time 1 http://127.0.0.1:11434/api/tags' "LLM provider configured (secrets.env or local Ollama)" "add key to ~/.config/voxtype/secrets.env or start ollama"
-  echo "Summary: $ok ok, $warn warning(s)"
+
+  if [ "$json" = 0 ]; then
+    printf '%sshuush doctor%s %s(%s · %s · %s)%s\n' "$b" "$r" "$d" "$vver" "$gpu" "$comp" "$r"
+  fi
+
+  check "voxtype_bin"  'command -v voxtype' "voxtype binary installed ($vver)" "install voxtype-bin (AUR / Omarchy / https://voxtype.io)"
+  check "voxtype_svc"  'systemctl --user is-active --quiet voxtype.service' "voxtype.service active" "systemctl --user enable --now voxtype.service"
+  check "clipboard"    'command -v wl-copy && command -v wl-paste' "wl-clipboard (wl-copy / wl-paste)" "pacman -S wl-clipboard"
+  check "injector"     'command -v wtype || command -v ydotool || command -v dotool' "Wayland text injector (wtype/ydotool/dotool)" "pacman -S wtype"
+  check "jq"           'command -v jq' "jq available" "pacman -S jq"
+  check "gtk4"         'python3 -c "import gi; gi.require_version(\"Gtk\",\"4.0\"); gi.require_version(\"Adw\",\"1\")"' "GTK4 + Libadwaita Python bindings" "pacman -S python-gobject libadwaita gtk4"
+  check "atspi"        'python3 -c "import gi; gi.require_version(\"Atspi\",\"2.0\"); from gi.repository import Atspi"' "AT-SPI screen & focused draft context (Atspi 2.0)" "pacman -S at-spi2-core python-gobject"
+  check "a11y_flag"    '[ "$(gsettings get org.gnome.desktop.interface toolkit-accessibility 2>/dev/null)" = "true" ]' "AT-SPI toolkit-accessibility enabled" "gsettings set org.gnome.desktop.interface toolkit-accessibility true"
+  check "config_toml"  '[ -f "$CONF/config.toml" ]' "voxtype config.toml exists" "run: voxtype setup"
+  check "post_process" 'grep -q "postprocess" "$CONF/config.toml" 2>/dev/null' "post_process wired in config.toml" "run: shuush wire-config"
+  check "osd_hud"      '[ -f "$CONF/osd/kitsune-hud/KitsuneHud.qml" ]' "KitsuneHud Quickshell pill installed" "re-run: ./install.sh"
+  check "secrets_perm" '[ ! -f "$CONF/secrets.env" ] || [ "$(stat -c %a "$CONF/secrets.env")" = "600" ]' "secrets.env permissions secure (0600)" "chmod 600 $CONF/secrets.env"
+  check "no_dup_proxy" '! (systemctl --user is-active --quiet voxtype-llm-proxy.service && systemctl --user is-active --quiet shuush-llm-proxy.service)' "No duplicate LLM proxy service on port 11435" "systemctl --user disable --now voxtype-llm-proxy.service"
+  check "llm_ready"    '[ -f "$CONF/secrets.env" ] || curl -fsS --max-time 1 http://127.0.0.1:11434/api/tags' "LLM provider configured (secrets.env or local Ollama)" "open shuush studio -> Settings -> API keys or enable Offline mode"
+
+  if [ "$json" = 1 ]; then
+    printf '{"libexec":%s,"voxtype":%s,"gpu":%s,"compositor":%s,"ok":%d,"warnings":%d,"checks":[%s]}\n' \
+      "$(jq -Rn --arg s "$LIBEXEC" '$s')" \
+      "$(jq -Rn --arg s "$vver" '$s')" \
+      "$(jq -Rn --arg s "$gpu" '$s')" \
+      "$(jq -Rn --arg s "$comp" '$s')" \
+      "$ok" "$warn" "$(IFS=,; echo "${items[*]}")"
+  else
+    printf 'Summary: %d ok, %d warning(s)\n' "$ok" "$warn"
+  fi
 }
 
 wire_config() {
@@ -126,7 +196,7 @@ case "$cmd" in
   waybar)      exec "$LIBEXEC/voxtype-waybar.sh" "$@" ;;
   last)        exec "$LIBEXEC/voxtype-last.sh" "$@" ;;
   replay)      exec "$LIBEXEC/voxtype-last-audio.sh" "$@" ;;
-  doctor)      doctor ;;
+  doctor)      doctor "$@" ;;
   wire-config) wire_config ;;
   -h|--help|help) usage ;;
   *) echo "Unknown command: $cmd" >&2; usage >&2; exit 2 ;;

@@ -2,33 +2,132 @@
 import { getCollection } from 'astro:content';
 import BaseLayout from '../../layouts/BaseLayout.astro';
 
-const posts = (await getCollection('blog')).sort((a, b) =>
-  b.data.pubDate.localeCompare(a.data.pubDate)
-);
+const posts = (await getCollection('blog')).sort((a, b) => b.data.pubDate.localeCompare(a.data.pubDate));
+const fmtShort = (d: string) =>
+  new Date(`${d}T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: '2-digit', timeZone: 'UTC' });
+
+const categories = ['All', 'Architecture', 'Guides', 'Omarchy', 'Wayland', 'Local AI'];
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Blog',
+  name: 'Shuush — Engineering & Benchmarks',
+  url: new URL('/blog/', Astro.site).toString(),
+  blogPost: posts.map((p) => ({
+    '@type': 'TechArticle',
+    headline: p.data.title,
+    datePublished: p.data.pubDate,
+    url: new URL(`/blog/${p.id}/`, Astro.site).toString(),
+  })),
+};
 ---
 <BaseLayout
-  title="Blog — Shuush Engineering & Benchmarks"
-  description="Architecture deep dives, real-world ASR and LLM cleanup benchmarks, and Wayland voice dictation engineering notes from Shuush."
+  title="Writing — Shuush Engineering & Benchmarks"
+  description="Minimalist engineering notes, real-world ASR and LLM cleanup benchmarks, and Wayland voice dictation guides from Shuush."
+  jsonLd={jsonLd}
 >
-  <main class="wrap" style="padding-block:56px 88px;">
-    <div class="sec-head">
-      <span class="kicker">Engineering &amp; Benchmarks</span>
-      <h1>Shuush Blog</h1>
-      <p class="sec-sub">Real hardware telemetry, Wayland engineering notes, and open-source local AI dictation architecture.</p>
-    </div>
+  <main id="main" class="dir-wrap">
+    <div class="dir-grid">
+      <aside class="dir-rail" aria-label="Filter by topic">
+        <div class="dir-rail-list" id="dir-cats">
+          {categories.map((cat, i) => (
+            <button
+              type="button"
+              class="dir-cat"
+              data-cat={cat}
+              aria-pressed={i === 0 ? 'true' : 'false'}
+            >
+              <span>{cat}</span>
+              <span class="dir-dot" aria-hidden="true"></span>
+            </button>
+          ))}
+        </div>
+      </aside>
 
-    <div style="display:grid;gap:16px;">
-      {posts.map((post) => (
-        <a href={`/blog/${post.id}/`} class="card" style="transition:border-color 150ms ease,transform 150ms var(--ease-out);">
-          <div class="ctx-row">
-            <span class="pill pill-blue">{post.data.pubDate}</span>
-            <span class="pill">{post.data.readTime}</span>
-            {post.data.tags.slice(0, 4).map((t) => <span class="pill">{t}</span>)}
-          </div>
-          <h2 style="font-size:22px;">{post.data.title}</h2>
-          <p class="sec-sub">{post.data.description}</p>
-        </a>
-      ))}
+      <div class="dir-main">
+        <header class="dir-head">
+          <h1>Writing</h1>
+          <p class="dir-intro">
+            Notes on local GPU dictation, anti-paraphrase cleanup, and Wayland craft.
+            <span class="dir-count">{posts.length} essays</span> · <a href="/rss.xml">RSS</a> · <a href="/llms.txt">llms.txt</a>
+          </p>
+        </header>
+
+        <div class="dir-search-wrap">
+          <svg class="dir-search-ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <input
+            id="dir-search"
+            class="dir-search"
+            type="search"
+            placeholder="Search essays…"
+            aria-label="Search essays"
+            autocomplete="off"
+          />
+          <kbd class="dir-slash" aria-hidden="true">/</kbd>
+        </div>
+
+        <div class="dir-list" id="dir-list">
+          {posts.map((post) => (
+            <a
+              href={`/blog/${post.id}/`}
+              class="dir-row"
+              data-tags={post.data.tags.join('|').toLowerCase()}
+              data-text={`${post.data.title} ${post.data.description} ${post.data.tags.join(' ')}`.toLowerCase()}
+            >
+              <span class="dir-row-title">{post.data.title}</span>
+              <span class="dir-row-desc">{post.data.description}</span>
+              <time class="dir-row-date" datetime={post.data.pubDate}>{fmtShort(post.data.pubDate)}</time>
+            </a>
+          ))}
+          <p class="dir-empty" id="dir-empty" hidden>No essays match that filter.</p>
+        </div>
+      </div>
     </div>
   </main>
+
+  <script>
+    const cats = Array.from(document.querySelectorAll<HTMLButtonElement>('#dir-cats .dir-cat'));
+    const rows = Array.from(document.querySelectorAll<HTMLAnchorElement>('#dir-list .dir-row'));
+    const search = document.getElementById('dir-search') as HTMLInputElement | null;
+    const empty = document.getElementById('dir-empty');
+    let activeCat = 'all';
+
+    function filter() {
+      const q = (search?.value ?? '').trim().toLowerCase();
+      let shown = 0;
+      rows.forEach((row) => {
+        const tags = (row.dataset.tags ?? '').split('|');
+        const text = row.dataset.text ?? '';
+        const catOk = activeCat === 'all' || tags.includes(activeCat);
+        const qOk = !q || text.includes(q);
+        const vis = catOk && qOk;
+        row.hidden = !vis;
+        if (vis) shown++;
+      });
+      if (empty) empty.hidden = shown > 0;
+    }
+
+    cats.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        activeCat = (btn.dataset.cat ?? 'All').toLowerCase();
+        cats.forEach((c) => c.setAttribute('aria-pressed', String(c === btn)));
+        filter();
+      });
+    });
+
+    search?.addEventListener('input', filter);
+
+    addEventListener('keydown', (e) => {
+      if (e.key === '/' && document.activeElement !== search && !(document.activeElement instanceof HTMLInputElement)) {
+        e.preventDefault();
+        search?.focus();
+      } else if (e.key === 'Escape' && document.activeElement === search) {
+        if (search) {
+          search.value = '';
+          filter();
+          search.blur();
+        }
+      }
+    });
+  </script>
 </BaseLayout>

@@ -1,5 +1,6 @@
 ---
 import '../styles/global.css';
+import LogoMark from '../components/LogoMark.astro';
 
 interface Props {
   title: string;
@@ -13,12 +14,13 @@ const {
   title,
   description,
   ogType = 'website',
-  ogImage = '/assets/architecture.png',
+  ogImage = '/og.png',
   jsonLd,
 } = Astro.props;
 
 const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 const absoluteOgImage = new URL(ogImage, Astro.site).toString();
+const onBlog = Astro.url.pathname.startsWith('/blog');
 ---
 <!DOCTYPE html>
 <html lang="en">
@@ -27,8 +29,12 @@ const absoluteOgImage = new URL(ogImage, Astro.site).toString();
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{title}</title>
   <meta name="description" content={description} />
+  <meta name="theme-color" content="#0e0c0a" />
   <link rel="canonical" href={canonicalURL.toString()} />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
   <link rel="alternate" type="application/rss+xml" title="Shuush Blog RSS" href="/rss.xml" />
+  <meta property="og:site_name" content="Shuush" />
   <meta property="og:type" content={ogType} />
   <meta property="og:url" content={canonicalURL.toString()} />
   <meta property="og:title" content={title} />
@@ -40,33 +46,58 @@ const absoluteOgImage = new URL(ogImage, Astro.site).toString();
   <meta name="twitter:image" content={absoluteOgImage} />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:wght@400..700&family=Geist+Mono:wght@400..600&family=Newsreader:ital,opsz,wght@1,6..72,400&display=swap" rel="stylesheet" />
   {jsonLd && <script type="application/ld+json" set:html={JSON.stringify(jsonLd)} />}
 </head>
 <body>
+  <a class="skip" href="#main">Skip to content</a>
   <header class="nav">
     <div class="wrap nav-inner">
-      <a href="/" class="brand"><span class="brand-dot" aria-hidden="true"></span>Shuush</a>
+      <a href="/" class="brand" aria-label="Shuush home"><LogoMark />Shuush</a>
       <nav class="nav-links" aria-label="Primary">
-        <a href="/#studio">Studio</a>
-        <a href="/#pill">KitsuneHud</a>
-        <a href="/#compare">Compare</a>
-        <a href="/blog/">Blog</a>
-        <a href="https://github.com/KitsuneKode/shuush" class="btn btn-secondary" style="padding-block:6px;padding-inline:12px;min-block-size:34px;">GitHub ↗</a>
+        <a href="/#keys" class="hide-sm">Hotkeys</a>
+        <a href="/#studio" class="hide-sm">Studio</a>
+        <a href="/#compare" class="hide-sm">Compare</a>
+        <a href="/blog/" aria-current={onBlog ? 'page' : undefined}>Blog</a>
+        <a href="https://github.com/KitsuneKode/shuush" class="btn btn-ghost btn-sm">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.26.45-2.28 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.83 1.19 3.09 0 4.41-2.69 5.38-5.26 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"/></svg>
+          GitHub
+        </a>
       </nav>
     </div>
   </header>
 
   <slot />
 
-  <footer>
-    <div class="wrap foot-inner">
-      <span>Shuush · MIT License · Built on <a href="https://github.com/peteonrails/voxtype" style="text-decoration:underline;">voxtype</a> by Peter Jackson.</span>
-      <div style="display:flex;gap:18px;">
-        <a href="/blog/">Blog</a>
-        <a href="/rss.xml">RSS</a>
-        <a href="/llms.txt">llms.txt</a>
-        <a href="https://github.com/KitsuneKode/shuush">GitHub</a>
+  <footer class="foot">
+    <div class="wrap">
+      <div class="foot-grid">
+        <div>
+          <a href="/" class="brand" aria-label="Shuush home"><LogoMark />Shuush</a>
+          <p>
+            Local, context-aware voice dictation for Linux &amp; Wayland. MIT licensed. A companion layer built on
+            <a href="https://github.com/peteonrails/voxtype">voxtype</a> by Peter Jackson (MIT) — not a fork.
+          </p>
+        </div>
+        <div class="foot-col">
+          <b>Product</b>
+          <a href="/#keys">Hotkeys</a>
+          <a href="/#studio">Studio</a>
+          <a href="/#install">Install</a>
+          <a href="/#faq">FAQ</a>
+        </div>
+        <div class="foot-col">
+          <b>Open</b>
+          <a href="https://github.com/KitsuneKode/shuush">GitHub</a>
+          <a href="https://github.com/peteonrails/voxtype">voxtype</a>
+          <a href="/blog/">Blog</a>
+          <a href="/rss.xml">RSS</a>
+          <a href="/llms.txt">llms.txt</a>
+        </div>
+      </div>
+      <div class="foot-base">
+        <span>© 2026 KitsuneKode · MIT License</span>
+        <span>Say it once. It lands exact.</span>
       </div>
     </div>
   </footer>

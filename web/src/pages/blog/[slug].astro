@@ -12,17 +12,41 @@ export async function getStaticPaths() {
 
 const { post } = Astro.props;
 const { Content } = await render(post);
+const url = new URL(`/blog/${post.id}/`, Astro.site).toString();
+const monthYear = new Date(`${post.data.pubDate}T00:00:00Z`).toLocaleDateString('en-US', {
+  year: 'numeric',
+  month: 'long',
+  timeZone: 'UTC',
+});
 
 const jsonLd = {
   '@context': 'https://schema.org',
-  '@type': 'TechArticle',
-  headline: post.data.title,
-  description: post.data.description,
-  datePublished: post.data.pubDate,
-  dateModified: post.data.pubDate,
-  author: { '@type': 'Person', name: 'KitsuneKode', url: 'https://github.com/KitsuneKode' },
-  image: new URL(post.data.heroImage, Astro.site).toString(),
-  keywords: post.data.tags.join(', '),
+  '@graph': [
+    {
+      '@type': 'TechArticle',
+      headline: post.data.title,
+      description: post.data.description,
+      datePublished: post.data.pubDate,
+      dateModified: post.data.pubDate,
+      mainEntityOfPage: url,
+      author: { '@type': 'Person', name: 'KitsuneKode', url: 'https://github.com/KitsuneKode' },
+      publisher: {
+        '@type': 'Organization',
+        name: 'Shuush',
+        logo: { '@type': 'ImageObject', url: new URL('/apple-touch-icon.png', Astro.site).toString() },
+      },
+      image: new URL(post.data.heroImage, Astro.site).toString(),
+      keywords: post.data.tags.join(', '),
+    },
+    {
+      '@type': 'BreadcrumbList',
+      itemListElement: [
+        { '@type': 'ListItem', position: 1, name: 'Shuush', item: new URL('/', Astro.site).toString() },
+        { '@type': 'ListItem', position: 2, name: 'Writing', item: new URL('/blog/', Astro.site).toString() },
+        { '@type': 'ListItem', position: 3, name: post.data.title, item: url },
+      ],
+    },
+  ],
 };
 ---
 <BaseLayout
@@ -32,13 +56,46 @@ const jsonLd = {
   ogImage={post.data.heroImage}
   jsonLd={jsonLd}
 >
-  <article class="prose">
-    <div class="ctx-row" style="margin-block-end:16px;">
-      <span class="pill pill-blue">{post.data.pubDate}</span>
-      <span class="pill">{post.data.readTime}</span>
-      {post.data.tags.map((t) => <span class="pill">{t}</span>)}
-    </div>
-    <h1>{post.data.title}</h1>
-    <Content />
-  </article>
+  <div class="progress" id="progress" aria-hidden="true"></div>
+  <main id="main">
+    <article class="essay">
+      <header class="essay-head">
+        <a href="/blog/" class="back">← Writing</a>
+        <h1>{post.data.title}</h1>
+        <p class="essay-byline">
+          <time datetime={post.data.pubDate}>{monthYear}</time>
+          <span aria-hidden="true">·</span>
+          <span>KitsuneKode</span>
+          <span aria-hidden="true">·</span>
+          <span>{post.data.readTime}</span>
+        </p>
+      </header>
+      <div class="prose essay-prose">
+        <Content />
+      </div>
+      <footer class="essay-foot">
+        <span>Try Shuush on stock <code>voxtype-bin</code>:</span>
+        <code>curl -fsSL https://shuush.kitsunekode.in/install.sh | bash</code>
+      </footer>
+    </article>
+  </main>
+
+  <script>
+    if (!CSS.supports('animation-timeline: scroll()')) {
+      const bar = document.getElementById('progress');
+      let queued = false;
+      const update = () => {
+        queued = false;
+        const max = document.documentElement.scrollHeight - innerHeight;
+        if (bar) bar.style.transform = `scaleX(${max > 0 ? Math.min(1, scrollY / max) : 0})`;
+      };
+      addEventListener('scroll', () => {
+        if (!queued) {
+          queued = true;
+          requestAnimationFrame(update);
+        }
+      }, { passive: true });
+      update();
+    }
+  </script>
 </BaseLayout>

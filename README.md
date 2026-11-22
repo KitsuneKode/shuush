@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/architecture.svg" alt="Shuush + voxtype architecture" width="100%" />
+  <img src="assets/logo.svg" alt="Shuush logo" width="76" height="76" />
 </p>
 
 <h1 align="center">Shuush</h1>
@@ -9,10 +9,14 @@
 </p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-4ade80?style=flat-square&labelColor=121318" /></a>
-  <img alt="Wayland Native" src="https://img.shields.io/badge/Wayland-Hyprland%20%7C%20Sway%20%7C%20Niri-60a5fa?style=flat-square&labelColor=121318" />
-  <img alt="GPU Support" src="https://img.shields.io/badge/GPU-CUDA%20%7C%20ROCm%20%7C%20Vulkan%20%7C%20CPU-a78bfa?style=flat-square&labelColor=121318" />
-  <img alt="Zero Cloud Limits" src="https://img.shields.io/badge/word%20limit-unlimited-fbbf24?style=flat-square&labelColor=121318" />
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-6ae5b7?style=flat-square&labelColor=181512" /></a>
+  <img alt="Wayland Native" src="https://img.shields.io/badge/Wayland-Hyprland%20%7C%20Sway%20%7C%20Niri-f86649?style=flat-square&labelColor=181512" />
+  <img alt="GPU Support" src="https://img.shields.io/badge/GPU-CUDA%20%7C%20ROCm%20%7C%20Vulkan%20%7C%20CPU-f5efe4?style=flat-square&labelColor=181512" />
+  <img alt="Zero Cloud Limits" src="https://img.shields.io/badge/word%20limit-unlimited-eab308?style=flat-square&labelColor=181512" />
+</p>
+
+<p align="center">
+  <img src="assets/architecture.svg" alt="Shuush + voxtype architecture" width="100%" />
 </p>
 
 <p align="center">
@@ -27,7 +31,7 @@
 > **Powered by [`peteonrails/voxtype`](https://github.com/peteonrails/voxtype) (MIT, Peter Jackson).**
 > Shuush does **not** fork or replace your `voxtype` binary — it drops cleanly on top of stock `voxtype-bin` from Arch AUR or Omarchy repos with one command.
 >
-> **Links:** [Live Website](https://shuush-ochre.vercel.app/) · [Architecture &amp; Benchmarks Blog](https://shuush-ochre.vercel.app/blog/why-we-built-shuush/) · [Launch Video (1080p MP4)](assets/shuush-launch.mp4) · [Sandbox Test Suite](tests/test_sandbox.sh)
+> **Links:** [Live Website](https://shuush.kitsunekode.in/) · [Architecture &amp; Benchmarks Blog](https://shuush.kitsunekode.in/blog/why-we-built-shuush/) · [1-Line Installer](https://shuush.kitsunekode.in/install.sh) · [Pre-Flight Doctor](https://shuush.kitsunekode.in/doctor.sh) · [Launch Video (1080p MP4)](assets/shuush-launch.mp4)
 
 ---
 
@@ -101,7 +105,19 @@ voxtype setup
 > - **AMD / Intel** → Vulkan (`whisper large-v3-turbo` or `cohere` GGUF)
 > - **CPU-only laptops** → AVX2 / ONNX int8
 
-### 2. Install Shuush
+### 2. Install Shuush (1 line)
+
+```bash
+curl -fsSL https://shuush.kitsunekode.in/install.sh | bash
+```
+
+Or inspect before running / check readiness first:
+
+```bash
+curl -fsSL https://shuush.kitsunekode.in/doctor.sh | bash
+```
+
+Or clone manually:
 
 ```bash
 git clone https://github.com/KitsuneKode/shuush.git
