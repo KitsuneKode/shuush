@@ -1,0 +1,13 @@
+[Unit]
+Description=Shuush warm TLS keep-alive proxy for dictation cleanup LLMs
+PartOf=voxtype.service
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 @LIBEXEC@/voxtype-llm-proxy.py
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=voxtype.service

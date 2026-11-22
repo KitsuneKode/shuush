@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 420" width="1120" height="420" role="img" aria-label="Shuush + voxtype architecture">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b0c0f"/>
+      <stop offset="100%" stop-color="#11131a"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#4ade80"/>
+    </linearGradient>
+    <filter id="glow" x="-15%" y="-15%" width="130%" height="130%">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <style>
+      .kicker { font: 600 10.5px "Inter", system-ui, sans-serif; fill: #71717a; letter-spacing: 1.1px; }
+      .title  { font: 700 22px "Inter", system-ui, sans-serif; fill: #fafafa; letter-spacing: -0.4px; }
+      .sub    { font: 400 13px "Inter", system-ui, sans-serif; fill: #a1a1aa; }
+      .card-t { font: 600 13.5px "Inter", system-ui, sans-serif; fill: #f4f4f6; }
+      .card-s { font: 400 11.5px "Inter", system-ui, sans-serif; fill: #a1a1aa; }
+      .mono   { font: 500 10.5px "Fira Code", ui-monospace, monospace; fill: #93c5fd; }
+      .pill-g { font: 600 10.5px "Inter", system-ui, sans-serif; fill: #4ade80; }
+      .pill-b { font: 600 10.5px "Inter", system-ui, sans-serif; fill: #93c5fd; }
+      .pill-a { font: 600 10.5px "Inter", system-ui, sans-serif; fill: #fbbf24; }
+    </style>
+  </defs>
+
+  <rect width="1120" height="420" rx="18" fill="url(#bg)" stroke="#ffffff" stroke-opacity="0.08"/>
+
+  <!-- Header -->
+  <text x="36" y="44" class="title">Shuush + voxtype</text>
+  <text x="234" y="44" class="sub">Local GPU Dictation · 5-Source Context · Anti-Paraphrase Cleanup · Self-Learning GTK4 Studio</text>
+  <rect x="944" y="24" width="140" height="26" rx="13" fill="#22c55e" fill-opacity="0.14" stroke="#4ade80" stroke-opacity="0.35"/>
+  <text x="1014" y="41" text-anchor="middle" class="pill-g">● 0 CLOUD LIMITS</text>
+
+  <!-- Stage 1: Capture + Local ASR -->
+  <rect x="36" y="76" width="230" height="196" rx="14" fill="#121318" stroke="#ffffff" stroke-opacity="0.09"/>
+  <text x="54" y="102" class="kicker">01 · LOCAL ASR (VOXTYPE)</text>
+  <text x="54" y="128" class="card-t">Push-to-Talk &amp; Hands-Free</text>
+  <text x="54" y="148" class="card-s">Super+Ctrl+D · Hold/Tap F9</text>
+  <text x="54" y="166" class="card-s">Super+Ctrl+E Voice Command</text>
+  <rect x="54" y="184" width="194" height="34" rx="8" fill="#181a22" stroke="#ffffff" stroke-opacity="0.07"/>
+  <text x="151" y="205" text-anchor="middle" class="mono">Parakeet · Whisper · Cohere</text>
+  <text x="54" y="242" class="card-s">CUDA · ROCm/Vulkan · CPU</text>
+  <text x="54" y="258" class="pill-b">KitsuneHud live waveform pill</text>
+
+  <!-- Arrow 1 -->
+  <path d="M266 174 L296 174" stroke="url(#accent)" stroke-width="2" fill="none"/>
+  <polygon points="296,169 306,174 296,179" fill="#60a5fa"/>
+
+  <!-- Stage 2: 5-Source Context -->
+  <rect x="308" y="76" width="244" height="196" rx="14" fill="#121318" stroke="#60a5fa" stroke-opacity="0.28"/>
+  <text x="326" y="102" class="kicker">02 · 5-SOURCE CONTEXT</text>
+  <text x="326" y="128" class="card-t">Grounded Before Cleanup</text>
+  <text x="326" y="150" class="card-s">• Active app &amp; window title</text>
+  <text x="326" y="170" class="card-s">• AT-SPI &lt;screen&gt; &amp; &lt;draft&gt;</text>
+  <text x="326" y="190" class="card-s">• Highlighted &lt;selection&gt;</text>
+  <text x="326" y="210" class="card-s">• Fresh ≤15s &lt;clipboard&gt;</text>
+  <text x="326" y="230" class="card-s">• &lt;now&gt; date + privacy guard</text>
+  <text x="326" y="256" class="pill-a">Password fields bypass LLM</text>
+
+  <!-- Arrow 2 -->
+  <path d="M552 174 L582 174" stroke="url(#accent)" stroke-width="2" fill="none"/>
+  <polygon points="582,169 592,174 582,179" fill="#4ade80"/>
+
+  <!-- Stage 3: Anti-Paraphrase Cleanup -->
+  <rect x="594" y="76" width="244" height="196" rx="14" fill="#121318" stroke="#ffffff" stroke-opacity="0.09"/>
+  <text x="612" y="102" class="kicker">03 · CLEANUP &amp; SPAN GATE</text>
+  <text x="612" y="128" class="card-t">Fast Failover or 100% Local</text>
+  <rect x="612" y="142" width="208" height="28" rx="7" fill="#181a22" stroke="#ffffff" stroke-opacity="0.07"/>
+  <text x="716" y="160" text-anchor="middle" class="mono">Ollama / Groq → OpenRouter</text>
+  <text x="612" y="192" class="card-s">• Anti-paraphrase span gate</text>
+  <text x="612" y="212" class="card-s">• Warm TLS keep-alive proxy</text>
+  <text x="612" y="232" class="card-s">• Refocuses original window</text>
+  <text x="612" y="256" class="pill-g">~500ms median · 0 dropped text</text>
+
+  <!-- Arrow 3 -->
+  <path d="M838 174 L868 174" stroke="url(#accent)" stroke-width="2" fill="none"/>
+  <polygon points="868,169 878,174 868,179" fill="#4ade80"/>
+
+  <!-- Stage 4: GTK4 Studio & Self-Learning -->
+  <rect x="880" y="76" width="204" height="196" rx="14" fill="#121318" stroke="#4ade80" stroke-opacity="0.28"/>
+  <text x="898" y="102" class="kicker">04 · SHUUSH STUDIO</text>
+  <text x="898" y="128" class="card-t">Native GTK4 + Adw</text>
+  <text x="898" y="150" class="card-s">• Live history + inline diff</text>
+  <text x="898" y="170" class="card-s">• Insights &amp; 14d volume</text>
+  <text x="898" y="190" class="card-s">• Phonetic auto-learning</text>
+  <text x="898" y="210" class="card-s">• DnD provider chain</text>
+  <text x="898" y="230" class="card-s">• Offline toggle + API keys</text>
+  <text x="898" y="256" class="pill-b">Syncs straight to daemon</text>
+
+  <!-- Feedback Loop Bar at bottom -->
+  <rect x="36" y="302" width="1048" height="86" rx="14" fill="#121318" stroke="#ffffff" stroke-opacity="0.08"/>
+  <text x="58" y="330" class="kicker">SELF-LEARNING MEMORY LOOP (ZERO ENGLISH-WORD POISONING)</text>
+  <text x="58" y="356" class="card-t">Edit 1 word or accept in Auto-Mine  →  Phonetic + Casing Guard  →  corrections.tsv + vocabulary.txt + config.toml [text] replacements</text>
+  <text x="58" y="376" class="card-s">Works out of the box with stock voxtype-bin on Arch / Omarchy / Hyprland / Sway / Niri · First-party kuwai rice integration · MIT License</text>
+</svg>

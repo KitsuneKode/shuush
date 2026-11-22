@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+# voxtype-toggle.sh — start and stop dictation from Hyprland binds, with the
+# cleanup profile that suits the focused app.
+#
+#   voxtype-toggle.sh            toggle (Super+Ctrl+D, the Copilot key)
+#   voxtype-toggle.sh hold       F9 down: start; while hands-free, stop
+#   voxtype-toggle.sh release    F9 up: stop; after a tap (under 300 ms) keep
+#                                listening hands-free until F9 is pressed again
+#   voxtype-toggle.sh command    edit the selection by voice (again to stop):
+#                                say "shorter", "translate to Hindi", …
+#
+# Every start goes through here, so the cleanup always knows which window the
+# take belongs to (target_window: class, title, pid) and which profile fits:
+# terminals/editors get literal technical cleanup, chat apps casual, the rest
+# the default. Stopping ignores the profile (the daemon keeps the one the
+# recording started with).
+
+set -u
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+verb="${1:-toggle}"
+rt="${XDG_RUNTIME_DIR:-/run/user/$UID}/voxtype"
+mkdir -p "$rt"
+state=$(cat "$rt/state" 2>/dev/null || echo idle)
+now_ms() { date +%s%3N; }
+
+# Pressed while "Polishing": skip the cleanup script and type the raw
+# transcript now. (A plain toggle here would queue a NEW recording that
+# starts the moment the text lands.)
+polishing_now() {
+    # This path skips the cleanup script, so the script will not clear the border.
+    "$SCRIPT_DIR/voxtype-outline.sh" off >/dev/null 2>&1 || true
+    exec voxtype record stop --no-post-process
+}
+
+active_window_json() {
+    if command -v hyprctl >/dev/null 2>&1; then
+        hyprctl activewindow -j 2>/dev/null | jq -c '{address, class, title, pid}' 2>/dev/null && return
+    fi
+    if command -v niri >/dev/null 2>&1; then
+        niri msg -j focused-window 2>/dev/null | jq -c '{address: (.id|tostring), class: (.app_id // ""), title: (.title // ""), pid: (.pid // 0)}' 2>/dev/null && return
+    fi
+    if command -v swaymsg >/dev/null 2>&1; then
+        swaymsg -t get_tree 2>/dev/null | jq -c '.. | objects | select(.focused? == true) | {address: (.id|tostring), class: (.app_id // .window_properties.class // ""), title: (.name // ""), pid: (.pid // 0)}' 2>/dev/null | head -1 && return
+    fi
+    printf '{}'
+}
+
+start() {  # [profile]
+    rm -f "$rt/handsfree"
+    win=$(active_window_json)
+    [ -n "$win" ] || win='{}'
+    # Which window this take belongs to. The pill reads the class, and the
+    # cleanup puts the text back here if focus moves while it is polishing.
+    printf '%s' "$win" > "$rt/target_window.tmp" 2>/dev/null \
+        && mv -f "$rt/target_window.tmp" "$rt/target_window"
+    # A thicker border on that window until the text lands. Color is left alone.
+    "$SCRIPT_DIR/voxtype-outline.sh" on >/dev/null 2>&1 || true
+    # Superwhisper-style context capture at record start: highlighted primary
+    # selection (for normal dictation too) and a baseline hash of the clipboard
+    # so postprocess only uses clipboard text copied right before or during talk.
+    (
+        umask 077
+        sel=$(timeout 0.15 wl-paste --primary --no-newline 2>/dev/null | head -c 600 || true)
+        if [ -n "${sel//[[:space:]]/}" ]; then
+            printf '%s' "$sel" > "$rt/take_selection"
+        else
+            rm -f "$rt/take_selection"
+        fi
+        clip=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 || true)
+        if [ -n "${clip//[[:space:]]/}" ]; then
+            chash=$(printf '%s' "$clip" | sha256sum | awk '{print $1}')
+            prev_hash=$(awk 'NR==1{print $1}' "$rt/clip_seen" 2>/dev/null || true)
+            prev_ts=$(awk 'NR==2{print $1}' "$rt/clip_seen" 2>/dev/null || echo 0)
+            now_s=$(date +%s)
+            if [ "$chash" != "$prev_hash" ]; then
+                printf '%s\n%s\n' "$chash" "$now_s" > "$rt/clip_seen"
+            fi
+            printf '%s\n%s\n' "$chash" "$now_s" > "$rt/take_clip_start"
+        else
+            rm -f "$rt/take_clip_start"
+        fi
+    ) >/dev/null 2>&1 &
+    profile="${1:-}"
+    if [ -z "$profile" ]; then
+        class=$(printf '%s' "$win" | jq -r '.class // empty' 2>/dev/null | tr '[:upper:]' '[:lower:]')
+        case "$class" in
+            ghostty|kitty|alacritty|foot|wezterm|konsole|xterm|*terminal*|neovide|cursor|code|code-oss|zed|dev.zed*|com.t3tools.t3code|devin-desktop*|jetbrains-*|obsidian)
+                profile=terminal ;;
+            zapzap|slack|discord|vesktop|webcord|telegram*|whatsapp*|signal*|beeper*|ferdium*|franz*)
+                profile=chat ;;
+        esac
+    fi
+    if [ -n "$profile" ]; then
+        exec voxtype record start --profile "$profile"
+    fi
+    exec voxtype record start
+}
+
+case "$verb" in
+    toggle)
+        case "$state" in
+            transcribing) polishing_now ;;
+            idle|"") start ;;
+            *) rm -f "$rt/handsfree"; exec voxtype record toggle ;;
+        esac ;;
+
+    hold)
+        case "$state" in
+            idle|"")
+                rm -f "$rt/hold_ignore_release"
+                now_ms > "$rt/hold_start"
+                start ;;
+            recording|streaming)
+                # Hands-free (or a toggle take): this press ends it, and
+                # its release must not count as a tap.
+                : > "$rt/hold_ignore_release"
+                rm -f "$rt/handsfree"
+                exec voxtype record stop ;;
+            *)
+                : > "$rt/hold_ignore_release"
+                exit 0 ;;
+        esac ;;
+
+    release)
+        if [ -f "$rt/hold_ignore_release" ]; then
+            rm -f "$rt/hold_ignore_release"
+            exit 0
+        fi
+        held=$(( $(now_ms) - $(cat "$rt/hold_start" 2>/dev/null || echo 0) ))
+        if [ "$held" -lt "${VOXTYPE_TAP_MS:-300}" ]; then
+            # A tap: nothing worth transcribing was said yet, so it means
+            # "keep listening". The pill reads handsfree.
+            now_ms > "$rt/handsfree"
+            exit 0
+        fi
+        exec voxtype record stop ;;
+
+    command)
+        case "$state" in
+            transcribing) polishing_now ;;
+            idle|"") ;;
+            *) exec voxtype record stop ;;
+        esac
+        # What is highlighted now (the primary selection). Empty: the model
+        # writes what was asked for instead of rewriting.
+        sel=$(timeout 0.4 wl-paste --primary --no-newline 2>/dev/null | head -c 12000)
+        if [ -n "${sel//[[:space:]]/}" ]; then
+            (umask 077; printf '%s' "$sel" > "$rt/command_selection")
+        else
+            rm -f "$rt/command_selection"
+        fi
+        start command ;;
+
+    *)
+        echo "usage: voxtype-toggle.sh [toggle|hold|release|command]" >&2
+        exit 2 ;;
+esac

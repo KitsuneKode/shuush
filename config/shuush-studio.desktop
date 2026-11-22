@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Shuush Studio
+GenericName=Voice Dictation Control Center
+Comment=Dictation history, visual diff, insights, self-learning dictionary & voxtype settings
+Exec=@BIN_DIR@/shuush-studio
+Icon=audio-input-microphone
+Terminal=false
+Categories=AudioVideo;Utility;GTK;
+StartupWMClass=dev.kitsunekode.voxtype-studio

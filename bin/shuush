@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# shuush — Superwhisper / Wispr Flow intelligence & GTK4 Studio layer for voxtype.
+# Built on top of voxtype (MIT, https://voxtype.io).
+set -euo pipefail
+
+resolve_libexec() {
+  local self dir
+  self="$(readlink -f "${BASH_SOURCE[0]}")"
+  dir="$(cd "$(dirname "$self")/.." && pwd)"
+  if [ -d "$dir/libexec" ]; then
+    printf '%s\n' "$dir/libexec"
+  else
+    printf '%s\n' "${XDG_DATA_HOME:-$HOME/.local/share}/shuush/libexec"
+  fi
+}
+
+LIBEXEC="$(resolve_libexec)"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
+
+usage() {
+  cat <<'EOF'
+shuush — context-aware cleanup, self-learning & GTK4 Studio for voxtype
+
+Usage:
+  shuush studio [--tab history|insights|corrections|vocab|snippets|settings]
+  shuush toggle | hold | release | command
+  shuush cancel [now]
+  shuush postprocess [default|terminal|chat|command]
+  shuush learn [list|pending|add HEARD MEANT|accept HEARD|reject HEARD|forget HEARD|fix|sync-toml]
+  shuush doctor
+  shuush wire-config       Wire [output.post_process] & profiles into ~/.config/voxtype/config.toml
+EOF
+}
+
+doctor() {
+  local ok=0 warn=0
+  check() {
+    local cond="$1" label="$2" hint="${3:-}"
+    if eval "$cond" >/dev/null 2>&1; then
+      printf '  [ok]   %s\n' "$label"
+      ok=$((ok + 1))
+    else
+      printf '  [warn] %s%s\n' "$label" "${hint:+ — $hint}"
+      warn=$((warn + 1))
+    fi
+  }
+  echo "shuush doctor (libexec: $LIBEXEC)"
+  check 'command -v voxtype' "voxtype binary installed" "install voxtype-bin (AUR / Omarchy)"
+  check 'systemctl --user is-active --quiet voxtype.service' "voxtype.service active" "systemctl --user enable --now voxtype.service"
+  check 'command -v wl-copy && command -v wl-paste' "wl-clipboard (wl-copy / wl-paste)" "pacman -S wl-clipboard"
+  check 'command -v wtype || command -v ydotool || command -v dotool' "Wayland text injector (wtype/ydotool/dotool)" "pacman -S wtype"
+  check 'command -v jq' "jq available" "pacman -S jq"
+  check 'python3 -c "import gi; gi.require_version(\"Gtk\",\"4.0\"); gi.require_version(\"Adw\",\"1\")"' "GTK4 + Libadwaita Python bindings" "pacman -S python-gobject libadwaita gtk4"
+  check 'python3 -c "import gi; gi.require_version(\"Atspi\",\"2.0\"); from gi.repository import Atspi"' "AT-SPI screen & focused draft context (Atspi 2.0)" "pacman -S at-spi2-core python-gobject"
+  check '[ "$(gsettings get org.gnome.desktop.interface toolkit-accessibility 2>/dev/null)" = "true" ]' "AT-SPI toolkit-accessibility enabled" "gsettings set org.gnome.desktop.interface toolkit-accessibility true"
+  check '[ -f "$CONF/config.toml" ]' "voxtype config.toml exists" "run: voxtype setup"
+  check 'grep -q "postprocess" "$CONF/config.toml" 2>/dev/null' "post_process wired in config.toml" "run: shuush wire-config"
+  check '[ -f "$CONF/secrets.env" ] || curl -fsS --max-time 1 http://127.0.0.1:11434/api/tags' "LLM provider configured (secrets.env or local Ollama)" "add key to ~/.config/voxtype/secrets.env or start ollama"
+  echo "Summary: $ok ok, $warn warning(s)"
+}
+
+wire_config() {
+  local cfg="$CONF/config.toml"
+  local pp_cmd="$LIBEXEC/voxtype-postprocess.sh"
+  mkdir -p "$CONF"
+  if [ ! -f "$cfg" ]; then
+    echo "No $cfg found — run 'voxtype setup' first, then re-run 'shuush wire-config'." >&2
+    exit 1
+  fi
+  cp -a "$cfg" "$cfg.bak.$(date +%Y%m%d-%H%M%S)"
+  python3 - "$cfg" "$pp_cmd" <<'PY'
+import re, sys
+from pathlib import Path
+
+cfg = Path(sys.argv[1])
+pp = sys.argv[2]
+text = cfg.read_text(encoding="utf-8")
+
+block = f'''[output.post_process]
+command = "{pp}"
+timeout_ms = 20000
+'''
+
+if re.search(r'^\[output\.post_process\]', text, re.M):
+    text = re.sub(
+        r'(\[output\.post_process\][^\[]*?^\s*command\s*=\s*)"[^"]*"',
+        rf'\1"{pp}"',
+        text,
+        count=1,
+        flags=re.M | re.S,
+    )
+else:
+    text = text.rstrip() + "\n\n" + block
+
+for prof in ("terminal", "chat", "command"):
+    hdr = f"[profiles.{prof}]"
+    if hdr not in text:
+        text += f'\n{hdr}\npost_process_command = "{pp} {prof}"\n'
+
+if "[osd]" not in text:
+    text += '\n[osd]\nfrontend = "quickshell"\nstyle = "kitsune-hud"\nposition = "bottom-center"\nmargin_px = 20\n'
+
+tmp = cfg.with_suffix(".tmp")
+tmp.write_text(text, encoding="utf-8")
+tmp.replace(cfg)
+print(f"Wired post_process, profiles, and kitsune-hud OSD in {cfg}")
+PY
+}
+
+cmd="${1:-help}"
+shift || true
+case "$cmd" in
+  studio)      exec python3 "$LIBEXEC/voxtype-studio.py" "$@" ;;
+  toggle|hold|release|command) exec "$LIBEXEC/voxtype-toggle.sh" "$cmd" "$@" ;;
+  cancel)      exec "$LIBEXEC/voxtype-cancel.sh" "$@" ;;
+  postprocess) exec "$LIBEXEC/voxtype-postprocess.sh" "$@" ;;
+  learn)       exec python3 "$LIBEXEC/voxtype_learn.py" "$@" ;;
+  waybar)      exec "$LIBEXEC/voxtype-waybar.sh" "$@" ;;
+  last)        exec "$LIBEXEC/voxtype-last.sh" "$@" ;;
+  replay)      exec "$LIBEXEC/voxtype-last-audio.sh" "$@" ;;
+  doctor)      doctor ;;
+  wire-config) wire_config ;;
+  -h|--help|help) usage ;;
+  *) echo "Unknown command: $cmd" >&2; usage >&2; exit 2 ;;
+esac
