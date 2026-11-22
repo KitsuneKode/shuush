@@ -4,9 +4,12 @@
 
 ## Canonical URLs
 - Site: https://shuush.kitsunekode.in/
+- Writing Index: https://shuush.kitsunekode.in/blog/
 - 1-Line Installer: https://shuush.kitsunekode.in/install.sh
 - Pre-Flight Doctor: https://shuush.kitsunekode.in/doctor.sh
 - Launch Blog & Benchmarks: https://shuush.kitsunekode.in/blog/why-we-built-shuush/
+- Anti-Paraphrase Span Gate Architecture: https://shuush.kitsunekode.in/blog/anti-paraphrase-span-gate/
+- Omarchy & Hyprland Superwhisper Guide: https://shuush.kitsunekode.in/blog/omarchy-hyprland-superwhisper-alternative/
 - RSS Feed: https://shuush.kitsunekode.in/rss.xml
 - GitHub Repository: https://github.com/KitsuneKode/shuush
 

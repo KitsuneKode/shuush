@@ -53,7 +53,10 @@ const jsonLd = {
   title={`${post.data.title} — Shuush`}
   description={post.data.description}
   ogType="article"
-  ogImage={post.data.heroImage}
+  ogImage="/og.png"
+  ogImageAlt={post.data.title}
+  publishedTime={`${post.data.pubDate}T00:00:00Z`}
+  modifiedTime={`${post.data.updatedDate ?? post.data.pubDate}T00:00:00Z`}
   jsonLd={jsonLd}
 >
   <div class="progress" id="progress" aria-hidden="true"></div>

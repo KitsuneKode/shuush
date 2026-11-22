@@ -140,8 +140,8 @@ const specs = [
 const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15H4.5A1.5 1.5 0 0 1 3 13.5v-9A1.5 1.5 0 0 1 4.5 3h9A1.5 1.5 0 0 1 15 4.5V5"/></svg><svg class="ic-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>`;
 ---
 <BaseLayout
-  title="Shuush — Open-Source Local Superwhisper & Wispr Flow Alternative for Linux"
-  description="Free, MIT open-source local GPU voice dictation studio and context-aware cleanup layer built on voxtype for Linux & Wayland (Hyprland, Omarchy, Sway, Niri). 19,498 real words benchmarked, 516ms P50, air-gapped Ollama mode."
+  title="Shuush — Local Superwhisper & Wispr Alternative for Linux"
+  description="Free MIT local GPU voice dictation for Linux & Wayland on stock voxtype. 5-source screen context, 516ms P50 cleanup, offline Ollama mode & native GTK4 Studio."
   jsonLd={jsonLd}
 >
   <main id="main">
@@ -201,7 +201,7 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
 
         <figure class="stage hero-video rise" style="--i:5; margin-inline:0; margin-block-end:0;">
           <figcaption class="stage-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>shuush-launch.mp4<span class="rec">1080p</span></figcaption>
-          <video class="stage-media" controls muted loop playsinline preload="metadata" poster="/assets/shuush-outro.png" width="1920" height="1080" data-autoplay aria-label="Shuush launch video: dictating into a terminal on Hyprland">
+          <video class="stage-media" controls muted loop playsinline preload="metadata" poster="/assets/shuush-outro.webp" width="1920" height="1080" data-autoplay aria-label="Shuush launch video: dictating into a terminal on Hyprland">
             <source src="/assets/shuush-launch.webm" type="video/webm" />
             <source src="/assets/shuush-launch.mp4" type="video/mp4" />
           </video>
@@ -271,7 +271,7 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
           <div class="card">
             <h3>The pill, as it really runs</h3>
             <p>Listening, live word wash, polishing, delivered. Quickshell, GPU-recorded, unedited.</p>
-            <video class="stage-media" muted loop playsinline preload="auto" width="1120" height="372" data-autoplay aria-label="KitsuneHud pill cycling through listening, live preview, polishing and delivered states">
+            <video class="stage-media" muted loop playsinline preload="metadata" width="1120" height="372" data-autoplay aria-label="KitsuneHud pill cycling through listening, live preview, polishing and delivered states">
               <source src="/assets/osd-pill-states.mp4" type="video/mp4" />
             </video>
             <ol class="states">
