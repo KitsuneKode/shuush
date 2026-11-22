@@ -1100,6 +1100,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application, initial_tab: str = "history") -> None:
         super().__init__(application=app, title="Voxtype Studio")
         self.set_default_size(1140, 720)
+        self.set_size_request(760, 520)
         self.history: list[dict] = []
         self.selected_entry: dict | None = None
         self.filter_mode = "all"
@@ -1150,16 +1151,19 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         t_lbl = Gtk.Label(label="Voxtype Studio", valign=Gtk.Align.CENTER)
         t_lbl.add_css_class("app-title")
         self.hdr_pill = make_pill("checking…", "neutral")
+        self.hdr_pill.set_width_chars(14)
+        self.hdr_pill.set_max_width_chars(16)
+        self.hdr_pill.set_ellipsize(Pango.EllipsizeMode.END)
         title_box.append(t_lbl)
         title_box.append(self.hdr_pill)
         header.pack_start(title_box)
 
-        # Segmented navigation tabs
+        # Segmented navigation tabs (homogeneous=True prevents toplevel jump-resizes across tabs)
         self.tab_stack = Gtk.Stack(
             transition_type=Gtk.StackTransitionType.CROSSFADE,
             transition_duration=120,
-            hhomogeneous=False,
-            vhomogeneous=False,
+            hhomogeneous=True,
+            vhomogeneous=True,
         )
         seg = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
         seg.add_css_class("seg-bar")
@@ -1465,10 +1469,11 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
 
     # ── Tab 1: Dictations + Contextual Inspector Drawer (Image 3 & 4) ────
     def _build_history_page(self) -> Gtk.Widget:
-        outer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        # Overlay keeps the inspector sheet from squishing the table or jump-resizing the window
+        outer = Gtk.Overlay()
 
-        # Left: Filter bar + Table card
-        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, hexpand=True)
+        # Base: Filter bar + Table card
+        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, hexpand=True, vexpand=True)
 
         toolbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
         fbar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
@@ -1487,6 +1492,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         toolbar.append(fbar)
 
         self.hist_search = Gtk.SearchEntry(placeholder_text="Search transcripts… (Ctrl+F)", hexpand=True)
+        self.hist_search.set_width_chars(12)
         self.hist_search.add_css_class("input-field")
         self.hist_search.connect("search-changed", lambda *_: self._render_history_list())
         toolbar.append(self.hist_search)
@@ -1506,32 +1512,39 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             hdr.append(lbl)
         table_card.append(hdr)
 
-        sc = Gtk.ScrolledWindow(vexpand=True)
+        sc = Gtk.ScrolledWindow(
+            vexpand=True,
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            propagate_natural_width=False,
+            propagate_natural_height=False,
+        )
         self.hist_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
         self.hist_list.add_css_class("data-list")
         self.hist_list.connect("row-selected", self._on_history_selected)
         sc.set_child(self.hist_list)
         table_card.append(sc)
         left.append(table_card)
-        outer.append(left)
+        outer.set_child(left)
 
-        # Right: Contextual Inspector Drawer (Image 4 style)
+        # Right: Contextual Inspector Drawer (overlay sheet — zero layout shift)
         self.drawer_revealer = Gtk.Revealer(
             transition_type=Gtk.RevealerTransitionType.NONE if self._reduced_motion else Gtk.RevealerTransitionType.SLIDE_LEFT,
-            transition_duration=0 if self._reduced_motion else 200,
+            transition_duration=0 if self._reduced_motion else 180,
             reveal_child=False,
+            halign=Gtk.Align.END,
+            valign=Gtk.Align.FILL,
             hexpand=False,
+            vexpand=True,
         )
-        drawer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, hexpand=False)
+        drawer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, hexpand=False, vexpand=True)
         drawer.add_css_class("drawer-card")
-        drawer.set_margin_start(14)
         drawer.set_size_request(420, -1)
 
         d_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         d_title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
-        self.detail_title = Gtk.Label(label="Dictation", xalign=0)
+        self.detail_title = Gtk.Label(label="Dictation", xalign=0, ellipsize=Pango.EllipsizeMode.END)
         self.detail_title.add_css_class("app-title")
-        self.detail_meta = Gtk.Label(label="", xalign=0, wrap=True)
+        self.detail_meta = Gtk.Label(label="", xalign=0, ellipsize=Pango.EllipsizeMode.END)
         self.detail_meta.add_css_class("app-subtitle")
         d_title_box.append(self.detail_title)
         d_title_box.append(self.detail_meta)
@@ -1542,16 +1555,19 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         d_top.append(close_btn)
         drawer.append(d_top)
 
-        # Visual inline diff
+        # Visual inline diff (fixed height avoids vertical drawer jump between short & long takes)
         diff_lbl = Gtk.Label(label="HEARD → CLEANED DIFF", xalign=0)
         diff_lbl.add_css_class("section-kicker")
         drawer.append(diff_lbl)
 
-        diff_sc = Gtk.ScrolledWindow()
-        diff_sc.set_min_content_height(64)
-        diff_sc.set_max_content_height(155)
-        diff_sc.set_propagate_natural_height(True)
+        diff_sc = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            propagate_natural_width=False,
+            propagate_natural_height=False,
+        )
+        diff_sc.set_size_request(-1, 118)
         self.diff_label = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
+        self.diff_label.set_max_width_chars(44)
         self.diff_label.set_use_markup(True)
         self.diff_label.add_css_class("diff-card")
         diff_sc.set_child(self.diff_label)
@@ -1569,7 +1585,12 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         ed_lbl.add_css_class("section-kicker")
         drawer.append(ed_lbl)
 
-        ed_sc = Gtk.ScrolledWindow(vexpand=True)
+        ed_sc = Gtk.ScrolledWindow(
+            vexpand=True,
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            propagate_natural_width=False,
+            propagate_natural_height=False,
+        )
         ed_sc.add_css_class("editor-card")
         self.clean_view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR)
         self.clean_view.set_pixels_above_lines(2)
@@ -1603,7 +1624,8 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         drawer.append(acts)
 
         self.drawer_revealer.set_child(drawer)
-        outer.append(self.drawer_revealer)
+        outer.add_overlay(self.drawer_revealer)
+        outer.set_measure_overlay(self.drawer_revealer, False)
         return outer
 
     def _on_filter_toggled(self, btn: Gtk.ToggleButton, mode: str) -> None:
@@ -1856,7 +1878,12 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
 
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
         card.add_css_class("surface-card")
-        sc = Gtk.ScrolledWindow(vexpand=True)
+        sc = Gtk.ScrolledWindow(
+            vexpand=True,
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            propagate_natural_width=False,
+            propagate_natural_height=False,
+        )
         self.corr_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.corr_list.add_css_class("data-list")
         sc.set_child(self.corr_list)
@@ -1928,12 +1955,12 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             line.set_margin_start(10)
             line.set_margin_end(10)
 
-            hlbl = Gtk.Label(label=h, xalign=0)
+            hlbl = Gtk.Label(label=h, xalign=0, ellipsize=Pango.EllipsizeMode.END)
             hlbl.add_css_class("mono-num")
             hlbl.set_size_request(150, -1)
             arrow = Gtk.Label(label="→")
             arrow.add_css_class("app-subtitle")
-            mlbl = Gtk.Label(label=m, xalign=0, hexpand=True)
+            mlbl = Gtk.Label(label=m, xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
             badge = Gtk.Label(label="context hint" if h in gate.AMBIGUOUS else "instant rewrite")
             badge.add_css_class("pill")
             badge.add_css_class("pill-review" if h in gate.AMBIGUOUS else "pill-clean")
@@ -2001,7 +2028,12 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
 
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
         card.add_css_class("surface-card")
-        sc = Gtk.ScrolledWindow(vexpand=True)
+        sc = Gtk.ScrolledWindow(
+            vexpand=True,
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            propagate_natural_width=False,
+            propagate_natural_height=False,
+        )
         self.vocab_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.vocab_list.add_css_class("data-list")
         sc.set_child(self.vocab_list)
@@ -2034,7 +2066,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             line.set_margin_bottom(7)
             line.set_margin_start(10)
             line.set_margin_end(10)
-            lbl = Gtk.Label(label=term, xalign=0, hexpand=True)
+            lbl = Gtk.Label(label=term, xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
             del_btn = Gtk.Button(icon_name="user-trash-symbolic")
             del_btn.add_css_class("btn-ghost")
             del_btn.connect("clicked", self._on_del_vocab, term)
@@ -2054,7 +2086,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         form = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         form.add_css_class("kpi-card")
-        h = Gtk.Label(label="VOICE SNIPPETS — SAY THE TRIGGER ALONE FOR INSTANT ZERO-LATENCY EXPANSION", xalign=0)
+        h = Gtk.Label(label="VOICE SNIPPETS — SAY THE TRIGGER ALONE FOR INSTANT ZERO-LATENCY EXPANSION", xalign=0, ellipsize=Pango.EllipsizeMode.END)
         h.add_css_class("section-kicker")
         form.append(h)
 
@@ -2077,7 +2109,12 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
 
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
         card.add_css_class("surface-card")
-        sc = Gtk.ScrolledWindow(vexpand=True)
+        sc = Gtk.ScrolledWindow(
+            vexpand=True,
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            propagate_natural_width=False,
+            propagate_natural_height=False,
+        )
         self.snip_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.snip_list.add_css_class("data-list")
         sc.set_child(self.snip_list)
@@ -2143,7 +2180,12 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
 
     # ── Tab 5: Settings & Models (replaces needing the TUI) ──────────────
     def _build_settings_page(self) -> Gtk.Widget:
-        sc = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        sc = Gtk.ScrolledWindow(
+            vexpand=True,
+            hscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+            propagate_natural_width=False,
+            propagate_natural_height=False,
+        )
         cols = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=14, homogeneous=True)
         sc.set_child(cols)
 
@@ -2188,7 +2230,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         llm = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         llm.add_css_class("kpi-card")
         llm_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        lh = Gtk.Label(label="CLEANUP LLM & FALLBACK ORDER", xalign=0, hexpand=True)
+        lh = Gtk.Label(label="CLEANUP LLM & FALLBACK ORDER", xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
         lh.add_css_class("section-kicker")
         self.keys_btn = Gtk.MenuButton(label="API keys", tooltip_text="Configure provider API keys in ~/.config/voxtype/secrets.env (chmod 600)")
         self.keys_btn.add_css_class("btn-ghost")
@@ -2242,7 +2284,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         # Budget presets + exact spinner (shadcn segmented + numeric primitive)
         brow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         brow.set_margin_top(4)
-        blbl = Gtk.Label(label="Timeout budget", xalign=0, hexpand=True)
+        blbl = Gtk.Label(label="Timeout budget", xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
         blbl.add_css_class("kpi-label")
         self.budget_seg = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
         self.budget_seg.add_css_class("seg-bar")
@@ -2263,7 +2305,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         llm.append(brow)
 
         srow = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        slbl = Gtk.Label(label="Stream cleanup above", xalign=0, hexpand=True)
+        slbl = Gtk.Label(label="Stream cleanup above", xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
         slbl.add_css_class("kpi-label")
         self.stream_seg = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
         self.stream_seg.add_css_class("seg-bar")
@@ -2371,8 +2413,8 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         row.add_css_class("settings-row")
         txt = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1, hexpand=True)
-        t = Gtk.Label(label=title, xalign=0)
-        s = Gtk.Label(label=sub, xalign=0, wrap=True)
+        t = Gtk.Label(label=title, xalign=0, ellipsize=Pango.EllipsizeMode.END)
+        s = Gtk.Label(label=sub, xalign=0, wrap=True, max_width_chars=44)
         s.add_css_class("app-subtitle")
         txt.append(t)
         txt.append(s)
@@ -2773,7 +2815,12 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
 
     # ── Tab 1B: Insights & Auto-Mine (Superwhisper-inspired) ─────────────
     def _build_insights_page(self) -> Gtk.Widget:
-        sc = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        sc = Gtk.ScrolledWindow(
+            vexpand=True,
+            hscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+            propagate_natural_width=False,
+            propagate_natural_height=False,
+        )
         root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
         sc.set_child(root)
 
@@ -2831,7 +2878,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         mine_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         mine_card.add_css_class("kpi-card")
         mh_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        mh = Gtk.Label(label="FULL-HISTORY AUTO-MINE & AI AUDIT", xalign=0, hexpand=True)
+        mh = Gtk.Label(label="FULL-HISTORY AUTO-MINE & AI AUDIT", xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
         mh.add_css_class("section-kicker")
         self.learn_all_btn = Gtk.Button(label="Learn all safe")
         self.learn_all_btn.add_css_class("btn-primary")
