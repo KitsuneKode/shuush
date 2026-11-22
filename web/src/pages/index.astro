@@ -275,10 +275,10 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
               <source src="/assets/osd-pill-states.mp4" type="video/mp4" />
             </video>
             <ol class="states">
-              <li style="--c:var(--coral)"><b>Listening</b>Live PipeWire waveform + target window</li>
-              <li style="--c:var(--coral-hi)"><b>Live preview</b>Staggered word-by-word color wash</li>
-              <li style="--c:var(--amber)"><b>Polishing</b>Anti-paraphrase cleanup, ~500 ms</li>
-              <li style="--c:var(--mint)"><b>Delivered</b>Gathered checkmark, shrink-to-dot exit</li>
+              <li style="--c:var(--r)"><b>Listening</b>Live PipeWire waveform + target window</li>
+              <li style="--c:var(--b)"><b>Live preview</b>Staggered word-by-word color wash</li>
+              <li style="--c:var(--y)"><b>Polishing</b>Anti-paraphrase cleanup, ~500 ms</li>
+              <li style="--c:var(--ok)"><b>Delivered</b>Gathered checkmark, shrink-to-dot exit</li>
             </ol>
             <div class="chips"><span class="chip c-amber">Esc ×2 cancels a take</span><span class="chip">Quickshell · Wayland layer-shell</span></div>
           </div>
@@ -370,12 +370,12 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
             <ul><li>PipeWire audio capture</li><li>CUDA / Vulkan / CPU speech recognition</li><li>Wayland typing</li></ul>
           </div>
           <div class="card">
-            <h3><span class="sw" style="background:var(--coral)" aria-hidden="true"></span>shuush</h3>
+            <h3><span class="sw" style="background:var(--r)" aria-hidden="true"></span>shuush</h3>
             <p class="by">this project · MIT</p>
             <ul><li>5-source context pipeline</li><li>Anti-paraphrase span gate</li><li>Phonetic self-learning</li><li>KitsuneHud pill &amp; GTK4 Studio</li></ul>
           </div>
           <div class="card">
-            <h3><span class="sw" style="background:var(--mint)" aria-hidden="true"></span>kuwai</h3>
+            <h3><span class="sw" style="background:var(--ok)" aria-hidden="true"></span>kuwai</h3>
             <p class="by">your rice, or any config</p>
             <ul><li>Hyprland binds &amp; window rules</li><li>Optional island OSD hosting</li><li>First-party auto-discovery of <code>shuush/libexec</code></li></ul>
           </div>
@@ -386,15 +386,16 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
           <a class="btn btn-ghost btn-sm" href="https://github.com/peteonrails/voxtype">peteonrails/voxtype <span class="arrow" aria-hidden="true">↗</span></a>
         </div>
 
-        <figure class="stage" style="margin:16px 0 0;">
-          <img class="stage-media" src="/assets/architecture.svg" alt="Shuush + voxtype pipeline: local ASR, 5-source context, cleanup and span gate, Studio, and the self-learning memory loop" width="1120" height="420" loading="lazy" decoding="async" />
+        <figure class="stage sheet" style="margin:16px 0 0;">
+          <img class="stage-media arch-light" src="/assets/architecture.svg" alt="Shuush + voxtype pipeline: local ASR, 5-source context, cleanup and span gate, Studio, and the self-learning memory loop" width="1120" height="420" loading="lazy" decoding="async" />
+          <img class="stage-media arch-dark" src="/assets/architecture-dark.svg" alt="Shuush + voxtype pipeline: local ASR, 5-source context, cleanup and span gate, Studio, and the self-learning memory loop" width="1120" height="420" loading="lazy" decoding="async" />
         </figure>
       </div>
     </section>
 
     <!-- ── FAQ ──────────────────────────────────────────── -->
     <section class="block" id="faq">
-      <div class="wrap">
+      <div class="wrap-mid">
         <div class="sec-head">
           <span class="kicker"><span class="idx">06</span> FAQ</span>
           <h2>Direct answers before you install.</h2>
@@ -531,13 +532,13 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
       code: {
         html:
           '<span class="lbl">Heard → cleaned</span><span class="del">um</span> Open <span class="del">webar</span> <span class="ins">Waybar</span> in <span class="del">next year</span> <span class="ins">Next.js</span> and <span class="del">uh</span> check why <span class="del">box type pp gate</span> <span class="ins">voxtype_pp_gate</span> is dropping the <span class="del">hyperline</span> <span class="ins">Hyprland</span> flag.',
-        chips: [['c-coral', 'App: T3 Code'], ['', 'AT-SPI &lt;screen&gt;'], ['', 'selection: voxtype_pp_gate.py'], ['c-mint', '482 ms']],
+        chips: [['c-coral', 'App: T3 Code'], ['c-blue', 'AT-SPI &lt;screen&gt;'], ['c-blue', 'selection: voxtype_pp_gate.py'], ['c-mint', '482 ms']],
         note: 'All four symbol repairs were grounded in vocabulary.txt and visible screen terms. Ordinary English stayed untouched.',
       },
       cmd: {
         html:
           '<span class="lbl">Selection → rewritten in place</span><span class="del">So basically we are trying to make sure the timeout doesnt hang forever when the proxy is down</span><br/><span class="ins">Enforce a bounded timeout so a stalled proxy fails over immediately to direct Groq.</span>',
-        chips: [['c-coral', 'Super+Ctrl+E'], ['', 'highlighted &lt;selection&gt;'], ['c-mint', 'replaced in place']],
+        chips: [['c-coral', 'Super+Ctrl+E'], ['c-blue', 'highlighted &lt;selection&gt;'], ['c-mint', 'replaced in place']],
         note: 'Highlight text, press Super+Ctrl+E, say “make this tighter”, and Shuush rewrites the selection where it sits.',
       },
       priv: {

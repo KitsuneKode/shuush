@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 420" width="1120" height="420" role="img" aria-label="Shuush + voxtype architecture">
+  <defs>
+    <pattern id="dots" width="20" height="20" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="rgba(244,240,230,0.05)"/></pattern>
+    <style>
+      .kicker { font: 600 10.5px "Geist Mono", ui-monospace, monospace; fill: #9c9588; letter-spacing: 1px; }
+      .idx    { font: 700 10px "Geist Mono", ui-monospace, monospace; fill: #ffffff; }
+      .title  { font: 700 22px "Familjen Grotesk", "Inter", system-ui, sans-serif; fill: #f4f0e6; letter-spacing: -0.5px; }
+      .sub    { font: 400 13px "Familjen Grotesk", "Inter", system-ui, sans-serif; fill: #9c9588; }
+      .card-t { font: 600 13.5px "Familjen Grotesk", "Inter", system-ui, sans-serif; fill: #f4f0e6; }
+      .card-s { font: 400 11.5px "Familjen Grotesk", "Inter", system-ui, sans-serif; fill: #c8c1b3; }
+      .mono   { font: 500 10.5px "Geist Mono", ui-monospace, monospace; fill: #ff8466; }
+      .pill-g { font: 600 10.5px "Familjen Grotesk", "Inter", system-ui, sans-serif; fill: #45c97f; }
+      .pill-b { font: 600 10.5px "Familjen Grotesk", "Inter", system-ui, sans-serif; fill: #ff8466; }
+      .pill-a { font: 600 10.5px "Familjen Grotesk", "Inter", system-ui, sans-serif; fill: #ffd35c; }
+    </style>
+  </defs>
+
+  <rect width="1120" height="420" rx="18" fill="#12100d"/>
+  <rect width="1120" height="420" rx="18" fill="url(#dots)"/>
+
+  <!-- Header -->
+  <text x="36" y="44" class="title">Shuush + voxtype</text>
+  <text x="234" y="44" class="sub">Local GPU Dictation · 5-Source Context · Anti-Paraphrase Cleanup · Self-Learning GTK4 Studio</text>
+  <rect x="944" y="24" width="140" height="26" rx="13" fill="rgba(69,201,127,0.12)" stroke="#45c97f" stroke-opacity="0.35"/>
+  <text x="1014" y="41" text-anchor="middle" class="pill-g">● 0 CLOUD LIMITS</text>
+
+  <!-- Stage 1 -->
+  <rect x="36" y="76" width="230" height="196" rx="14" fill="#1a1814" stroke="rgba(244,240,230,0.09)"/>
+  <rect x="52" y="90" width="22" height="16" rx="4" fill="#ff5a3c"/><text x="63" y="102" text-anchor="middle" class="idx">01</text>
+  <text x="80" y="102" class="kicker">LOCAL ASR (VOXTYPE)</text>
+  <text x="54" y="128" class="card-t">Push-to-Talk &amp; Hands-Free</text>
+  <text x="54" y="148" class="card-s">Super+Ctrl+D · Hold/Tap F9</text>
+  <text x="54" y="166" class="card-s">Super+Ctrl+E Voice Command</text>
+  <rect x="54" y="184" width="194" height="34" rx="8" fill="#221f1a" stroke="rgba(244,240,230,0.09)"/>
+  <text x="151" y="205" text-anchor="middle" class="mono">Parakeet · Whisper · Cohere</text>
+  <text x="54" y="242" class="card-s">CUDA · ROCm/Vulkan · CPU</text>
+  <text x="54" y="258" class="pill-b">KitsuneHud live waveform pill</text>
+
+  <path d="M266 174 L296 174" stroke="#f4f0e6" stroke-width="2" fill="none"/>
+  <polygon points="296,169 306,174 296,179" fill="#ff5a3c"/>
+
+  <!-- Stage 2 -->
+  <rect x="308" y="76" width="244" height="196" rx="14" fill="#1a1814" stroke="#ff5a3c" stroke-opacity="0.4"/>
+  <rect x="324" y="90" width="22" height="16" rx="4" fill="#ff5a3c"/><text x="335" y="102" text-anchor="middle" class="idx">02</text>
+  <text x="352" y="102" class="kicker">5-SOURCE CONTEXT</text>
+  <text x="326" y="128" class="card-t">Grounded Before Cleanup</text>
+  <text x="326" y="150" class="card-s">• Active app &amp; window title</text>
+  <text x="326" y="170" class="card-s">• AT-SPI &lt;screen&gt; &amp; &lt;draft&gt;</text>
+  <text x="326" y="190" class="card-s">• Highlighted &lt;selection&gt;</text>
+  <text x="326" y="210" class="card-s">• Fresh ≤15s &lt;clipboard&gt;</text>
+  <text x="326" y="230" class="card-s">• &lt;now&gt; date + privacy guard</text>
+  <rect x="322" y="244" width="166" height="18" rx="4" fill="rgba(255,198,41,0.08)"/>
+  <text x="326" y="257" class="pill-a">Password fields bypass LLM</text>
+
+  <path d="M552 174 L582 174" stroke="#f4f0e6" stroke-width="2" fill="none"/>
+  <polygon points="582,169 592,174 582,179" fill="#ff5a3c"/>
+
+  <!-- Stage 3 -->
+  <rect x="594" y="76" width="244" height="196" rx="14" fill="#1a1814" stroke="rgba(244,240,230,0.09)"/>
+  <rect x="610" y="90" width="22" height="16" rx="4" fill="#ff5a3c"/><text x="621" y="102" text-anchor="middle" class="idx">03</text>
+  <text x="638" y="102" class="kicker">CLEANUP &amp; SPAN GATE</text>
+  <text x="612" y="128" class="card-t">Fast Failover or 100% Local</text>
+  <rect x="612" y="142" width="208" height="28" rx="7" fill="#221f1a" stroke="rgba(244,240,230,0.09)"/>
+  <text x="716" y="160" text-anchor="middle" class="mono">Ollama / Groq → OpenRouter</text>
+  <text x="612" y="192" class="card-s">• Anti-paraphrase span gate</text>
+  <text x="612" y="212" class="card-s">• Warm TLS keep-alive proxy</text>
+  <text x="612" y="232" class="card-s">• Refocuses original window</text>
+  <text x="612" y="256" class="pill-g">~500ms median · 0 dropped text</text>
+
+  <path d="M838 174 L868 174" stroke="#f4f0e6" stroke-width="2" fill="none"/>
+  <polygon points="868,169 878,174 868,179" fill="#45c97f"/>
+
+  <!-- Stage 4 -->
+  <rect x="880" y="76" width="204" height="196" rx="14" fill="#1a1814" stroke="#45c97f" stroke-opacity="0.4"/>
+  <rect x="896" y="90" width="22" height="16" rx="4" fill="#45c97f"/><text x="907" y="102" text-anchor="middle" class="idx">04</text>
+  <text x="924" y="102" class="kicker">SHUUSH STUDIO</text>
+  <text x="898" y="128" class="card-t">Native GTK4 + Adw</text>
+  <text x="898" y="150" class="card-s">• Live history + inline diff</text>
+  <text x="898" y="170" class="card-s">• Insights &amp; 14d volume</text>
+  <text x="898" y="190" class="card-s">• Phonetic auto-learning</text>
+  <text x="898" y="210" class="card-s">• DnD provider chain</text>
+  <text x="898" y="230" class="card-s">• Offline toggle + API keys</text>
+  <text x="898" y="256" class="pill-b">Syncs straight to daemon</text>
+
+  <!-- Feedback loop -->
+  <rect x="36" y="302" width="1048" height="86" rx="14" fill="rgba(255,198,41,0.08)" stroke="#ffc629" stroke-opacity="0.45"/>
+  <text x="58" y="330" class="kicker">SELF-LEARNING MEMORY LOOP (ZERO ENGLISH-WORD POISONING)</text>
+  <text x="58" y="356" class="card-t">Edit 1 word or accept in Auto-Mine  →  Phonetic + Casing Guard  →  corrections.tsv + vocabulary.txt + config.toml [text] replacements</text>
+  <text x="58" y="376" class="card-s">Works out of the box with stock voxtype-bin on Arch / Omarchy / Hyprland / Sway / Niri · First-party kuwai rice integration · MIT License</text>
+</svg>
