@@ -26,7 +26,7 @@ Shuush is an MIT-licensed Linux/Wayland intelligence, context, safety, and UI la
 - `web/` — Astro marketing & documentation site (`https://shuush.kitsunekode.in`, deployed on Cloudflare Pages)
 
 ### Companion Fork (`~/Projects/voxtype-fork`)
-Branch `kitsune/pill-preview` (the installed build) adds the live pill preview (`streaming_commit = "on_stop"`), the Parakeet full-context final pass, CUDA idle VRAM unload, and non-spinning ONNX threads. Hex-derived ASR work (Parakeet padding, guarded stream acceptance, vocabulary rescoring) lives on `kitsune/hex-asr` until it is measured and merged.
+Branch `kitsune/pill-preview` adds the live pill preview (`streaming_commit = "on_stop"`), the Parakeet full-context final pass, CUDA idle VRAM unload, and non-spinning ONNX threads. `kitsune/hex-asr` builds on it with the Hex-derived ASR work (final-pass padding, pause limiting in the live stream, acoustic vocabulary rescoring from `vocabulary.txt` + `corrections.tsv`); the installed build comes from `kitsune/hex-asr`. Build with the cached `target/` dirs only (no libclang here) and `ORT_DYLIB_PATH` pointing at `~/.local/lib/voxtype-fork/libonnxruntime.so` for tests.
 
 ### Testing
 Run the full isolated test suite before committing:
