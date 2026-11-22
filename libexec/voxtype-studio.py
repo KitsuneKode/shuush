@@ -884,6 +884,7 @@ def a11y_enabled() -> bool:
 
 
 def daemon_status() -> tuple[bool, str]:
+    st = "unknown"
     try:
         active = subprocess.run(
             ["systemctl", "--user", "is-active", "voxtype.service"],
@@ -891,9 +892,22 @@ def daemon_status() -> tuple[bool, str]:
             text=True,
             timeout=1,
         ).stdout.strip()
-        return active == "active", active or "unknown"
+        if active == "active":
+            return True, "active"
+        if active:
+            st = active
     except Exception:
-        return False, "unknown"
+        pass
+    # Fallback for users starting voxtype via compositor exec-once instead of systemd
+    pid_file = RT / "pid"
+    if pid_file.is_file():
+        try:
+            pid = int(pid_file.read_text(encoding="utf-8").strip())
+            os.kill(pid, 0)
+            return True, "running"
+        except (ValueError, OSError):
+            pass
+    return False, st
 
 
 def diff_markup(raw: str, clean: str) -> str:
@@ -2661,8 +2675,11 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         self.sandbox_out.set_text("\n".join(lines))
 
     def _on_restart_daemon(self, _btn) -> None:
-        subprocess.Popen(["systemctl", "--user", "restart", "voxtype.service"])
-        self.show_toast("Restarting voxtype daemon…")
+        try:
+            subprocess.Popen(["systemctl", "--user", "restart", "voxtype.service"])
+            self.show_toast("Restarting voxtype daemon…")
+        except OSError:
+            self.show_toast("systemctl not available — restart voxtype manually")
         GLib.timeout_add(1400, lambda: (self._refresh_settings_card(), False)[1])
 
     def _run_engine(self, mode: str) -> None:

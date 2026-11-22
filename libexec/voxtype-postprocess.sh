@@ -41,6 +41,19 @@ trap '[ -n "$SDIR" ] && rm -rf "$SDIR"' EXIT
 # The window that was focused when the hotkey went down. Cleanup reads it
 # for <app>, and the text is put back there if focus moved while polishing.
 # Older than 20 minutes is a previous take, not this one.
+active_window_json() {
+  if command -v hyprctl >/dev/null 2>&1; then
+    timeout 0.3 hyprctl activewindow -j 2>/dev/null | jq -c '{address, class, title, pid}' 2>/dev/null && return
+  fi
+  if command -v niri >/dev/null 2>&1; then
+    timeout 0.3 niri msg -j focused-window 2>/dev/null | jq -c '{address: (.id|tostring), class: (.app_id // ""), title: (.title // ""), pid: (.pid // 0)}' 2>/dev/null && return
+  fi
+  if command -v swaymsg >/dev/null 2>&1; then
+    timeout 0.3 swaymsg -t get_tree 2>/dev/null | jq -c '.. | objects | select(.focused? == true) | {address: (.id|tostring), class: (.app_id // .window_properties.class // ""), title: (.name // ""), pid: (.pid // 0)}' 2>/dev/null | head -1 && return
+  fi
+  printf '{}'
+}
+
 focus_target() {
   local f="$RT/target_window" age addr cur
   [ -f "$f" ] || return 0
@@ -48,12 +61,18 @@ focus_target() {
   [ "$age" -le 1200 ] || return 0
   addr=$(jq -r '.address // empty' "$f" 2>/dev/null)
   [ -n "$addr" ] || return 0
-  command -v hyprctl >/dev/null 2>&1 || return 0
-  cur=$(timeout 0.3 hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty')
-  [ "$addr" = "$cur" ] && return 0
-  [[ "$addr" =~ ^0x[0-9a-fA-F]+$ ]] || return 0
-  timeout 0.3 hyprctl dispatch "hl.dsp.focus({window=\"address:$addr\"})" >/dev/null 2>&1 \
-    || timeout 0.3 hyprctl dispatch focuswindow "address:$addr" >/dev/null 2>&1 || true
+  if command -v hyprctl >/dev/null 2>&1 && [[ "$addr" =~ ^0x[0-9a-fA-F]+$ ]]; then
+    cur=$(timeout 0.3 hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty')
+    [ "$addr" = "$cur" ] && return 0
+    timeout 0.3 hyprctl dispatch "hl.dsp.focus({window=\"address:$addr\"})" >/dev/null 2>&1 \
+      || timeout 0.3 hyprctl dispatch focuswindow "address:$addr" >/dev/null 2>&1 || true
+  elif command -v niri >/dev/null 2>&1 && [[ "$addr" =~ ^[0-9]+$ ]]; then
+    cur=$(timeout 0.3 niri msg -j focused-window 2>/dev/null | jq -r '.id // empty')
+    [ "$addr" = "$cur" ] && return 0
+    timeout 0.3 niri msg action focus-window --id "$addr" >/dev/null 2>&1 || true
+  elif command -v swaymsg >/dev/null 2>&1 && [[ "$addr" =~ ^[0-9]+$ ]]; then
+    timeout 0.3 swaymsg "[con_id=$addr]" focus >/dev/null 2>&1 || true
+  fi
 }
 
 emit() {
@@ -81,7 +100,7 @@ emit() {
   # A private take is typed and forgotten: not on the clipboard, not in history.
   [ "$VIA" = private ] && exit 0
   rm -f "$RT/pp_private"
-  wl-copy -- "$text" </dev/null >/dev/null 2>&1 &
+  command -v wl-copy >/dev/null 2>&1 && wl-copy -- "$text" </dev/null >/dev/null 2>&1 &
   # History line (+ swaps/review flag, desktop notification when a dictation
   # needs a second look). Timings make "polishing felt slow" diagnosable:
   # pp_ms is this whole script, llm_ms just the model call. Backgrounded
@@ -106,7 +125,7 @@ age=99999
 if [ "$age" -le 1200 ]; then
   win=$(cat "$TARGET" 2>/dev/null)
 else
-  win=$(timeout 0.3 hyprctl activewindow -j 2>/dev/null || true)
+  win=$(active_window_json)
 fi
 cls=$(printf '%s' "$win" | jq -r '.class // empty' 2>/dev/null || true)
 title=$(printf '%s' "$win" | jq -r '.title // empty' 2>/dev/null || true)

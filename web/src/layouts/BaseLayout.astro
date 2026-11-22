@@ -1,5 +1,6 @@
 ---
 import '@fontsource-variable/familjen-grotesk';
+import familjenLatin from '@fontsource-variable/familjen-grotesk/files/familjen-grotesk-latin-wght-normal.woff2?url';
 import '@fontsource-variable/geist-mono';
 import '@fontsource/newsreader/400-italic.css';
 import '../styles/global.css';
@@ -42,6 +43,7 @@ const onBlog = Astro.url.pathname.startsWith('/blog');
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="preload" as="font" type="font/woff2" href={familjenLatin} crossorigin />
   <title>{title}</title>
   <meta name="description" content={description} />
   <meta name="theme-color" content="#fbfaf7" />
