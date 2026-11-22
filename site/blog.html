@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Why We Built Shuush: An Open-Source Local Superwhisper &amp; Wispr Flow Alternative for Linux (Benchmarks &amp; Architecture)</title>
+  <meta name="description" content="How we built Shuush on top of MIT voxtype to replace $15/mo Wispr Flow and 10k-word-capped Superwhisper on Linux/Wayland: 19,498 real words benchmarked, 5-source AT-SPI screen context, anti-paraphrase span gating, and phonetic self-learning." />
+  <link rel="canonical" href="https://kitsunekode.github.io/shuush/blog.html" />
+  <meta property="og:type" content="article" />
+  <meta property="og:title" content="Why We Built Shuush: Open-Source Local Superwhisper &amp; Wispr Flow for Linux" />
+  <meta property="og:description" content="19,498 real dictated words, 516 ms median cleanup, 2.3 GB VRAM on a laptop RTX 4050, and how our anti-paraphrase span gate beats raw LLM cleanup." />
+  <meta property="og:image" content="https://raw.githubusercontent.com/KitsuneKode/shuush/main/assets/architecture.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "TechArticle",
+        "headline": "Why We Built Shuush: An Open-Source Local Superwhisper & Wispr Flow Alternative for Linux",
+        "datePublished": "2026-11-22",
+        "dateModified": "2026-11-22",
+        "author": { "@type": "Person", "name": "KitsuneKode", "url": "https://github.com/KitsuneKode" },
+        "image": "https://raw.githubusercontent.com/KitsuneKode/shuush/main/assets/architecture.png",
+        "about": ["Voice Dictation", "Linux", "Wayland", "Hyprland", "Omarchy", "Superwhisper", "Wispr Flow", "voxtype", "Ollama", "Parakeet ASR"],
+        "proficiencyLevel": "Intermediate"
+      },
+      {
+        "@type": "HowTo",
+        "name": "How to install Shuush on Arch Linux, Omarchy, or Hyprland",
+        "step": [
+          { "@type": "HowToStep", "name": "Install stock voxtype and Wayland dependencies", "text": "Run yay -S voxtype-bin wtype wl-clipboard jq python-gobject libadwaita gtk4 at-spi2-core and run voxtype setup." },
+          { "@type": "HowToStep", "name": "Install Shuush and wire config.toml", "text": "Clone https://github.com/KitsuneKode/shuush and run ./install.sh --wire-config." },
+          { "@type": "HowToStep", "name": "Enable services and launch Studio", "text": "Enable voxtype.service, shuush-llm-proxy.service, and shuush-live-osd.service, enable AT-SPI accessibility, and run shuush studio." }
+        ]
+      }
+    ]
+  }
+  </script>
+  <style>
+    :root {
+      --bg: oklch(0.145 0.008 264);
+      --surface: oklch(0.178 0.01 264);
+      --border: oklch(1 none 0 / 0.08);
+      --fg: oklch(0.965 0.004 264);
+      --muted: oklch(0.73 0.01 264);
+      --dim: oklch(0.56 0.01 264);
+      --blue: oklch(0.71 0.14 252);
+      --green: oklch(0.79 0.17 150);
+      --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+    }
+    * { box-sizing: border-box; }
+    html { color-scheme: dark; scroll-behavior: smooth; }
+    body {
+      margin: 0; background: var(--bg); color: var(--fg);
+      font-family: "Inter", system-ui, sans-serif; font-size: 16px; line-height: 1.72;
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: color-mix(in oklch, var(--blue), white 18%); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .progress {
+      position: fixed; inset-block-start: 0; inset-inline-start: 0; block-size: 2px; inline-size: 100%;
+      background: linear-gradient(90deg, var(--blue), var(--green));
+      transform-origin: left center; transform: scaleX(0); z-index: 60;
+    }
+    header {
+      border-block-end: 1px solid var(--border); padding-block: 16px;
+      position: sticky; inset-block-start: 0; background: color-mix(in oklch, var(--bg), transparent 16%);
+      backdrop-filter: blur(12px); z-index: 40;
+    }
+    .nav { width: min(820px, 100% - 32px); margin-inline: auto; display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+    article { width: min(820px, 100% - 32px); margin-inline: auto; padding-block: 48px 80px; }
+    .meta { color: var(--dim); font-size: 13px; margin-block-end: 12px; display: flex; flex-wrap: wrap; gap: 12px; }
+    h1 { margin: 0 0 18px; font-size: clamp(30px, 4.4vw, 44px); line-height: 1.12; letter-spacing: -0.03em; text-wrap: balance; }
+    h2 { margin: 44px 0 14px; font-size: 24px; letter-spacing: -0.02em; line-height: 1.25; }
+    h3 { margin: 28px 0 10px; font-size: 18px; }
+    p { margin: 0 0 18px; color: var(--muted); text-wrap: pretty; }
+    strong { color: var(--fg); }
+    .tldr {
+      background: var(--surface); border: 1px solid var(--border); border-inline-start: 3px solid var(--green);
+      border-radius: 12px; padding: 18px 20px; margin-block: 24px 32px;
+    }
+    .tldr-kicker { font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--green); margin-block-end: 8px; }
+    .tldr ul { margin: 0; padding-inline-start: 18px; color: var(--muted); }
+    .tldr li { margin-block: 6px; }
+    figure { margin: 28px 0; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 10px; }
+    figure img, figure video { display: block; inline-size: 100%; border-radius: 8px; }
+    figcaption { font-size: 12.5px; color: var(--dim); margin-block-start: 10px; padding-inline: 6px; }
+    code { font-family: "Fira Code", monospace; font-size: 0.88em; background: oklch(1 none 0 / 0.07); padding: 2px 6px; border-radius: 6px; color: var(--fg); }
+    pre { background: oklch(0.13 0.008 264); border: 1px solid var(--border); border-radius: 12px; padding: 16px; overflow-x: auto; font-size: 13px; line-height: 1.55; }
+    pre code { background: none; padding: 0; }
+    table { width: 100%; border-collapse: collapse; margin: 22px 0; font-size: 14px; font-variant-numeric: tabular-nums; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+    th, td { padding: 11px 14px; text-align: start; border-block-end: 1px solid var(--border); }
+    th { font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--dim); }
+    tr:last-child td { border-block-end: none; }
+    @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  </style>
+</head>
+<body>
+  <div class="progress" id="progress" aria-hidden="true"></div>
+  <header>
+    <div class="nav">
+      <a href="./" style="color:var(--fg);font-weight:650;">← Shuush</a>
+      <div style="display:flex;gap:18px;">
+        <a href="./#studio">Studio</a>
+        <a href="https://github.com/KitsuneKode/shuush">GitHub ↗</a>
+      </div>
+    </div>
+  </header>
+
+  <article>
+    <div class="meta">
+      <span>Published Nov 22, 2026</span>
+      <span>·</span>
+      <span>6 min read</span>
+      <span>·</span>
+      <span>Linux · Wayland · Hyprland · Omarchy · Local AI</span>
+    </div>
+
+    <h1>Why We Built Shuush: An Open-Source Local Superwhisper &amp; Wispr Flow Alternative for Linux</h1>
+
+    <div class="tldr" role="region" aria-label="Key takeaways and benchmark summary">
+      <div class="tldr-kicker">TL;DR · Direct Answer &amp; Verified Benchmarks</div>
+      <ul>
+        <li><strong>What Shuush is:</strong> A free, MIT-licensed desktop layer &amp; native GTK4 Studio built on top of stock <a href="https://github.com/peteonrails/voxtype"><code>voxtype</code></a> for Linux/Wayland (Hyprland, Omarchy, Sway, Niri).</li>
+        <li><strong>Why not cloud dictation?</strong> Wispr Flow costs $15/month and skips Linux; Omarchy's default Superwhisper cloud tier caps free usage at 10,000 words/month. We already dictated <strong>19,498 words across 333 real takes</strong> (~8.1 hours saved).</li>
+        <li><strong>Measured performance (RTX 4050 Laptop 6 GB VRAM · i5-13450HX):</strong> Parakeet fp16 uses ~<strong>2.3 GB VRAM</strong> locally; end-to-end cleanup runs at <strong>516 ms P50 / 1,060 ms P90</strong> with <strong>98.8% reliability</strong> (or <strong>24 ms</strong> when text is already clean).</li>
+        <li><strong>Key innovations:</strong> 5-source AT-SPI context, deterministic anti-paraphrase span gating, phonetic self-learning with dictionary-poisoning guards, and 1-click Air-Gapped Ollama mode.</li>
+      </ul>
+    </div>
+
+    <h2>1. The Gap on Linux Voice Dictation</h2>
+    <p>
+      Voice dictation finally got genuinely good for software engineers in 2025–2026 — not because speech-to-text got slightly more accurate,
+      but because tools like <strong>Wispr Flow</strong> and <strong>Superwhisper</strong> paired speech recognition with <em>active window context</em> and fast LLM cleanup.
+    </p>
+    <p>
+      On Linux, however, developers hit an awkward split: either accept closed-source apps with monthly word limits (like Superwhisper's 10,000 free words/30 days on Omarchy),
+      or wire up bare Whisper scripts that spell <code>Waybar</code> as "webar", <code>Next.js</code> as "next year", and <code>voxtype_pp_gate</code> as "box type pp gate".
+    </p>
+    <p>
+      Rather than reinventing a Rust audio/inference daemon from scratch, we built <strong>Shuush</strong> cleanly on top of Peter Jackson's MIT-licensed
+      <a href="https://github.com/peteonrails/voxtype"><strong>voxtype</strong></a>. Keeping <code>voxtype</code> untouched means Shuush works immediately on top of
+      stock <code>voxtype-bin</code> across NVIDIA CUDA, AMD ROCm/Vulkan, Intel Vulkan, and CPU-only laptops.
+    </p>
+
+    <figure>
+      <img src="../assets/architecture.svg" alt="Shuush 4-stage architecture diagram" />
+      <figcaption>Shuush's 4-stage pipeline: local voxtype ASR → 5-source AT-SPI/selection/clipboard context → anti-paraphrase cleanup &amp; failover → native GTK4 Studio &amp; self-learning loop.</figcaption>
+    </figure>
+
+    <h2>2. Stealing the Best Ideas from Superwhisper — Locally and Unlimited</h2>
+    <p>
+      Superwhisper's signature feature ("Super Mode") works because the cleanup model sees what you're looking at. We ported that idea to Wayland using
+      <strong>5 bounded, secret-redacted context sources</strong> captured right when you press your dictation hotkey:
+    </p>
+    <ol style="color:var(--muted);padding-inline-start:20px;">
+      <li><strong>Active application &amp; window title</strong> (Hyprland, Niri, Sway) to pick the right profile (<code>terminal</code>, <code>chat</code>, or <code>default</code>) and refocus the original window if you switch away while polishing.</li>
+      <li><strong>AT-SPI visible <code>&lt;screen&gt;</code> &amp; focused <code>&lt;draft&gt;</code></strong> (<code>voxtype_screen_ctx.py</code>, hard-capped at 250ms) so terms visible in your editor or browser ground symbol spelling — and real password fields trigger an instant privacy bypass.</li>
+      <li><strong>Highlighted <code>&lt;selection&gt;</code></strong> captured in the background on normal dictation too, so saying "fix this error in that hook" resolves exact identifiers.</li>
+      <li><strong>Fresh <code>&lt;clipboard&gt;</code> (≤15-second window)</strong> tracked by SHA-256 hash + timestamp, so a stack trace you copied 5 seconds ago improves accuracy while a 2-hour-old clipboard never pollutes your prompt.</li>
+      <li><strong>Current date anchor (<code>&lt;now&gt;</code>)</strong> so relative dates stay grounded.</li>
+    </ol>
+
+    <h2>3. Why Raw LLM Cleanup Fails — and How the Anti-Paraphrase Span Gate Solves It</h2>
+    <p>
+      Every engineer who wires an LLM onto Whisper discovers the same failure mode within an hour: the model gets helpful and rewrites your tone, drops technical flags, or answers dictated questions instead of transcribing them.
+    </p>
+    <p>
+      Shuush solves this with a deterministic verification layer, <code>voxtype_pp_gate.py</code>. Before any LLM output is typed, the span gate aligns every word back against the raw ASR transcript.
+      Rewrites are only accepted if they are filler removals, punctuation/casing fixes, or phonetically close to a term grounded in your <code>vocabulary.txt</code>, <code>corrections.tsv</code>, or live 5-source screen context.
+      When the recognizer output is already clean, Shuush skips the LLM completely in <strong>24 ms</strong>.
+    </p>
+
+    <figure>
+      <img src="../assets/studio-diff.png" alt="Shuush Studio Dictations and Visual Diff Inspector" />
+      <figcaption>Shuush Studio's live Dictations table and visual diff inspector: red strikethroughs show raw ASR mishearings, amber highlights show grounded repairs, and checkable Word Repairs teach the daemon in one click.</figcaption>
+    </figure>
+
+    <h2>4. Self-Learning That Never Poisons Your Dictionary</h2>
+    <p>
+      Naive auto-learning learns disastrous rules like <code>hosts → hooks</code> or <code>things → tasks</code> the first time an LLM guesses from context — corrupting future dictations forever.
+      Shuush's <code>voxtype_learn.py</code> enforces four strict guards:
+    </p>
+    <ul style="color:var(--muted);padding-inline-start:20px;">
+      <li><strong>Ordinary English blocklist</strong> (probing system wordlists across Arch, Debian, Ubuntu, and Fedora + a built-in fallback wordlist).</li>
+      <li><strong>Phonetic &amp; spoken-digit folding</strong> so ASR splits like <code>t three → T3</code> and <code>cube ctl → kubectl</code> are matched cleanly when grounded.</li>
+      <li><strong>Casing-preserving swap logging</strong> so <code>Next.js</code>, <code>Waybar</code>, and <code>T3</code> retain exact capitalization signals.</li>
+      <li><strong>Permanent reject blocklist with Undo</strong> plus automatic sync into <code>voxtype</code>'s Layer-1 <code>config.toml [text] replacements</code> and <code>vocabulary.txt</code>.</li>
+    </ul>
+
+    <h2>5. Real-World Hardware Benchmarks (333 Takes)</h2>
+    <table>
+      <thead>
+        <tr><th>Benchmark Dimension</th><th>Measured Value</th><th>Hardware / Notes</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Speech-to-text VRAM</td><td><strong>~2.3 GB</strong></td><td>Parakeet Unified EN 0.6B fp16 on RTX 4050 Laptop (6 GB VRAM)</td></tr>
+        <tr><td>Dictation volume</td><td><strong>19,498 words</strong></td><td>333 recorded takes (~8.1 hours saved vs 40 WPM typing)</td></tr>
+        <tr><td>End-to-end cleanup latency</td><td><strong>516 ms P50 · 1,060 ms P90</strong></td><td>Warm TLS keep-alive proxy + Groq failover</td></tr>
+        <tr><td>Clean-pass fast path</td><td><strong>24 ms</strong></td><td>Skips LLM completely when no fillers or repairs exist</td></tr>
+        <tr><td>Cleanup reliability</td><td><strong>98.8%</strong></td><td>Remaining 1.2% cleanly fall back to deterministic local cleanup</td></tr>
+      </tbody>
+    </table>
+
+    <figure>
+      <video autoplay loop muted playsinline poster="../assets/osd-pill-strip.png">
+        <source src="../assets/osd-pill-states.mp4" type="video/mp4" />
+      </video>
+      <figcaption>Real 60fps GPU capture of the KitsuneHud Quickshell pill on Hyprland: live PipeWire PCM waveform, word-by-word color wash preview, polishing shimmer, and gathered pen-stroke checkmark.</figcaption>
+    </figure>
+
+    <h2>6. Install Shuush on Any Wayland Setup</h2>
+    <p>Shuush installs cleanly on top of stock <code>voxtype-bin</code> with zero fork replacement, and includes first-party integration for the <code>kuwai</code> Hyprland rice:</p>
+    <pre><code>yay -S voxtype-bin wtype wl-clipboard jq python-gobject libadwaita gtk4 at-spi2-core
+voxtype setup
+git clone https://github.com/KitsuneKode/shuush.git &amp;&amp; cd shuush
+./install.sh --wire-config
+shuush doctor &amp;&amp; shuush studio</code></pre>
+
+    <p>
+      Open <strong>Settings (<code>Alt+6</code>)</strong> to toggle <strong>Air-gapped offline mode (Ollama only)</strong> or add cloud API keys (saved locally with <code>chmod 600</code>).
+      Everything is MIT-licensed at <a href="https://github.com/KitsuneKode/shuush">github.com/KitsuneKode/shuush</a>.
+    </p>
+  </article>
+
+  <script>
+    const bar = document.getElementById('progress');
+    window.addEventListener('scroll', () => {
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      bar.style.transform = `scaleX(${max > 0 ? Math.min(1, window.scrollY / max) : 0})`;
+    }, { passive: true });
+  </script>
+</body>
+</html>
