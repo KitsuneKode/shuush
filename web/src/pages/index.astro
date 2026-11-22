@@ -122,10 +122,10 @@ const wave = [
 ];
 
 const studioShots = [
-  { id: 'diff', tab: 'Dictations', src: '/assets/studio-diff.png', alt: 'Shuush Studio dictation history with the inline Heard → Cleaned diff inspector', caption: 'Every take streams in live. Open one to see the word-level Heard → Cleaned diff, replay the audio, or teach a fix with Ctrl+Enter.' },
-  { id: 'insights', tab: 'Insights', src: '/assets/studio-insights.png', alt: 'Shuush Studio insights with 14-day volume and full-history auto-mine', caption: '14-day dictation volume and a full-history auto-mine that surfaces repairs worth learning.' },
-  { id: 'learning', tab: 'Learning', src: '/assets/studio-learning.png', alt: 'Shuush Studio self-learning inbox and corrections memory', caption: 'A self-learning inbox with phonetic guards. Reject a rule once and it stays rejected, with undo.' },
-  { id: 'settings', tab: 'Settings', src: '/assets/studio-settings.png', alt: 'Shuush Studio settings with drag-and-drop provider failover and offline mode', caption: 'Drag-and-drop provider failover, API keys kept at chmod 600, and a 1-click air-gapped Ollama mode.' },
+  { id: 'diff', tab: 'Dictations', src: '/assets/studio-diff-1140.webp', srcset: '/assets/studio-diff-640.webp 640w, /assets/studio-diff-1140.webp 1140w', alt: 'Shuush Studio dictation history with the inline Heard → Cleaned diff inspector', caption: 'Every take streams in live. Open one to see the word-level Heard → Cleaned diff, replay the audio, or teach a fix with Ctrl+Enter.' },
+  { id: 'insights', tab: 'Insights', src: '/assets/studio-insights-1140.webp', srcset: '/assets/studio-insights-640.webp 640w, /assets/studio-insights-1140.webp 1140w', alt: 'Shuush Studio insights with 14-day volume and full-history auto-mine', caption: '14-day dictation volume and a full-history auto-mine that surfaces repairs worth learning.' },
+  { id: 'learning', tab: 'Learning', src: '/assets/studio-learning-1140.webp', srcset: '/assets/studio-learning-640.webp 640w, /assets/studio-learning-1140.webp 1140w', alt: 'Shuush Studio self-learning inbox and corrections memory', caption: 'A self-learning inbox with phonetic guards. Reject a rule once and it stays rejected, with undo.' },
+  { id: 'settings', tab: 'Settings', src: '/assets/studio-settings-1140.webp', srcset: '/assets/studio-settings-640.webp 640w, /assets/studio-settings-1140.webp 1140w', alt: 'Shuush Studio settings with drag-and-drop provider failover and offline mode', caption: 'Drag-and-drop provider failover, API keys kept at chmod 600, and a 1-click air-gapped Ollama mode.' },
 ];
 
 const specs = [
@@ -201,10 +201,17 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
 
         <figure class="stage hero-video rise" style="--i:5; margin-inline:0; margin-block-end:0;">
           <figcaption class="stage-bar"><span class="lights" aria-hidden="true"><i></i><i></i><i></i></span>shuush-launch.mp4<span class="rec">1080p</span></figcaption>
-          <video class="stage-media" controls muted loop playsinline preload="metadata" poster="/assets/shuush-outro.webp" width="1920" height="1080" data-autoplay aria-label="Shuush launch video: dictating into a terminal on Hyprland">
-            <source src="/assets/shuush-launch.webm" type="video/webm" />
-            <source src="/assets/shuush-launch.mp4" type="video/mp4" />
-          </video>
+          <div class="video-wrap" id="hero-video-wrap">
+            <video id="hero-video" class="stage-media" controls muted loop playsinline preload="none" poster="/assets/shuush-outro.webp" width="1280" height="720" aria-label="Shuush launch video: dictating into a terminal on Hyprland">
+              <source src="/assets/shuush-launch.webm" type="video/webm" />
+              <source src="/assets/shuush-launch.mp4" type="video/mp4" />
+              <track kind="captions" src="/assets/shuush-launch.vtt" srclang="en" label="English" />
+            </video>
+            <button type="button" class="play-pill" id="hero-play-btn" aria-label="Play 1080p launch demo video">
+              <span class="play-dot" aria-hidden="true"><svg width="11" height="12" viewBox="0 0 11 12" fill="currentColor"><path d="M1.5 1.2 10 6 1.5 10.8V1.2Z"/></svg></span>
+              Watch demo
+            </button>
+          </div>
         </figure>
       </div>
     </section>
@@ -251,7 +258,21 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
         <div class="stage" id="studio-panel" role="tabpanel" aria-labelledby="tab-diff">
           <div class="shots">
             {studioShots.map((s, i) => (
-              <img class="stage-media" src={s.src} alt={s.alt} width="1140" height="750" loading="lazy" decoding="async" data-active={i === 0 ? 'true' : 'false'} aria-hidden={i === 0 ? undefined : 'true'} />
+              <img
+                class="stage-media"
+                src={i === 0 ? s.src : 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='}
+                srcset={i === 0 ? s.srcset : undefined}
+                data-src={i === 0 ? undefined : s.src}
+                data-srcset={i === 0 ? undefined : s.srcset}
+                sizes="(max-width: 760px) calc(100vw - 48px), 1140px"
+                alt={s.alt}
+                width="1140"
+                height="750"
+                loading="lazy"
+                decoding="async"
+                data-active={i === 0 ? 'true' : 'false'}
+                aria-hidden={i === 0 ? undefined : 'true'}
+              />
             ))}
           </div>
         </div>
@@ -271,8 +292,9 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
           <div class="card">
             <h3>The pill, as it really runs</h3>
             <p>Listening, live word wash, polishing, delivered. Quickshell, GPU-recorded, unedited.</p>
-            <video class="stage-media" muted loop playsinline preload="metadata" width="1120" height="372" data-autoplay aria-label="KitsuneHud pill cycling through listening, live preview, polishing and delivered states">
+            <video class="stage-media" muted loop playsinline preload="none" width="1120" height="372" data-autoplay aria-label="KitsuneHud pill cycling through listening, live preview, polishing and delivered states">
               <source src="/assets/osd-pill-states.mp4" type="video/mp4" />
+              <track kind="captions" src="/assets/osd-pill-states.vtt" srclang="en" label="English" />
             </video>
             <ol class="states">
               <li style="--c:var(--r)"><b>Listening</b>Live PipeWire waveform + target window</li>
@@ -453,6 +475,18 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
       });
     });
 
+    /* ── hero video click-to-play (0 bytes until clicked) ── */
+    const heroWrap = document.getElementById('hero-video-wrap');
+    const heroVideo = document.getElementById('hero-video') as HTMLVideoElement | null;
+    const heroPlayBtn = document.getElementById('hero-play-btn');
+    heroPlayBtn?.addEventListener('click', () => {
+      heroVideo?.play().catch(() => {});
+    });
+    heroVideo?.addEventListener('play', () => heroWrap?.classList.add('is-playing'));
+    heroVideo?.addEventListener('pause', () => {
+      if (heroVideo.currentTime === 0 || heroVideo.ended) heroWrap?.classList.remove('is-playing');
+    });
+
     /* ── videos play only while visible ─────────────── */
     if (!reduceMotion && 'IntersectionObserver' in window) {
       const io = new IntersectionObserver(
@@ -509,8 +543,23 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
     const shots = Array.from(document.querySelectorAll<HTMLImageElement>('#studio-panel img'));
     const studioCaption = document.getElementById('studio-caption');
     const studioPanel = document.getElementById('studio-panel');
-    segmented(document.getElementById('studio-tabs'), (tab, index) => {
+    const studioTabs = document.getElementById('studio-tabs');
+    const hydrateShot = (img: HTMLImageElement) => {
+      if (img.dataset.srcset) {
+        img.srcset = img.dataset.srcset;
+        delete img.dataset.srcset;
+      }
+      if (img.dataset.src) {
+        img.src = img.dataset.src;
+        delete img.dataset.src;
+      }
+    };
+    const hydrateAllShots = () => shots.forEach(hydrateShot);
+    studioTabs?.addEventListener('pointerenter', hydrateAllShots, { once: true });
+    studioTabs?.addEventListener('focusin', hydrateAllShots, { once: true });
+    segmented(studioTabs, (tab, index) => {
       shots.forEach((img, i) => {
+        if (i === index) hydrateShot(img);
         img.dataset.active = String(i === index);
         if (i === index) img.removeAttribute('aria-hidden');
         else img.setAttribute('aria-hidden', 'true');
@@ -518,15 +567,6 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
       if (studioCaption) studioCaption.textContent = tab.dataset.caption ?? '';
       studioPanel?.setAttribute('aria-labelledby', tab.id);
     });
-    // Warm the other screenshots once the section is close, so switching never flashes.
-    if ('IntersectionObserver' in window && studioPanel) {
-      const warm = new IntersectionObserver((entries) => {
-        if (!entries.some((e) => e.isIntersecting)) return;
-        shots.forEach((img) => (img.loading = 'eager'));
-        warm.disconnect();
-      }, { rootMargin: '600px' });
-      warm.observe(studioPanel);
-    }
 
     /* context explorer */
     const CASES: Record<string, { html: string; chips: [string, string][]; note: string }> = {
@@ -559,8 +599,8 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
       if (ctxNote) ctxNote.textContent = c.note;
       if (animate && !reduceMotion) {
         ctxDiff?.animate(
-          [{ opacity: 0, filter: 'blur(3px)', transform: 'translateY(4px)' }, { opacity: 1, filter: 'blur(0)', transform: 'none' }],
-          { duration: 260, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' },
+          [{ opacity: 0, transform: 'translateY(4px)' }, { opacity: 1, transform: 'none' }],
+          { duration: 240, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' },
         );
       }
     }

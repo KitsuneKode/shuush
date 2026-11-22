@@ -1,29 +1,25 @@
 # Shuush
 
-> Open-source local Superwhisper & Wispr Flow alternative for Linux and Wayland, built cleanly on top of MIT-licensed voxtype (https://github.com/peteonrails/voxtype).
+> Open-source local GPU voice dictation, 5-source screen context, anti-paraphrase LLM cleanup, and native GTK4 Studio for Linux and Wayland — built cleanly on top of MIT-licensed voxtype.
 
-## Canonical URLs
-- Site: https://shuush.kitsunekode.in/
-- Writing Index: https://shuush.kitsunekode.in/blog/
-- 1-Line Installer: https://shuush.kitsunekode.in/install.sh
-- Pre-Flight Doctor: https://shuush.kitsunekode.in/doctor.sh
-- Launch Blog & Benchmarks: https://shuush.kitsunekode.in/blog/why-we-built-shuush/
-- Anti-Paraphrase Span Gate Architecture: https://shuush.kitsunekode.in/blog/anti-paraphrase-span-gate/
-- Omarchy & Hyprland Superwhisper Guide: https://shuush.kitsunekode.in/blog/omarchy-hyprland-superwhisper-alternative/
-- RSS Feed: https://shuush.kitsunekode.in/rss.xml
-- GitHub Repository: https://github.com/KitsuneKode/shuush
+Shuush is a free, MIT-licensed desktop intelligence layer for Arch Linux, Omarchy, Hyprland, Sway, and Niri. It sits on top of stock `voxtype-bin` (zero fork drift) across NVIDIA CUDA, AMD ROCm/Vulkan, Intel Vulkan, and CPU backends. Measured across 333 real coding and chat dictations (19,498 words, ~8.1 hours saved vs 40 WPM typing) on an Intel i5-13450HX + RTX 4050 Laptop 6 GB: ~2.3 GB resident CUDA VRAM (Parakeet Unified EN 0.6B fp16), 516 ms P50 / 1,060 ms P90 end-to-end cleanup latency (24 ms when already clean), and 98.8% cleanup reliability.
 
-## Verified Facts & Benchmarks
-- License: MIT (100% open-source, unlimited words, $0)
-- Operating Systems: Linux Wayland (Hyprland, Omarchy, Sway, Niri, Arch Linux) + first-party kuwai rice support
-- GPU Backends (via stock voxtype-bin): NVIDIA CUDA, AMD ROCm/Vulkan, Intel Vulkan, CPU
-- Speech Engines (via stock voxtype-bin): Parakeet Unified EN 0.6B fp16, Whisper large-v3-turbo, Cohere Transcribe GGUF, Moonshine
-- Measured daily-driver telemetry (Intel i5-13450HX, RTX 4050 Laptop 6 GB VRAM, 23 GiB RAM):
-  - 333 real takes, 19,498 words dictated (~8.1 hours saved vs 40 WPM typing)
-  - 516 ms P50 / 1,060 ms P90 end-to-end cleanup latency (24 ms when already clean)
-  - 98.8% cleanup reliability; ~2.3 GB resident CUDA VRAM
-- Architecture:
-  1. Local ASR via stock voxtype (zero fork required)
-  2. 5-source bounded context: App + AT-SPI <screen>/<draft> + highlighted <selection> + fresh <=15s <clipboard> + <now>
-  3. Deterministic anti-paraphrase span gate (voxtype_pp_gate.py) + 1-click Air-Gapped Ollama mode or multi-provider failover
-  4. Phonetic grounded self-learning (voxtype_learn.py) synced into voxtype config.toml [text] replacements + native GTK4 Studio
+## Documentation & Essays
+
+- [Shuush Home & Benchmarks](https://shuush.kitsunekode.in/): Interactive hotkey demo, 333-take hardware telemetry, Wispr Flow and Superwhisper comparison, GTK4 Studio preview, and 3-step installation.
+- [Writing Index](https://shuush.kitsunekode.in/blog/): Filterable archive of Shuush engineering notes, benchmarks, and Wayland dictation guides.
+- [Why We Built Shuush](https://shuush.kitsunekode.in/blog/why-we-built-shuush/): Architecture overview, 5-source bounded context design, real-world laptop benchmarks, and zero-fork separation from voxtype.
+- [Why Raw LLM Dictation Cleanup Fails (Anti-Paraphrase Span Gate)](https://shuush.kitsunekode.in/blog/anti-paraphrase-span-gate/): How `voxtype_pp_gate.py` prevents silent LLM rewrites and how `voxtype_learn.py` prevents ordinary-English dictionary poisoning.
+- [Replacing Superwhisper's 10k Word Cap on Omarchy & Hyprland](https://shuush.kitsunekode.in/blog/omarchy-hyprland-superwhisper-alternative/): Step-by-step zero-fork setup guide for Arch, Omarchy, Hyprland, Sway, and Niri with air-gapped Ollama or cloud failover.
+
+## Install & Diagnostics
+
+- [1-Line Installer Script](https://shuush.kitsunekode.in/install.sh): Safe, idempotent bash installer for Shuush CLI, GTK4 Studio, KitsuneHud Quickshell pill, systemd user units, and backed-up `config.toml` wiring.
+- [Pre-Flight Health Doctor](https://shuush.kitsunekode.in/doctor.sh): Standalone diagnostic script checking Wayland, voxtype, GPU acceleration, wl-clipboard, wtype, GTK4/Libadwaita, AT-SPI, and Quickshell.
+
+## Optional
+
+- [GitHub Repository](https://github.com/KitsuneKode/shuush): Full MIT source code, sandbox test suite, Hyprland binds, and issue tracker.
+- [Upstream voxtype](https://github.com/peteonrails/voxtype): Peter Jackson's MIT local speech-to-text daemon that powers Shuush's audio capture, GPU ASR inference, and Wayland typing.
+- [RSS Feed](https://shuush.kitsunekode.in/rss.xml): Atom/RSS feed for new engineering essays.
+- [XML Sitemap](https://shuush.kitsunekode.in/sitemap-index.xml): Complete canonical URL index.

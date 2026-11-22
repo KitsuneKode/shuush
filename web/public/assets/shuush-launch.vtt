@@ -1,0 +1,10 @@
+WEBVTT
+
+00:00:00.000 --> 00:00:06.000
+[Shuush on Arch Linux and Hyprland: local GPU voice dictation on top of voxtype]
+
+00:00:06.000 --> 00:00:14.000
+[KitsuneHud waveform pill listens live, grounds identifiers from screen context, and cleans speech without paraphrasing]
+
+00:00:14.000 --> 00:00:24.000
+[Cleaned prompt is typed directly into the active terminal with Shuush Studio logging the inline Heard to Cleaned diff]
