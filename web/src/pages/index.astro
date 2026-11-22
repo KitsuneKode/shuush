@@ -501,6 +501,7 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
       });
       place(current());
       requestAnimationFrame(() => ind?.classList.add('ready'));
+      document.fonts?.ready.then(() => place(current()));
       new ResizeObserver(() => place(current())).observe(root);
     }
 

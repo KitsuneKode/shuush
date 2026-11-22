@@ -150,6 +150,9 @@ const onBlog = Astro.url.pathname.startsWith('/blog');
       const dark = root.dataset.theme === 'dark';
       themeBtn?.setAttribute('aria-label', dark ? 'Switch to light theme' : 'Switch to dark theme');
       themeMeta?.setAttribute('content', dark ? '#12100d' : '#fbfaf7');
+      document.querySelectorAll<HTMLImageElement>('.prose img[src$="architecture.png"], .prose img[src$="architecture-dark.png"]').forEach((img) => {
+        img.src = dark ? '/assets/architecture-dark.png' : '/assets/architecture.png';
+      });
     };
     syncThemeUi();
     themeBtn?.addEventListener('click', () => {

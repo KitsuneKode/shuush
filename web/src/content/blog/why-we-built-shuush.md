@@ -3,7 +3,7 @@ title: "Why We Built Shuush: An Open-Source Local Superwhisper & Wispr Flow Alte
 description: "How we built Shuush cleanly on top of MIT voxtype for Linux/Wayland: 19,498 real dictated words benchmarked, 5-source AT-SPI context, anti-paraphrase span gating, and phonetic self-learning."
 pubDate: "2026-11-22"
 readTime: "6 min read"
-tags: ["Linux", "Wayland", "Hyprland", "Omarchy", "Local AI", "voxtype"]
+tags: ["Architecture", "Linux", "Wayland", "Hyprland", "Omarchy", "Local AI", "voxtype"]
 heroImage: "/assets/architecture.png"
 ---
 
@@ -74,8 +74,7 @@ Works out of the box on stock `voxtype-bin` across NVIDIA CUDA, AMD ROCm/Vulkan,
 ```bash
 yay -S voxtype-bin wtype wl-clipboard jq python-gobject libadwaita gtk4 at-spi2-core
 voxtype setup
-git clone https://github.com/KitsuneKode/shuush.git && cd shuush
-./install.sh --wire-config
+curl -fsSL https://shuush.kitsunekode.in/install.sh | bash
 shuush doctor && shuush studio
 ```
 
