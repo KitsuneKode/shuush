@@ -293,6 +293,10 @@ def run(url: str, body: dict, raw: str, key: str, marker: str | None = None) -> 
                         if not _gate.output_invariants_ok(covered, gated):
                             aligner.cursor = cursor_before
                             return False
+                        # A sentence the gate re-opened with a restored word
+                        # must still be spaced from the one before it.
+                        if not lead and out.text and not out.text[-1:].isspace() and gated[:1].isalnum():
+                            lead = " "
                         chunk = lead + gated
             except Exception:
                 pass

@@ -57,6 +57,17 @@ GENERIC = frozenset(
 
 FILLER = frozenset("um uh er ah hmm mhm erm uhh umm uh-huh".split())
 FILLER_PHRASES = (("you", "know"), ("so", "yeah"), ("kind", "of"), ("sort", "of"))
+# Spoken glue between sentences. The model may drop one where it starts a new
+# sentence ("…this and also think" -> "…this. Also, think"); restoring it gave
+# "this. And Also, think".
+DISCOURSE = frozenset("and so like okay ok right yeah well alright basically".split())
+# "like" stays after these: "I like it", "looks like", "something like that",
+# "would like". Anywhere else it is the spoken filler ("can I like test").
+LIKE_KEEPS = frozenset(
+    "i we you they he she it people would d look looks looked looking sound sounds "
+    "sounded feel feels felt seem seems seemed something anything nothing everything "
+    "things stuff just more much exactly kind sort dont doesnt didnt really".split()
+)
 ARTICLES = frozenset({"a", "an", "the"})
 # Expansions of contractions are stopwords on the model side ("it's" -> "it is").
 STOP = frozenset(
@@ -279,8 +290,27 @@ def delete_ok(keys: list[str], i1: int, i2: int) -> bool:
         return True
     if tuple(span) in FILLER_PHRASES:
         return True
+    if span == ["like"] and (i1 == 0 or keys[i1 - 1] not in LIKE_KEEPS):
+        return True
+    # Every cut word sits next to its own copy: "shown [shown also] also".
+    if len(span) <= 4 and all(
+            (p > 0 and keys[p - 1] == keys[p]) or (p + 1 < len(keys) and keys[p + 1] == keys[p])
+            for p in range(i1, i2)):
+        return True
     # "not actually" is a polarity, not a take-back: cutting it needs a real marker.
     if _contains_marker(span, strict=any(k in NEGATIONS and k != "no" for k in span)):
+        return True
+    # A false start: the speaker restarts with the same word ("we have we
+    # need to fix", "build an build a", "before that before starting that").
+    # Never across a negation: "I don't I do" is a reversal, not a restart.
+    # The aligner may keep the first copy instead: "we [have we] need". A
+    # restart may open with spoken glue: "okay before that before starting".
+    core = span
+    while len(core) > 1 and core[0] in DISCOURSE:
+        core = core[1:]
+    if len(core) <= 4 and not any(k in NEGATIONS for k in span) and (
+            (i2 < len(keys) and keys[i2] == core[0])
+            or (i1 > 0 and keys[i1 - 1] == core[-1] and len(core) >= 2)):
         return True
     # A stutter is this word next to the copy that stays. The aligner may
     # drop either the first or the second copy.
@@ -290,6 +320,17 @@ def delete_ok(keys: list[str], i1: int, i2: int) -> bool:
     ):
         return True
     return False
+
+
+def _discourse_cut(span: list[str], model: str, mw: list, j: int) -> bool:
+    """One or two words of spoken glue, dropped where the model's sentence
+    ends or begins: "and" before "Also,", "okay" after "fix it."."""
+    if not span or len(span) > 2 or not all(k in DISCOURSE for k in span):
+        return False
+    gap = model[mw[j - 1].end:mw[j].start if j < len(mw) else len(model)] if j > 0 else ""
+    ends_before = j == 0 or re.search(r"[.!?…:]", gap) is not None
+    starts_after = j < len(mw) and mw[j].surface[:1].isupper()
+    return ends_before and (starts_after or j == len(mw))
 
 
 def insert_ok(keys: list[str]) -> bool:
@@ -582,6 +623,19 @@ def neutralize_tags(text: str) -> str:
     return _RESERVED_TAG_RE.sub(r"‹\1", text)
 
 
+def is_trivial(text: str, hints: str = "", title_pair: str = "") -> bool:
+    """Two words with nothing for a model to fix: no filler, glue word,
+    stutter or known mishearing. "Apple Music" and "New thread" went to the
+    LLM and came back unchanged (~300 ms each). Three-word commands still go:
+    "erase a PR" -> "raise a PR" needs it."""
+    keys = [t.key for t in tokens(text)]
+    if not keys or len(keys) > 2 or hints or title_pair:
+        return False
+    if any(_filler_word(k) or k in DISCOURSE for k in keys) or _contains_marker(keys):
+        return False
+    return all(a != b for a, b in zip(keys, keys[1:]))
+
+
 def is_numbers_only(text: str) -> bool:
     """True when text contains digits/punctuation only (no letters), so an LLM rewrite only risks corruption."""
     s = (text or "").strip()
@@ -760,7 +814,7 @@ def constrain(raw: str, model: str, pairs: list[tuple[str, str]] | None = None) 
         if op == "equal":
             pieces.append(("m", j1, j2))
         elif op == "delete":
-            if not delete_ok(raw_keys, i1, i2):
+            if not delete_ok(raw_keys, i1, i2) and not _discourse_cut(raw_keys[i1:i2], model, mw, j1):
                 pieces.append(("d", i1, i2))
         elif op == "insert":
             keys = [t.key for t in mw[j1:j2]]
@@ -1084,6 +1138,7 @@ def prepare_payload(req: dict) -> dict:
         "stripped": stripped,
         "snippet": None,
         "numbers_only": is_numbers_only(hard) if mode != "command" else False,
+        "trivial": is_trivial(hard, hints, title_pair) if mode != "command" else False,
         "heard": heard,
         "hard": hard,
         "hard_framed": neutralize_tags(hard),
@@ -1365,9 +1420,9 @@ def _selftest() -> int:
           lambda s: s == "")
     check("t3code login thread not private", private_reason("com.t3tools.T3Code", "Fix login password bug", ""),
           lambda s: s == "")
-    check("restored word keeps period before it",
+    check("sentence-initial and may go where the model starts a sentence",
           constrain("to do this and also think about it", "to do this. Also think about it."),
-          lambda s: s == "to do this. And also think about it.")
+          lambda s: s == "to do this. Also think about it.")
     old_st = os.environ.get("PP_SCREEN_TERMS")
     try:
         os.environ["PP_SCREEN_TERMS"] = "kuwai Autotabi"
@@ -1447,6 +1502,34 @@ def _selftest() -> int:
     check("with out respelled",
           constrain("ship it with out tests", "Ship it without tests."),
           lambda s: "without" in s)
+    check("sentence-initial and dropped cleanly",
+          constrain("you can do this and also think about it", "You can do this. Also, think about it."),
+          lambda s: s == "You can do this. Also, think about it.")
+    check("interleaved stutter dropped",
+          constrain("only one disk is being shown shown also also there is one", "Only one disk is being shown. Also, there is one."),
+          lambda s: s == "Only one disk is being shown. Also, there is one.")
+    check("filler like dropped, content like kept",
+          constrain("we are going to completely like improve it", "We are going to completely improve it.")
+          + " | " + constrain("it looks like a bug", "It looks a bug.")
+          + " | " + constrain("I like the red one", "I the red one."),
+          lambda s: s == "We are going to completely improve it. | It looks like a bug. | I like the red one.")
+    check("false start opening with okay dropped",
+          constrain("fix it okay before that before starting that I need things",
+                    "Fix it. Before starting that, I need things."),
+          lambda s: s == "Fix it. Before starting that, I need things.")
+    check("false start dropped",
+          constrain("fix all the things we have we need to fix", "Fix all the things we need to fix."),
+          lambda s: s == "Fix all the things we need to fix.")
+    check("reversal across a negation kept",
+          constrain("I don't I do want it", "I do want it."),
+          lambda s: "don't" in s)
+    check("mid-sentence and still restored",
+          constrain("apples and oranges", "Apples, oranges."),
+          lambda s: "and" in s)
+    check("trivial short takes",
+          f"{is_trivial('Apple Music')},{is_trivial('New thread.')},{is_trivial('um okay')},"
+          f"{is_trivial('the the')},{is_trivial('Go home', hints='x')},{is_trivial('erase a PR')}",
+          lambda s: s == "True,True,False,False,False,False")
     check("numbers only detection",
           f"{is_numbers_only('192.168.1.1')},{is_numbers_only('three hundred')},{is_numbers_only('42 89')}",
           lambda s: s == "True,False,True")
