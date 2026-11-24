@@ -2,6 +2,7 @@
 Description=Shuush warm TLS keep-alive proxy for dictation cleanup LLMs
 PartOf=voxtype.service
 After=network-online.target
+Conflicts=voxtype-llm-proxy.service
 
 [Service]
 Type=simple

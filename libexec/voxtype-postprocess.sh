@@ -12,6 +12,12 @@ RT="${XDG_RUNTIME_DIR:-/run/user/$UID}/voxtype"
 mkdir -p "$RT" 2>/dev/null || true
 chmod 700 "$RT" 2>/dev/null || true
 PP_LOG="$RT/pp.log"
+# A run killed on timeout skips its EXIT trap: clear what such runs left, and
+# keep the log (in RAM) from growing without bound.
+find "$RT" -maxdepth 1 -name 'pp-stream.*' -mmin +10 -exec rm -rf {} + 2>/dev/null
+if [ "$(stat -c %s "$PP_LOG" 2>/dev/null || echo 0)" -gt 262144 ]; then
+  tail -n 500 "$PP_LOG" > "$PP_LOG.tmp" 2>/dev/null && mv -f "$PP_LOG.tmp" "$PP_LOG"
+fi
 VIA="passthrough"   # which path produced the output: local | groq | skip | short | snippet | private | passthrough
 LLM_MS=0
 printf '%s  invoked  mode=%s  in=%dB\n' "$(date +%T)" "$MODE" "${#raw}" >> "$PP_LOG"
@@ -139,7 +145,8 @@ emit() {
   # The fork's input method reads the field after a take (field_text.json):
   # never for a private one. field_text.off tells it to stop for a while.
   if [ "$VIA" = private ]; then
-    rm -f "$RT/field_text.json"; : > "$RT/field_text.off"
+    rm -f "$RT/field_text.json" "$RT/take_selection" "$RT/take_screen_ctx.json" "$RT/take_clip_start"
+    : > "$RT/field_text.off"
     exit 0
   fi
   rm -f "$RT/pp_private" "$RT/field_text.off"
@@ -210,6 +217,7 @@ AT_SPI_PASSWORD=0
 PP_SCREEN_CONTEXT=$(sed -n 's/^PP_SCREEN_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
 PP_APP_CONTEXT=$(sed -n 's/^PP_APP_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
 PP_CLIPBOARD_CONTEXT=$(sed -n 's/^PP_CLIPBOARD_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
+PP_PRIVATE_GUARD=$(sed -n 's/^PP_PRIVATE_GUARD=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
 
 ctx_json=""
 SC_CACHE="$RT/take_screen_ctx.json"
@@ -237,9 +245,11 @@ if [ "${PP_APP_CONTEXT:-1}" = 1 ] && [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
     SEL_RAW=$(head -c 600 "$RT/take_selection" 2>/dev/null || true)
   fi
   if [ "${PP_CLIPBOARD_CONTEXT:-1}" = 1 ] && command -v wl-paste >/dev/null 2>&1; then
-    # A password manager marks its copies: they never go to a model.
+    # A password manager marks its copies: they never go to a model. When the
+    # types cannot be read in time, the clipboard is not read either.
     cur_clip=""
-    if ! timeout 0.15 wl-paste --list-types 2>/dev/null | grep -qx 'x-kde-passwordManagerHint'; then
+    if clip_types=$(timeout 0.15 wl-paste --list-types 2>/dev/null) \
+      && ! grep -qx 'x-kde-passwordManagerHint' <<<"$clip_types"; then
       cur_clip=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 || true)
     fi
     if [ -n "${cur_clip//[[:space:]]/}" ]; then
@@ -612,11 +622,11 @@ try_local() {
         out=""
         return
     fi
-    out=$(curl -fsS --max-time "$t" "$PP_LOCAL_URL/api/chat" \
-        -d "$(jq -nc --argjson msgs "$MESSAGES" --arg m "$PP_LOCAL_MODEL" '{model:$m,
+    out=$(jq -nc --argjson msgs "$MESSAGES" --arg m "$PP_LOCAL_MODEL" '{model:$m,
             messages:$msgs,
             stream:false, think:false, keep_alive:"30m",
-            options:{temperature:0.1, num_predict:($ENV.PP_MAXTOK_LOCAL // "512" | tonumber)}}')" 2>/dev/null \
+            options:{temperature:0.1, num_predict:($ENV.PP_MAXTOK_LOCAL // "512" | tonumber)}}' \
+        | curl -fsS --max-time "$t" "$PP_LOCAL_URL/api/chat" --data-binary @- 2>/dev/null \
         | jq -r '.message.content // empty' \
         | sed 's/<think>.*<\/think>//g; /^[[:space:]]*$/d')
 }
@@ -649,7 +659,7 @@ try_groq() {
     t=$(cap_sec 2.5)
     if awk -v t="$t" 'BEGIN{exit !(t+0 >= 0.4)}'; then
         out=$(curl -fsS --max-time "$t" "$PP_GROQ_PROXY/openai/v1/chat/completions" \
-            -H "Content-Type: application/json" -d "$body" 2>/dev/null \
+            -H "Content-Type: application/json" --data-binary @- <<<"$body" 2>/dev/null \
             | jq -r '.choices[0].message.content // empty' \
             | sed 's/<think>.*<\/think>//g; /^[[:space:]]*$/d')
     fi
@@ -668,11 +678,15 @@ try_groq() {
         return
     fi
     out=$(curl -fsS --connect-timeout 2 --max-time "$t" https://api.groq.com/openai/v1/chat/completions \
-        -H "Authorization: Bearer $key" -H "Content-Type: application/json" \
-        -H "User-Agent: voxtype-postprocess/1.0" -d "$body" 2>/dev/null \
+        -H @<(auth_header "$key") -H "Content-Type: application/json" \
+        -H "User-Agent: voxtype-postprocess/1.0" --data-binary @- <<<"$body" 2>/dev/null \
         | jq -r '.choices[0].message.content // empty' \
         | sed 's/<think>.*<\/think>//g; /^[[:space:]]*$/d')
 }
+
+# Keys and dictations stay off curl's command line, which other local users
+# can read in /proc: the header comes from a pipe, the body from stdin.
+auth_header() { printf 'Authorization: Bearer %s\n' "$1"; }
 
 # One key per provider in ~/.config/voxtype/secrets.env; an empty or missing
 # key skips that provider without a network call.
@@ -696,8 +710,8 @@ try_compat() {  # url key body [max_seconds]
         return
     fi
     out=$(curl -fsS --connect-timeout 2 --max-time "$t" "$1" \
-        -H "Authorization: Bearer $2" -H "Content-Type: application/json" \
-        -H "User-Agent: voxtype-postprocess/1.0" -d "$3" 2>/dev/null \
+        -H @<(auth_header "$2") -H "Content-Type: application/json" \
+        -H "User-Agent: voxtype-postprocess/1.0" --data-binary @- <<<"$3" 2>/dev/null \
         | jq -r '.choices[0].message.content // empty' \
         | sed 's/<think>.*<\/think>//g; /^[[:space:]]*$/d')
 }

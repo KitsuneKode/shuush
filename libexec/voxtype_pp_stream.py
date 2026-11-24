@@ -286,6 +286,7 @@ def run(url: str, body: dict, raw: str, key: str, marker: str | None = None) -> 
             if PREAMBLE.match(head):
                 return False
         cursor_before = aligner.cursor
+        released_before = aligner.released_words
         if not aligner.accepts(chunk, whole_rest):
             return False
         # The 50% overlap check still lets a synonym, negation flip, or
@@ -306,6 +307,7 @@ def run(url: str, body: dict, raw: str, key: str, marker: str | None = None) -> 
                 if gated:
                     if not _gate.output_invariants_ok(covered, gated):
                         aligner.cursor = cursor_before
+                        aligner.released_words = released_before
                         return False
                     # A sentence the gate re-opened with a restored word
                     # must still be spaced from the one before it.
@@ -314,6 +316,7 @@ def run(url: str, body: dict, raw: str, key: str, marker: str | None = None) -> 
                     chunk = lead + gated
         except Exception:
             aligner.cursor = cursor_before
+            aligner.released_words = released_before
             return False
         out.emit(chunk)
         return True

@@ -2,6 +2,7 @@
 Description=Shuush live OSD session watcher & idle inhibitor for voxtype
 PartOf=voxtype.service
 After=voxtype.service
+Conflicts=voxtype-live-osd.service
 
 [Service]
 Type=simple

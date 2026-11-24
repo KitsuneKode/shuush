@@ -142,14 +142,19 @@ def log(msg: str) -> None:
 
 def _claim() -> None:
     """One watcher at a time: the newest dictation replaces an older watch."""
-    try:
-        old = int(PIDFILE.read_text().strip())
-        cmd = Path(f"/proc/{old}/cmdline").read_bytes()
-        if old != os.getpid() and b"voxtype_edit_watch" in cmd:
-            os.kill(old, signal.SIGTERM)
-    except (OSError, ValueError):
-        pass
-    PIDFILE.write_text(str(os.getpid()))
+    import fcntl
+
+    # Locked, or two watchers started together each miss the other.
+    with open(PIDFILE.with_suffix(".lock"), "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        try:
+            old = int(PIDFILE.read_text().strip())
+            cmd = Path(f"/proc/{old}/cmdline").read_bytes()
+            if old != os.getpid() and b"voxtype_edit_watch" in cmd:
+                os.kill(old, signal.SIGTERM)
+        except (OSError, ValueError):
+            pass
+        PIDFILE.write_text(str(os.getpid()))
 
 
 def learn_from(hunks: list[tuple[str, str]]) -> None:
