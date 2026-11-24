@@ -133,33 +133,23 @@ emit() {
   [ "$STREAMED" = 1 ] || printf '%s' "$text"
   [ -z "${text//[[:space:]]/}" ] && exit 0
   # A private take is typed and forgotten: not on the clipboard, not in history.
-  [ "$VIA" = private ] && { rm -f "$RT/clip_backup.bin" "$RT/clip_backup.mime"; exit 0; }
-  rm -f "$RT/pp_private"
+  # The fork's input method reads the field after a take (field_text.json):
+  # never for a private one. field_text.off tells it to stop for a while.
+  if [ "$VIA" = private ]; then
+    rm -f "$RT/field_text.json"; : > "$RT/field_text.off"
+    exit 0
+  fi
+  rm -f "$RT/pp_private" "$RT/field_text.off"
   # Record our own emitted hash (ts=0) BEFORE wl-copy so the next take never
   # mistakes our own dictation for freshly copied user <clipboard> context.
   local emit_hash keep_clip
   emit_hash=$(printf '%s' "$text" | head -c 800 | sha256sum | awk '{print $1}')
   (umask 077; printf '%s\n0\n' "$emit_hash" > "$RT/clip_seen"; printf '%s\n' "$emit_hash" > "$RT/clip_self_hash")
+  # PP_KEEP_ON_CLIPBOARD=0: the clipboard is never touched (what you copied
+  # stays; a failed typing still lands there through voxtype's own fallback).
   keep_clip=$(sed -n 's/^PP_KEEP_ON_CLIPBOARD=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
-  if command -v wl-copy >/dev/null 2>&1; then
+  if [ "${keep_clip:-1}" != 0 ] && command -v wl-copy >/dev/null 2>&1; then
     wl-copy -- "$text" </dev/null >/dev/null 2>&1 &
-    if [ "${keep_clip:-1}" = 0 ] && [ -f "$RT/clip_backup.mime" ] && [ -f "$RT/clip_backup.bin" ]; then
-      # Own copies: the next take may snapshot again before this restore runs.
-      local rb="$RT/clip_restore.$$"
-      mv -f "$RT/clip_backup.bin" "$rb.bin" 2>/dev/null && mv -f "$RT/clip_backup.mime" "$rb.mime" 2>/dev/null
-      (
-        sleep 0.5
-        cur_now=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 | sha256sum | awk '{print $1}' || true)
-        bmime=$(cat "$rb.mime" 2>/dev/null || true)
-        if [ "$cur_now" = "$emit_hash" ] && [ -n "$bmime" ]; then
-          wl-copy --type "$bmime" < "$rb.bin" >/dev/null 2>&1 || true
-          # The restored clipboard is old, not freshly copied <clipboard> context.
-          rhash=$(head -c 800 "$rb.bin" | sha256sum | awk '{print $1}')
-          (umask 077; printf '%s\n0\n' "$rhash" > "$RT/clip_seen")
-        fi
-        rm -f "$rb.bin" "$rb.mime"
-      ) </dev/null >/dev/null 2>&1 &
-    fi
   fi
   # History line (+ swaps/review flag, desktop notification when a dictation
   # needs a second look). Timings make "polishing felt slow" diagnosable:
@@ -244,7 +234,11 @@ if [ "${PP_APP_CONTEXT:-0}" = 1 ] && [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
     SEL_RAW=$(head -c 600 "$RT/take_selection" 2>/dev/null || true)
   fi
   if [ "${PP_CLIPBOARD_CONTEXT:-1}" = 1 ] && command -v wl-paste >/dev/null 2>&1; then
-    cur_clip=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 || true)
+    # A password manager marks its copies: they never go to a model.
+    cur_clip=""
+    if ! timeout 0.15 wl-paste --list-types 2>/dev/null | grep -qx 'x-kde-passwordManagerHint'; then
+      cur_clip=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 || true)
+    fi
     if [ -n "${cur_clip//[[:space:]]/}" ]; then
       cur_hash=$(printf '%s' "$cur_clip" | sha256sum | awk '{print $1}')
       self_hash=$(awk 'NR==1{print $1}' "$RT/clip_self_hash" 2>/dev/null || true)

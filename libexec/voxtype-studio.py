@@ -2411,7 +2411,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             ("PP_AUTO_LEARN", "Safe grounded self-learning", "Auto-learn non-English mishearings seen 2+ times"),
             ("PP_WATCH_EDITS", "Learn from your fixes", "Names you correct in the field after a take count as mishearings"),
             ("PP_SMART_JOIN", "Smart join", "Space and continue back-to-back takes in the same field"),
-            ("PP_KEEP_ON_CLIPBOARD", "Keep dictation on clipboard", "Off: restore what you had copied after typing"),
+            ("PP_KEEP_ON_CLIPBOARD", "Keep dictation on clipboard", "Off: the clipboard is left alone"),
         ]:
             sw = self._make_switch_row(ctx, title, sub, read_env_flag(key, "1") == "1", self._on_toggle_env, key)
             self.env_switches[key] = sw

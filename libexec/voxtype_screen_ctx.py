@@ -81,6 +81,18 @@ def _caret_split(node, atspi_text, before: int, after: int) -> tuple[str, str] |
         return None
 
 
+def _role(node, Atspi) -> str:
+    """The role as these sets spell it. AT-SPI names roles with spaces
+    ("password text", "document web"); the hyphenated sets never matched,
+    so password fields went unnoticed (2026-11-24)."""
+    try:
+        if node.get_role() == Atspi.Role.PASSWORD_TEXT:
+            return "password-text"
+    except Exception:
+        pass
+    return (node.get_role_name() or "").replace(" ", "-")
+
+
 def _has_state(node, st) -> bool:
     try:
         ss = node.get_state_set()
@@ -168,7 +180,7 @@ def collect(pid: int, cls: str, title: str, budget_s: float = 0.25, max_nodes: i
         node = stack.pop()
         visited += 1
         try:
-            role = node.get_role_name() or ""
+            role = _role(node, Atspi)
             if role in SKIP_SUBTREE_ROLES:
                 continue
             ss = node.get_state_set()
@@ -247,7 +259,7 @@ def focused_field(pid: int, cls: str, title: str, budget_s: float = 0.4,
         node = stack.pop()
         visited += 1
         try:
-            role = node.get_role_name() or ""
+            role = _role(node, Atspi)
             if role in SKIP_SUBTREE_ROLES:
                 continue
             ss = node.get_state_set()

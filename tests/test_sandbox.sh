@@ -15,6 +15,8 @@ ok "All bash and Python modules parse cleanly"
 echo "=== 2. Anti-Paraphrase Span Gate Selftest ==="
 python3 -I "$ROOT/libexec/voxtype_pp_gate.py" test >/dev/null
 ok "voxtype_pp_gate.py selftest passed"
+python3 -I "$ROOT/libexec/voxtype_pp_stream.py" test >/dev/null
+ok "voxtype_pp_stream.py gates the last streamed sentence against the whole rest"
 python3 -I "$ROOT/libexec/voxtype_edit_watch.py" test >/dev/null
 ok "voxtype_edit_watch.py finds hand-fixed names and ignores rewrites"
 for case in "Done.|Next thing.| Next thing." "first part|And then more.| and then more." \

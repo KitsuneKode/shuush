@@ -198,12 +198,17 @@ FIRST_TEXT_MS: list[int] = []
 _T0 = time.monotonic()
 
 
-try:                                    # the spelling pass; never the reason a dictation fails
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+try:
     import voxtype_pp_gate as _gate
-    _TERMS = _gate.vocab_terms()
 except Exception:
-    _gate, _TERMS = None, []
+    _gate = None                        # then nothing is released ungated (see release)
+_TERMS: list = []
+if _gate is not None:
+    try:                                # the spelling pass; never the reason a dictation fails
+        _TERMS = _gate.vocab_terms()
+    except Exception:
+        _TERMS = []
 
 
 class Emitter:
@@ -271,7 +276,11 @@ def run(url: str, body: dict, raw: str, key: str, marker: str | None = None) -> 
             out.emit(("" if out.text[-1:].isspace() else " ") + rest)
         return EXIT_PARTIAL, out.text
 
-    def release(chunk: str, whole_rest: bool = False) -> bool:
+    def release(chunk: str, whole_rest: bool = False, last: bool = False) -> bool:
+        # Typing cannot be undone: without the gate, nothing goes out as the
+        # model wrote it; the rest is typed as heard (fall_back).
+        if _gate is None:
+            return False
         if not out.started:
             head = TAGS.sub("", chunk).lstrip()
             if PREAMBLE.match(head):
@@ -282,29 +291,36 @@ def run(url: str, body: dict, raw: str, key: str, marker: str | None = None) -> 
         # The 50% overlap check still lets a synonym, negation flip, or
         # invented first-person reply through. Run the span gate + invariants
         # before the words are typed; typing cannot be undone.
-        if _gate is not None:
-            try:
-                covered = aligner.covered_text(cursor_before, aligner.cursor)
-                if covered.strip():
-                    stripped = chunk.lstrip()
-                    lead = chunk[:len(chunk) - len(stripped)]
-                    gated = _gate.constrain(covered, stripped)
-                    if gated:
-                        if not _gate.output_invariants_ok(covered, gated):
-                            aligner.cursor = cursor_before
-                            return False
-                        # A sentence the gate re-opened with a restored word
-                        # must still be spaced from the one before it.
-                        if not lead and out.text and not out.text[-1:].isspace() and gated[:1].isalnum():
-                            lead = " "
-                        chunk = lead + gated
-            except Exception:
-                pass
+        try:
+            # The last sentence answers for everything left in the
+            # transcript: "use port five" -> "Use port 5." stopped the
+            # alignment before "five", which was then lost.
+            end = len(aligner.words) if last else aligner.cursor
+            covered = aligner.covered_text(cursor_before, end)
+            if last:
+                aligner.cursor = len(aligner.words)
+            if covered.strip():
+                stripped = chunk.lstrip()
+                lead = chunk[:len(chunk) - len(stripped)]
+                gated = _gate.constrain(covered, stripped)
+                if gated:
+                    if not _gate.output_invariants_ok(covered, gated):
+                        aligner.cursor = cursor_before
+                        return False
+                    # A sentence the gate re-opened with a restored word
+                    # must still be spaced from the one before it.
+                    if not lead and out.text and not out.text[-1:].isspace() and gated[:1].isalnum():
+                        lead = " "
+                    chunk = lead + gated
+        except Exception:
+            aligner.cursor = cursor_before
+            return False
         out.emit(chunk)
         return True
 
     held = None           # set once a sentence fails: the rest is judged at the end
     carry = ""            # whitespace between sentences (a list's line breaks)
+    lag = None            # the newest sentence, released when the next one arrives
 
     try:
         for delta, fin in stream_deltas(url, body, key, first_byte_s, idle_s, total_s):
@@ -336,21 +352,24 @@ def run(url: str, body: dict, raw: str, key: str, marker: str | None = None) -> 
                     carry += chunk       # goes out with the next sentence
                     continue
                 chunk, carry = carry + chunk, ""
-                if not release(chunk):
-                    held = chunk
+                # One sentence behind, so the last one is only judged once
+                # the stream has ended, against all of the remaining words.
+                prev, lag = lag, chunk
+                if prev is not None and not release(prev):
+                    held, lag = prev + lag, None
     except Exception as e:  # noqa: BLE001 - any failure: fall back, never crash mid-text
         print(f"voxtype_pp_stream: {type(e).__name__}: {e}", file=sys.stderr)
         if not out.started:
             return EXIT_TRANSPORT, ""
         return fall_back()
 
-    tail = (carry + TAGS.sub("", pending)).rstrip()
+    tail = ((lag or "") + carry + TAGS.sub("", pending)).rstrip()
     if held is not None:
         block = (held + tail).rstrip()
-        if not release(block, whole_rest=True):
+        if not release(block, whole_rest=True, last=True):
             return fall_back()
-    elif tail.strip() and not release(tail):
-        if not release(tail, whole_rest=True):
+    elif tail.strip() and not release(tail, last=True):
+        if not release(tail, whole_rest=True, last=True):
             return fall_back()
     if not out.started:
         return EXIT_REJECTED, ""
@@ -383,5 +402,40 @@ def main() -> int:
     return code
 
 
+def _selftest() -> int:
+    """Drive run() with canned model deltas (no network)."""
+    import io
+    global stream_deltas
+    cases = [
+        # (raw transcript, model sentences, what must be on screen)
+        ("send it today but I do not approve",
+         ["Send it today."], lambda t: "not approve" in t),
+        ("we will use port five for the test server and then restart it",
+         ["We will use port 5 for the test server", " and then restart it."],
+         lambda t: "5" in t and "restart it" in t),
+        ("use port five",
+         ["Use port 5."], lambda t: t.rstrip(".").endswith(("5", "five"))),
+        ("we do not approve the release today and we will wait",
+         ["We do not approve the release today.", " We will wait."],
+         lambda t: "do not approve" in t and "wait" in t),
+    ]
+    real, bad = stream_deltas, 0
+    for raw, deltas, ok in cases:
+        stream_deltas = lambda *a, d=deltas, **k: iter([(x, None) for x in d] + [("", "stop")])  # noqa: E731
+        saved, sys.stdout = sys.stdout, io.StringIO()
+        try:
+            code, text = run("http://fake", {}, raw, "")
+        finally:
+            sys.stdout = saved
+        if not ok(text):
+            bad += 1
+            print(f"FAIL {raw!r}: exit={code} typed={text!r}")
+    stream_deltas = real
+    print("stream selftest ok" if not bad else f"{bad} failed")
+    return 1 if bad else 0
+
+
 if __name__ == "__main__":
+    if sys.argv[1:] == ["test"]:
+        sys.exit(_selftest())
     sys.exit(main())

@@ -49,6 +49,10 @@ start() {  # [profile]
     # Gone before the background capture refills it: a take that ends first
     # must not read the previous field's caret, draft or password state.
     rm -f "$rt/handsfree" "$rt/take_screen_ctx.json"
+    # Captures below publish only while this is still the current take: a
+    # slow one from a cancelled take must not stand in for this one's.
+    take=$(date +%s%N)
+    printf '%s' "$take" > "$rt/take_id"
     win=$(active_window_json)
     [ -n "$win" ] || win='{}'
     # Which window this take belongs to. The pill reads the class, and the
@@ -69,29 +73,6 @@ start() {  # [profile]
             rm -f "$rt/take_selection"
         fi
         CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
-        keep_clip=$(sed -n 's/^PP_KEEP_ON_CLIPBOARD=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
-        if [ "${keep_clip:-1}" = 0 ] && command -v wl-paste >/dev/null 2>&1; then
-            # Snapshot the clipboard so emit() can restore it 500ms after typing.
-            # Plain text when offered (a text/html-only restore pastes nothing
-            # into a terminal), else the first real type (an image, a file list).
-            btypes=$(timeout 0.15 wl-paste --list-types 2>/dev/null | grep -Ev '^(TARGETS|TIMESTAMP|SAVE_TARGETS|MULTIPLE)$' || true)
-            bmime=$(printf '%s\n' "$btypes" | grep -m1 -xE 'text/plain;charset=utf-8|text/plain|UTF8_STRING' || printf '%s\n' "$btypes" | head -1)
-            # A password manager's copy must keep its auto-clear; our own
-            # previous dictation is not worth restoring.
-            if printf '%s\n' "$btypes" | grep -qx 'x-kde-passwordManagerHint' \
-                || [ "$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 | sha256sum | awk '{print $1}')" = "$(awk 'NR==1{print $1}' "$rt/clip_self_hash" 2>/dev/null)" ]; then
-                bmime=""
-            fi
-            if [ -n "$bmime" ]; then
-                if timeout 0.25 wl-paste --no-newline --type "$bmime" 2>/dev/null | head -c 4194304 > "$rt/clip_backup.bin" && [ -s "$rt/clip_backup.bin" ]; then
-                    printf '%s' "$bmime" > "$rt/clip_backup.mime"
-                else
-                    rm -f "$rt/clip_backup.bin" "$rt/clip_backup.mime"
-                fi
-            else
-                rm -f "$rt/clip_backup.bin" "$rt/clip_backup.mime"
-            fi
-        fi
         clip=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 || true)
         if [ -n "${clip//[[:space:]]/}" ]; then
             chash=$(printf '%s' "$clip" | sha256sum | awk '{print $1}')
@@ -123,12 +104,11 @@ start() {  # [profile]
                 ctx_out=$(timeout 0.35 python3 -I "$SCRIPT_DIR/voxtype_screen_ctx.py" "${w_pid:-0}" "$w_cls" "$w_title" 2>/dev/null || true)
             fi
             if [ -n "$ctx_out" ]; then
-                printf '%s' "$ctx_out" > "$rt/take_screen_ctx.tmp" && mv -f "$rt/take_screen_ctx.tmp" "$rt/take_screen_ctx.json"
-            else
-                rm -f "$rt/take_screen_ctx.json"
+                printf '%s' "$ctx_out" > "$rt/take_screen_ctx.$take" \
+                    && [ "$(cat "$rt/take_id" 2>/dev/null)" = "$take" ] \
+                    && mv -f "$rt/take_screen_ctx.$take" "$rt/take_screen_ctx.json"
+                rm -f "$rt/take_screen_ctx.$take"
             fi
-        else
-            rm -f "$rt/take_screen_ctx.json"
         fi
     ) >/dev/null 2>&1 &
     profile="${1:-}"

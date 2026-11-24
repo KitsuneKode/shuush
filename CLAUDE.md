@@ -8,8 +8,8 @@ Shuush is an MIT-licensed Linux/Wayland intelligence, context, safety, and UI la
 - `bin/shuush` — User CLI (`studio`, `doctor`, `wire-config`, `toggle`, `learn`, `services`, `uninstall`)
 - `install.sh` — Zero-sudo installer & live-sync script (`~/.local/share/shuush`, `~/.local/bin/shuush`, systemd user services, KitsuneHud OSD)
 - `libexec/`
-  - `voxtype-toggle.sh` — Push-to-talk / tap-for-handsfree / command-mode launcher; captures target window, primary selection, clipboard baseline/backup, and background AT-SPI/kitty screen+draft context at record start
-  - `voxtype-postprocess.sh` — Cleanup pipeline (`[output.post_process]`), DATA-framed prompt, failover chain (`local`, `groq`, `groq2`, `cerebras`, `opencode`, `openrouter`), budget control, streaming support, clipboard leak guard & restore, and history/review dispatch
+  - `voxtype-toggle.sh` — Push-to-talk / tap-for-handsfree / command-mode launcher; captures target window, primary selection, clipboard baseline, and background AT-SPI/kitty screen+draft context at record start
+  - `voxtype-postprocess.sh` — Cleanup pipeline (`[output.post_process]`), DATA-framed prompt, failover chain (`local`, `groq`, `groq2`, `cerebras`, `opencode`, `openrouter`), budget control, streaming support, clipboard leak guard, and history/review dispatch
   - `voxtype_pp_gate.py` — Single-call deterministic `prepare` batch (privacy guard, hallucination strip, snippets, sure-name `hard_apply`, secret redaction, XML tag neutralization, screen terms, hints), anti-paraphrase span gate (`constrain` / `constrain-check` with negation, digit, numeric-value, and first-person invariants), vocabulary `finish`, and `fallback_clean`
   - `voxtype_pp_stream.py` — Sentence-level SSE streaming aligner + span gate + invariant guard
   - `voxtype_screen_ctx.py` — Bounded AT-SPI2 reader for focused draft text, text before the caret (smart join), visible screen text, the focused field (edit watcher), and `password-text` privacy detection

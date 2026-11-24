@@ -60,9 +60,9 @@ FILLER_PHRASES = (("you", "know"), ("so", "yeah"), ("kind", "of"), ("sort", "of"
 # Spoken glue between sentences. The model may drop one where it starts a new
 # sentence ("…this and also think" -> "…this. Also, think"); restoring it gave
 # "this. And Also, think".
-DISCOURSE = frozenset("and so like okay ok right yeah well alright basically".split())
+DISCOURSE = frozenset("and so like okay ok yeah alright basically".split())
 # Only these may go at the very end of a take: "it works well" keeps "well".
-TAGS = frozenset("okay ok right yeah alright".split())
+TAGS = frozenset("okay ok yeah alright".split())
 # "like" stays after these: "I like it", "looks like", "something like that",
 # "would like". Anywhere else it is the spoken filler ("can I like test").
 LIKE_KEEPS = frozenset(
@@ -134,7 +134,7 @@ MARKERS = (
 FLIP_PREFIX = ("un", "in", "im", "non", "dis", "ir", "il")
 INFLECTION = frozenset({"s", "es", "ed", "d", "ing", "er", "ly", "n"})
 
-TOKEN = re.compile(r"\d+(?:[.:]\d+)+|[A-Za-z0-9]+(?:['’.-][A-Za-z0-9]+)*")
+TOKEN = re.compile(r"(?<![\w-])-?\d+(?:[.:]\d+)+|(?<![\w-])-\d+|[A-Za-z0-9]+(?:['’.-][A-Za-z0-9]+)*")
 # A whole sentence that is a whisper sign-off. "Thank you." and "Bye." are
 # things a person says; "thanks for watching" is the model inventing an ending.
 HALLUC = re.compile(
@@ -148,7 +148,11 @@ class Tok:
         self.surface = surface
         self.start = start
         self.end = end
-        self.key = re.sub(r"[^a-z0-9]", "", surface.lower())
+        # A number keeps its sign and the separators between its digits:
+        # "1.25" is not "125", "-5" is not "5", "3:30" is not "330".
+        k = re.sub(r"(?<=\d)[.:-](?=\d)", lambda m: "\x00" + m.group(0), surface.lower())
+        k = re.sub(r"^-(?=\d)", "\x00-", k)
+        self.key = re.sub(r"\x00(.)|[^a-z0-9]", lambda m: m.group(1) or "", k)
 
 
 def tokens(text: str) -> list[Tok]:
@@ -286,7 +290,7 @@ def _contains_marker(keys: list[str], strict: bool = False) -> bool:
     return False
 
 
-def delete_ok(keys: list[str], i1: int, i2: int) -> bool:
+def delete_ok(keys: list[str], i1: int, i2: int, surfaces: list[str] | None = None) -> bool:
     span = keys[i1:i2]
     if not span:
         return True
@@ -294,16 +298,22 @@ def delete_ok(keys: list[str], i1: int, i2: int) -> bool:
         return True
     if tuple(span) in FILLER_PHRASES:
         return True
+    # "like" before a name is an example ("lakes like Erie"), not a filler.
     if span == ["like"] and (i1 == 0 or keys[i1 - 1] not in LIKE_KEEPS) \
-            and (i2 >= len(keys) or keys[i2] not in LIKE_BEFORE_CONTENT):
+            and (i2 >= len(keys) or keys[i2] not in LIKE_BEFORE_CONTENT) \
+            and not (surfaces and i2 < len(surfaces) and surfaces[i2][:1].isupper()):
         return True
     # Every cut word sits next to its own copy: "shown [shown also] also".
     if len(span) <= 4 and all(
             (p > 0 and keys[p - 1] == keys[p]) or (p + 1 < len(keys) and keys[p + 1] == keys[p])
             for p in range(i1, i2)):
         return True
-    # "not actually" is a polarity, not a take-back: cutting it needs a real marker.
-    if _contains_marker(span, strict=any(k in NEGATIONS and k != "no" for k in span)):
+    # A take-back marker may cut a negation only when the speaker restarts
+    # right after it ("I don't want, scratch that, I want ..."): "we should
+    # not scratch that or move it" is an instruction, not a correction.
+    negated = any(k in NEGATIONS and k != "no" for k in span)
+    if _contains_marker(span, strict=negated) and (
+            not negated or (i2 < len(keys) and keys[i2] == span[0])):
         return True
     # A false start: the speaker restarts with the same word ("we have we
     # need to fix", "build an build a", "before that before starting that").
@@ -313,10 +323,9 @@ def delete_ok(keys: list[str], i1: int, i2: int) -> bool:
     core = span
     while len(core) > 1 and core[0] in DISCOURSE:
         core = core[1:]
-    # Short, or trailing off on a function word: "fix the header fix the
-    # footer" is two items, not a restart.
-    if (len(core) <= 2 or (len(core) <= 4 and core[-1] in STOP | {"that", "this"})) \
-            and not any(k in NEGATIONS for k in span) and (
+    # At most two words: "fix the header fix the footer" and "send to Alice
+    # then send to Bob" are two items, not a restart.
+    if len(core) <= 2 and not any(k in NEGATIONS for k in span) and (
             (i2 < len(keys) and keys[i2] == core[0])
             or (i1 > 0 and keys[i1 - 1] == core[-1] and len(core) >= 2)):
         return True
@@ -391,6 +400,10 @@ def _parse_cardinal(words_list: list[str]) -> int | None:
     total = 0
     current = 0
     saw_any = False
+    # "zero"/"oh" is a digit, not a quantity: "four zero" is 40 (digit by
+    # digit, below), never 4.
+    if len(toks) > 1 and any(w in ("zero", "oh", "o") for w in toks):
+        return None
     for w in toks:
         if w in _ONES_VAL:
             if current % 10 != 0 and current < 100 and w != "zero":
@@ -463,13 +476,14 @@ def _spoken_number_forms(raw_keys: list[str]) -> set[str]:
         segs.append(raw_keys[prev:])
         if any(not s for s in segs):
             return set()
-        combos: set[str] = {""}
+        combos: set[str] | None = None
         for seg in segs:
             seg_forms = _spoken_number_forms(seg)
             if not seg_forms:
                 return set()
-            combos = {c + sf for c in combos for sf in seg_forms}
-        return combos
+            # "one point five" is 1.5, never 15.
+            combos = seg_forms if combos is None else {c + "." + f for c in combos for f in seg_forms}
+        return combos or set()
     forms: set[str] = set()
     val = _parse_cardinal(raw_keys)
     if val is not None:
@@ -477,12 +491,27 @@ def _spoken_number_forms(raw_keys: list[str]) -> set[str]:
     grp = _parse_grouped_digits(raw_keys)
     if grp is not None:
         forms.add(grp)
+        # A clock time: "three thirty" -> 3:30, "ten fifteen" -> 10:15.
+        if len(raw_keys) >= 2 and 3 <= len(grp) <= 4 and int(grp[-2:]) < 60:
+            forms.add(f"{grp[:-2]}:{grp[-2:]}")
     return forms
+
+
+def _num_shape(keys: list[str]) -> str:
+    return "".join(c for k in keys for c in k if c.isdigit() or c in ".:-")
+
+
+def _shape_changed(raw_keys: list[str], model_keys: list[str]) -> bool:
+    """A sign or separator went in, out or moved: 1.25 -> 125, -5 -> 5."""
+    a, b = _num_shape(raw_keys), _num_shape(model_keys)
+    # "3.30" written as a clock time, "3:30", is the same time.
+    a = re.sub(r"(?<!\d)(\d{1,2})\.([0-5]\d)(?!\d)", r"\1:\2", a) if ":" in b else a
+    return any(c in ".:-" for c in a + b) and a != b
 
 
 def _sound_ok(raw_keys: list[str], model_keys: list[str]) -> bool:
     a, b = "".join(raw_keys), "".join(model_keys)
-    if not a or not b or _meaning_flip(a, b):
+    if not a or not b or _meaning_flip(a, b) or _shape_changed(raw_keys, model_keys):
         return False
     # Never let fuzzy sound similarity change digits ("15" -> "16"); spoken
     # digits count on the raw side ("e c two" -> "EC2", "gpt four" -> "GPT-4").
@@ -508,7 +537,7 @@ def _number_ok(raw_keys: list[str], model_keys: list[str]) -> bool:
         return False
     if not all(k in NUMBER or k == "and" for k in raw_keys):
         return False
-    if not all(re.fullmatch(r"\d+", k) for k in model_keys):
+    if not all(re.fullmatch(r"\d+(?:[.:]\d+)*", k) for k in model_keys):
         return False
     want = "".join(model_keys)
     forms = _spoken_number_forms(raw_keys)
@@ -589,7 +618,7 @@ def _screen_or_vocab_ok(raw_keys: list[str], model_keys: list[str]) -> bool:
     if not a or not b or len(b) < 3 or _meaning_flip(a, b):
         return False
     da, db = _digits_in(a), _digits_in(b)
-    if da and db and da != db:
+    if (da and db and da != db) or _shape_changed(raw_keys, model_keys):
         return False
     if b not in screen_terms_from_env():
         return False
@@ -820,13 +849,14 @@ def constrain(raw: str, model: str, pairs: list[tuple[str, str]] | None = None) 
         return model
     pair_rows = pairs_for_call(pairs)
     raw_keys = [t.key for t in rw]
+    raw_surfaces = [t.surface for t in rw]
     pieces: list[tuple] = []
     sm = difflib.SequenceMatcher(a=raw_keys, b=[t.key for t in mw], autojunk=False)
     for op, i1, i2, j1, j2 in sm.get_opcodes():
         if op == "equal":
             pieces.append(("m", j1, j2))
         elif op == "delete":
-            if not delete_ok(raw_keys, i1, i2) and not _discourse_cut(raw_keys[i1:i2], model, mw, j1):
+            if not delete_ok(raw_keys, i1, i2, raw_surfaces) and not _discourse_cut(raw_keys[i1:i2], model, mw, j1):
                 pieces.append(("d", i1, i2))
         elif op == "insert":
             keys = [t.key for t in mw[j1:j2]]
@@ -1223,6 +1253,10 @@ def _expect(name: str, got: str, pred) -> str | None:
 
 
 def _selftest() -> int:
+    # The repo's own corrections, not whoever runs this: the checks below
+    # name pairs ("hyperlane" -> Hyprland) a fresh install does not have.
+    global TSV
+    TSV = Path(__file__).resolve().parent.parent / "tests/fixtures/corrections.tsv"
     fails = []
 
     def check(name, got, pred):
@@ -1547,6 +1581,28 @@ def _selftest() -> int:
     check("mid-sentence and still restored",
           constrain("apples and oranges", "Apples, oranges."),
           lambda s: "and" in s)
+    check("number values keep sign and separators",
+          " | ".join(constrain(r, m) for r, m in [
+              ("set it to 1.25 volts now", "Set it to 125 volts now."),
+              ("it was -5 degrees outside", "It was 5 degrees outside."),
+              ("use one point five volts", "Use 15 volts."),
+              ("use one point five volts", "Use 1.5 volts."),
+              ("open port four zero", "Open port 4."),
+              ("meet at three thirty", "Meet at 3:30."),
+          ]),
+          lambda s: s == "Set it to 1.25 volts now. | It was -5 degrees outside. | Use one point five volts."
+                       " | Use 1.5 volts. | Open port four zero. | Meet at 3:30.")
+    check("content the deletion rules must keep",
+          " | ".join(constrain(r, m) for r, m in [
+              ("we should not scratch that or move it", "We should move it."),
+              ("send to Alice then send to Bob", "Send to Bob."),
+              ("if the path fails turn right", "If the path fails turn."),
+              ("compare lakes like Erie and Ontario", "Compare lakes Erie and Ontario."),
+              ("I don't want scratch that I want the red one", "I want the red one."),
+          ]),
+          lambda s: s == "We should not scratch that or move it. | Send to Alice then send to Bob."
+                       " | If the path fails turn right. | Compare lakes like Erie and Ontario."
+                       " | I want the red one.")
     check("trivial short takes",
           f"{is_trivial('Apple Music')},{is_trivial('New thread.')},{is_trivial('um okay')},"
           f"{is_trivial('the the')},{is_trivial('Go home', hints='x')},{is_trivial('erase a PR')}",
