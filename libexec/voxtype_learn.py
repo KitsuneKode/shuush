@@ -633,16 +633,18 @@ def heard_for(raw: list[str], clean: list[str], j1: int, j2: int) -> list[str]:
     """The raw (recognized) words behind clean[j1:j2], via the raw->clean
     alignment, so a fix teaches what the recognizer heard, not what the
     cleanup model guessed from it."""
-    idx: list[int | None] = [None] * len(clean)
+    # Per clean word, the raw span behind it: a replace maps every word it
+    # wrote to all the raw words it replaced ("hyper land" -> "hyperlink").
+    span: list[tuple[int, int] | None] = [None] * len(clean)
     for op, a1, a2, b1, b2 in difflib.SequenceMatcher(a=raw, b=clean, autojunk=False).get_opcodes():
         if op == "equal":
             for k in range(b2 - b1):
-                idx[b1 + k] = a1 + k
+                span[b1 + k] = (a1 + k, a1 + k + 1)
         elif op == "replace":
             for k in range(b1, b2):
-                idx[k] = a1 if k == b1 else a2 - 1
-    hits = [i for i in idx[j1:j2] if i is not None]
-    return raw[min(hits):max(hits) + 1] if hits else clean[j1:j2]
+                span[k] = (a1, a2)
+    hits = [x for x in span[j1:j2] if x is not None]
+    return raw[min(x[0] for x in hits):max(x[1] for x in hits)] if hits else clean[j1:j2]
 
 
 def fix() -> list[tuple[str, str]]:

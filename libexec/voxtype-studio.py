@@ -1265,8 +1265,9 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
 
     def _on_candidates_changed(self) -> bool:
         self._cands_reload_id = None
-        self._render_corrections()
+        self._stale_tabs = getattr(self, "_stale_tabs", set()) | {"corrections", "insights"}
         self._refresh_kpis()
+        self._render_shown_tab()
         return False
 
     def _on_history_file_changed(self, *_args) -> None:
