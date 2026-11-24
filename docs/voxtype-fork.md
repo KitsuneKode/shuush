@@ -5,7 +5,7 @@ Shuush runs on stock [voxtype](https://github.com/peteonrails/voxtype) (1.3 or n
 | Works on stock voxtype | Needs the companion fork |
 |---|---|
 | LLM cleanup and the faithfulness gate | Live text in the focused field while you speak (`[output] preedit`) |
-| Context from the app, screen, field, selection and clipboard | Learning from your hand fixes in Electron apps (VS Code, Slack, T3 Code…) that hide their text from AT-SPI |
+| Context from the app, screen, field, selection and clipboard | Learning from your hand fixes in Electron apps (VS Code, Slack, T3 Code…) that hide their text from AT-SPI (with `preedit = true`) |
 | Learning, snippets, privacy guard, Studio, history | Streamed cleanup: long dictations typed sentence by sentence (`streaming = true`) |
 | Smart join (default profile) | Smart join in the `terminal` / `chat` profiles |
 | The KitsuneHud pill | Full-context final pass, end padding and pause handling for Parakeet streaming |
