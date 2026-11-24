@@ -102,7 +102,7 @@ if review:
         subprocess.Popen(
             # You're looking at the text it just typed: repairs go in the list
             # quietly (low: no toast, no notch); a failed cleanup still says so.
-            [nbin, "-a", "Dictation", "-u", "normal" if via == "passthrough" else "low", "-t", "6000",
+            [nbin, "-a", "Shuush", "-u", "normal" if via == "passthrough" else "low",
              "-i", "audio-input-microphone", f"Check this dictation: {review}", body],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True)

@@ -196,7 +196,10 @@ def _add_vocab_if_distinctive(term: str) -> bool:
     t = term.strip()
     if not t or len(t) < 2:
         return False
-    if not (any(c.isupper() for c in t[1:]) or "." in t or "-" in t or "+" in t or t.isupper()):
+    distinctive = any(c.isupper() for c in t[1:]) or "." in t or "-" in t or "+" in t or t.isupper()
+    # A capitalised name that is not an English word (Kaligo, Brionne, Shuush).
+    name = t[:1].isupper() and " " not in t and t.lower() not in _common_words()
+    if not (distinctive or name):
         return False
     existing = _vocab_map()
     key = re.sub(r"[^a-z0-9]", "", t.lower())
@@ -369,7 +372,10 @@ def load_candidates() -> dict:
 
 def save_candidates(cands: dict) -> None:
     STATE.mkdir(parents=True, exist_ok=True)
-    CANDIDATES.write_text(json.dumps(cands, ensure_ascii=False, indent=2) + "\n")
+    # Atomic: Studio watches this file and must never read half of it.
+    tmp = CANDIDATES.with_suffix(".tmp")
+    tmp.write_text(json.dumps(cands, ensure_ascii=False, indent=2) + "\n")
+    tmp.replace(CANDIDATES)
 
 
 def accept_pair(heard: str, meant: str) -> str | None:
@@ -635,16 +641,25 @@ def notify(title: str, body: str, actions: list[tuple[str, str]] | None = None,
                                     stderr=subprocess.DEVNULL, text=True, start_new_session=True)
         except OSError:
             return ""
-        try:
-            out, _ = proc.communicate(timeout=wait_s if waiting else 5)
-            return out.strip() if waiting else ""
-        except subprocess.TimeoutExpired:
+        if not waiting:
             try:
-                os.killpg(proc.pid, 15)
-            except OSError:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
                 pass
-            proc.wait()
             return ""
+        # The click's key is printed as soon as it happens; take it then,
+        # not when the notifier exits.
+        import select
+        choice = ""
+        ready, _, _ = select.select([proc.stdout], [], [], wait_s)
+        if ready:
+            choice = proc.stdout.readline().strip()
+        try:
+            os.killpg(proc.pid, 15)
+        except OSError:
+            pass
+        proc.wait()
+        return choice
     # Without Kuwai: straight over D-Bus (notify-send can break on a libnotify
     # mismatch), without buttons.
     try:

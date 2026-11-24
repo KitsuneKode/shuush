@@ -562,14 +562,13 @@ def suggest_from_history(entries: list[dict], existing: dict[str, list]) -> list
     counts: collections.Counter[tuple[str, str]] = collections.Counter()
     for k, v in learn.load_candidates().items():
         if "\t" in k:
+            # Checked when it was saved, with the screen it was grounded on;
+            # checking again without that hid every capitalised name.
             h, m = k.split("\t", 1)
-            canonical = learn.is_safe_auto_candidate(h, m)
-            if not canonical:
-                continue
             hn = learn.norm(h)
-            if hn and hn not in existing:
+            if hn and m and hn not in existing and not learn.is_rejected(hn, m):
                 n, _ = learn._cand_view(v)
-                counts[(hn, canonical)] += max(1, n)
+                counts[(hn, m)] = max(counts[(hn, m)], max(1, n))
     for d in entries:
         for swap in d.get("swaps") or []:
             if " -> " not in swap:
@@ -1247,7 +1246,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         try:
             # A fix noticed after the take lands here seconds later.
             cm = Gio.File.new_for_path(str(learn.CANDIDATES)).monitor_file(Gio.FileMonitorFlags.NONE, None)
-            cm.connect("changed", lambda *_a: GLib.timeout_add(200, self._on_candidates_changed))
+            cm.connect("changed", self._on_candidates_file_changed)
             self._monitors.append(cm)
         except Exception:
             pass
@@ -1259,7 +1258,13 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         except Exception:
             pass
 
+    def _on_candidates_file_changed(self, *_args) -> None:
+        if getattr(self, "_cands_reload_id", None) is not None:
+            GLib.source_remove(self._cands_reload_id)
+        self._cands_reload_id = GLib.timeout_add(200, self._on_candidates_changed)
+
     def _on_candidates_changed(self) -> bool:
+        self._cands_reload_id = None
         self._render_corrections()
         self._refresh_kpis()
         return False

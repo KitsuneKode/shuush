@@ -122,13 +122,13 @@ Item {
             const nl = raw.indexOf("\n");
             const at = Number(nl > 0 ? raw.substring(0, nl) : 0);
             const cleaned = nl > 0 ? root._cap(raw.substring(nl + 1)) : "";
-            if (!(at >= root.localStart - 100) || cleaned.length === 0) return;
+            if (!(at >= Math.min(root.localStart, root.startedAt) - 100) || cleaned.length === 0) return;
             if (!(root.polishing || root.lingering || root.active)) return;
             const heard = root.transcriptShown;
             const words = cleaned.split(" ");
             let changed = heard.length > 0 ? root._changedWords(heard.split(" "), words) : [];
             const count = changed.filter(c => c).length;
-            if (count === 0 || count > words.length / 2) changed = [];
+            if (count === 0 || count > Math.max(2, words.length / 2)) changed = [];
             root.finalShown = true;
             root._changed = changed;
             root.changedCount = changed.length > 0 ? count : 0;
@@ -327,7 +327,7 @@ Item {
     onTranscriptShownChanged: _trackWords(transcriptShown)
     Timer { interval: 16; repeat: true; running: root.revealing || (root.highlighting && !root.reducedMotion); onTriggered: root.nowMs = Date.now() }
     // Reduced motion: the marked words hold their tint, then turn plain at once.
-    Timer { interval: root.highlightMs; running: root.highlighting && root.reducedMotion; onTriggered: root.nowMs = Date.now() }
+    Timer { interval: root.highlightMs; running: root.highlighting && root.reducedMotion; onTriggered: root._changedAt = 0 }
     readonly property var markStop: washStops[1]
     function _mark(p) {     // 0..1 progress -> accent fading into the text colour
         const f = reducedMotion ? 0 : Math.pow(Math.max(0, (p - 0.35) / 0.65), 1.6);
@@ -482,6 +482,9 @@ Item {
             root.wasCancelled = !delivered && root.cancelledAt >= root.localStart - 100;
             root.cancelArmed = false;
             root.confirmed = delivered;
+            // The marks fade from here, in clear view: while the text was
+            // being typed the polishing shimmer still covered them.
+            if (delivered && root.changedCount > 0) { root._changedAt = Date.now(); root.nowMs = root._changedAt; }
             if (root.wasCancelled) root.shownText = "";
             // The warning replaces the transcript, so the pill folds to the
             // label while it holds.
@@ -1237,7 +1240,7 @@ Item {
         }
         Item {
             id: shimmer
-            readonly property bool on: root.polishing && !root.reducedMotion
+            readonly property bool on: root.polishing && !root.finalShown && !root.reducedMotion
             anchors.fill: content
             visible: on
             property real phase: 0

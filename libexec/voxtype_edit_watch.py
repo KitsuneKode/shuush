@@ -39,7 +39,7 @@ PIDFILE = RT / "edit_watch.pid"
 FIELD = RT / "field_text.json"
 LOG = RT / "pp.log"
 # Seconds after the dictation at which the field is read again.
-TICKS = (3, 6, 10, 15, 25, 40, 60, 90, 120, 180, 240, 300)
+TICKS = (2, 4, 6, 10, 15, 25, 40, 60, 90, 120, 180, 240, 300)
 MAX_HUNK_WORDS = 3
 MAX_HUNKS = 5
 MAX_CHANGED = 0.6
@@ -239,21 +239,24 @@ def main() -> int:
         hunks = find_hunks(raw, clean, field.get("text", ""))
         if hunks is None:
             if seen_once:
-                break          # sent or cleared: what was there last is final
+                stable = last  # sent or cleared: what was there last is final
+                break
             continue
         seen_once = True
         if hunks and hunks == last:
             stable = hunks
             break
         last = hunks
-    if stable:
-        learn_from(stable, _app_name(cls))
+    # Before the prompt, which waits for a click: the next take's watcher
+    # must not stop this one while it is asking.
     with _pid_lock():
         try:
             if PIDFILE.read_text().strip() == str(os.getpid()):
                 PIDFILE.unlink()
         except OSError:
             pass
+    if stable:
+        learn_from(stable, _app_name(cls))
     return 0
 
 

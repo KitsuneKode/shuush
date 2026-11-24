@@ -338,7 +338,9 @@ fi
 export PP_TITLE_PAIR PP_SCREEN_TERMS
 
 # The OSD pill shows this while "Polishing" (the watcher clears it at idle).
-printf '%s\n' "$raw" 2>/dev/null >"$RT/live_text"
+# A streamed take already put what you saw there: keep it, it is what the
+# pill marks the cleanup's changes against.
+[ -s "$RT/live_text" ] || printf '%s\n' "$raw" 2>/dev/null >"$RT/live_text"
 
 # A single word or a numbers-only take has nothing for an LLM to improve (and raw digits sent to one only risk corruption).
 words=$(wc -w <<< "$raw")
