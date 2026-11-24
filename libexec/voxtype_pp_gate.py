@@ -63,15 +63,18 @@ FILLER_PHRASES = (("you", "know"), ("so", "yeah"), ("kind", "of"), ("sort", "of"
 DISCOURSE = frozenset("and so like okay ok yeah alright basically".split())
 # Only these may go at the very end of a take: "it works well" keeps "well".
 TAGS = frozenset("okay ok yeah alright".split())
-# "like" stays after these: "I like it", "looks like", "something like that",
-# "would like". Anywhere else it is the spoken filler ("can I like test").
-LIKE_KEEPS = frozenset(
-    "i we you they he she it people would d look looks looked looking sound sounds "
-    "sounded feel feels felt seem seems seemed something anything nothing everything "
-    "things stuff just more much exactly kind sort dont doesnt didnt really".split()
+# A leading "so" is glue only before a new clause ("so we need"), never an
+# intensifier ("so much better").
+CLAUSE_STARTS = frozenset(
+    "i we you they he she it the this that there what how now then if basically "
+    "let lets can maybe anyway yeah okay my our".split()
 )
-# ... and before these: "like a", "like the old one", "like this", "like them".
-LIKE_BEFORE_CONTENT = frozenset("a an the this that these those it them him her me us you".split())
+# Doubled on purpose ("I had had enough", "that that", "hello hello", "no no"):
+# never collapsed as a stutter.
+DOUBLES_KEEP = frozenset(
+    "had that no yes yeah hello hi hey bye very really so okay ok please wait stop "
+    "go now come knock ha haha why far many much more".split()
+)
 ARTICLES = frozenset({"a", "an", "the"})
 # Expansions of contractions are stopwords on the model side ("it's" -> "it is").
 STOP = frozenset(
@@ -290,6 +293,21 @@ def _contains_marker(keys: list[str], strict: bool = False) -> bool:
     return False
 
 
+def _stutter_at(keys: list[str], p: int) -> bool:
+    """keys[p] is part of an accidental run ("fast fast fast fetch"), not a
+    word people repeat on purpose (DOUBLES_KEEP: "had had", "no no no")."""
+    k = keys[p]
+    if k in DOUBLES_KEEP:
+        return False
+    lo = p
+    while lo > 0 and keys[lo - 1] == k:
+        lo -= 1
+    hi = p
+    while hi + 1 < len(keys) and keys[hi + 1] == k:
+        hi += 1
+    return hi > lo
+
+
 def delete_ok(keys: list[str], i1: int, i2: int, surfaces: list[str] | None = None) -> bool:
     span = keys[i1:i2]
     if not span:
@@ -298,15 +316,8 @@ def delete_ok(keys: list[str], i1: int, i2: int, surfaces: list[str] | None = No
         return True
     if tuple(span) in FILLER_PHRASES:
         return True
-    # "like" before a name is an example ("lakes like Erie"), not a filler.
-    if span == ["like"] and (i1 == 0 or keys[i1 - 1] not in LIKE_KEEPS) \
-            and (i2 >= len(keys) or keys[i2] not in LIKE_BEFORE_CONTENT) \
-            and not (surfaces and i2 < len(surfaces) and surfaces[i2][:1].isupper()):
-        return True
-    # Every cut word sits next to its own copy: "shown [shown also] also".
-    if len(span) <= 4 and all(
-            (p > 0 and keys[p - 1] == keys[p]) or (p + 1 < len(keys) and keys[p + 1] == keys[p])
-            for p in range(i1, i2)):
+    # Every cut word is a stutter next to its own copy: "shown [shown also] also".
+    if len(span) <= 4 and all(_stutter_at(keys, p) for p in range(i1, i2)):
         return True
     # A take-back marker may cut a negation only when the speaker restarts
     # right after it ("I don't want, scratch that, I want ..."): "we should
@@ -325,29 +336,52 @@ def delete_ok(keys: list[str], i1: int, i2: int, surfaces: list[str] | None = No
         core = core[1:]
     # At most two words: "fix the header fix the footer" and "send to Alice
     # then send to Bob" are two items, not a restart.
-    if len(core) <= 2 and not any(k in NEGATIONS for k in span) and (
-            (i2 < len(keys) and keys[i2] == core[0])
-            or (i1 > 0 and keys[i1 - 1] == core[-1] and len(core) >= 2)):
+    # Besides the restarted word, only function words go: "we [have] we need",
+    # "build [an] build a"; "buy milk buy eggs" is two items.
+    light = STOP | {"that", "this"}
+    if len(core) == 2 and not any(k in NEGATIONS for k in span) and (
+            (i2 < len(keys) and keys[i2] == core[0] and all(k in light for k in core[1:]))
+            or (i1 > 0 and keys[i1 - 1] == core[-1] and len(core) >= 2
+                and all(k in light for k in core[:-1]))):
         return True
     # A stutter is this word next to the copy that stays. The aligner may
     # drop either the first or the second copy.
-    if len(span) <= 2 and (
-        (i2 < len(keys) and all(k == keys[i2] for k in span))
-        or (i1 > 0 and all(k == keys[i1 - 1] for k in span))
-    ):
+    if len(span) == 1 and _stutter_at(keys, i1):
         return True
     return False
 
 
-def _discourse_cut(span: list[str], model: str, mw: list, j: int) -> bool:
+def _discourse_cut(span: list[str], model: str, mw: list, j: int,
+                   raw_keys: list[str] | None = None, i2: int = 0) -> bool:
     """One or two words of spoken glue, dropped where the model's sentence
     ends or begins: "and" before "Also,", "okay" after "fix it."."""
     if not span or len(span) > 2 or not all(k in DISCOURSE for k in span):
+        return False
+    raw_keys = raw_keys or []
+    if span[-1] == "so" and not (i2 < len(raw_keys) and raw_keys[i2] in CLAUSE_STARTS):
+        return False
+    # "that's okay", "oh yeah": in a short take the tag is the message.
+    if j == len(mw) and len(raw_keys) <= 3:
         return False
     gap = model[mw[j - 1].end:mw[j].start if j < len(mw) else len(model)] if j > 0 else ""
     ends_before = j == 0 or re.search(r"[.!?…:]", gap) is not None
     starts_after = j < len(mw) and mw[j].surface[:1].isupper()
     return ends_before and (starts_after or (j == len(mw) and all(k in TAGS for k in span)))
+
+
+_CONTRACTION = re.compile(r"['’](d|ll|re|ve|m|s|t)$", re.I)
+
+
+def _lost_apostrophe(raw: "Tok", model: "Tok") -> bool:
+    return bool(_CONTRACTION.search(raw.surface)) and not re.search(r"['’]", model.surface)
+
+
+def _drops_contraction(raw: list, model: list) -> bool:
+    """A contraction the speaker said is gone from the model's words:
+    "I'd like" -> "I like", "I'll check" -> "I check"."""
+    said = {t.surface.lower().replace("’", "'") for t in raw if _CONTRACTION.search(t.surface)}
+    kept = {t.surface.lower().replace("’", "'") for t in model}
+    return bool(said - kept)
 
 
 def insert_ok(keys: list[str]) -> bool:
@@ -457,6 +491,11 @@ def _parse_grouped_digits(words_list: list[str]) -> str | None:
             i += 1
         else:
             return None
+    # "two fifty" is 250, 2.50 or 2:50 depending on what is meant: a single
+    # digit followed by a two-digit group stays in words. Digit by digit
+    # ("three four three") and year-like ("nineteen eighty four") are clear.
+    if len(parts) > 1 and len(parts[0]) == 1 and any(len(x) > 1 for x in parts[1:]):
+        return None
     return "".join(parts) if parts else None
 
 
@@ -491,9 +530,6 @@ def _spoken_number_forms(raw_keys: list[str]) -> set[str]:
     grp = _parse_grouped_digits(raw_keys)
     if grp is not None:
         forms.add(grp)
-        # A clock time: "three thirty" -> 3:30, "ten fifteen" -> 10:15.
-        if len(raw_keys) >= 2 and 3 <= len(grp) <= 4 and int(grp[-2:]) < 60:
-            forms.add(f"{grp[:-2]}:{grp[-2:]}")
     return forms
 
 
@@ -771,6 +807,7 @@ def _stitch(raw: str, rw: list[Tok], model: str, mw: list[Tok], pieces: list[tup
     out = ""
     restored_lead = False
     trim_next_punct = False
+    trim_next_comma = False
     for idx, (kind, a, b) in enumerate(pieces):
         if kind == "m":
             if a >= b:
@@ -788,11 +825,14 @@ def _stitch(raw: str, rw: list[Tok], model: str, mw: list[Tok], pieces: list[tup
             # punctuation goes after them (added at the end), not before.
             if b == len(mw) and idx + 1 < len(pieces):
                 chunk = re.sub(r"[.!?…]+\s*$", "", chunk)
+            if trim_next_comma:
+                trim_next_comma = False
+                chunk = re.sub(r"^[,;]\s*", " ", chunk)
             if trim_next_punct:
                 trim_next_punct = False
                 chunk = re.sub(r"^[.!?…]+\s*", "", chunk)
                 if re.match(r"[A-Z][a-z]", chunk) and chunk.split()[0] != "I" \
-                        and re.search(r"(?<![A-Za-z])" + re.escape(chunk.split()[0].lower()) + r"(?![A-Za-z])", raw):
+                        and re.search(r"(?<![A-Za-z])" + re.escape(chunk.split()[0].lower().strip(".,;:!?")) + r"(?![A-Za-z])", raw):
                     chunk = chunk[0].lower() + chunk[1:]
         else:
             if a >= b:
@@ -805,6 +845,15 @@ def _stitch(raw: str, rw: list[Tok], model: str, mw: list[Tok], pieces: list[tup
                 continue
             chunk = raw[keep[0].start:keep[-1].end] if len(keep) == b - a else " ".join(t.surface for t in keep)
             restored_lead = restored_lead or not out
+            # The model's comma where the word was: a restored conjunction
+            # takes its place ("Apples, oranges" -> "Apples and oranges"); any
+            # other restored word goes after it.
+            if out and idx + 1 < len(pieces) and pieces[idx + 1][0] == "m":
+                na = pieces[idx + 1][1]
+                if 0 < na < len(mw) and re.match(r"^\s*[,;]", model[mw[na - 1].end:mw[na].start]):
+                    if keep[-1].key not in ("and", "or", "but", "nor"):
+                        out = out.rstrip() + model[mw[na - 1].end:mw[na].start].strip()[0]
+                    trim_next_comma = True
             # If the next model chunk starts with sentence-ending punctuation
             # (e.g. model dropped "and" in "do this and also" -> "do this. Also"),
             # keep the period before the restored word instead of after it.
@@ -822,7 +871,7 @@ def _stitch(raw: str, rw: list[Tok], model: str, mw: list[Tok], pieces: list[tup
         # its capital was only the sentence's ("um so We need").
         if kind == "m" and a == 0 and out and not re.search(r"[.!?…:]\s*$", out) \
                 and re.match(r"[A-Z][a-z]", chunk) and chunk.split()[0] != "I" \
-                and re.search(r"(?<![A-Za-z])" + re.escape(chunk.split()[0].lower()) + r"(?![A-Za-z])", raw):
+                and re.search(r"(?<![A-Za-z])" + re.escape(chunk.split()[0].lower().strip(".,;:!?")) + r"(?![A-Za-z])", raw):
             chunk = chunk[0].lower() + chunk[1:]
         out = _glue(out, chunk)
     if pieces and pieces[-1][0] in ("r", "d") and mw:
@@ -854,9 +903,18 @@ def constrain(raw: str, model: str, pairs: list[tuple[str, str]] | None = None) 
     sm = difflib.SequenceMatcher(a=raw_keys, b=[t.key for t in mw], autojunk=False)
     for op, i1, i2, j1, j2 in sm.get_opcodes():
         if op == "equal":
-            pieces.append(("m", j1, j2))
+            # Same letters, lost apostrophe: "we'll" -> "Well", "we're" -> "were".
+            start = j1
+            for k in range(i2 - i1):
+                if _lost_apostrophe(rw[i1 + k], mw[j1 + k]):
+                    if start < j1 + k:
+                        pieces.append(("m", start, j1 + k))
+                    pieces.append(("r", i1 + k, i1 + k + 1))
+                    start = j1 + k + 1
+            if start < j2:
+                pieces.append(("m", start, j2))
         elif op == "delete":
-            if not delete_ok(raw_keys, i1, i2, raw_surfaces) and not _discourse_cut(raw_keys[i1:i2], model, mw, j1):
+            if not delete_ok(raw_keys, i1, i2, raw_surfaces) and not _discourse_cut(raw_keys[i1:i2], model, mw, j1, raw_keys, i2):
                 pieces.append(("d", i1, i2))
         elif op == "insert":
             keys = [t.key for t in mw[j1:j2]]
@@ -864,7 +922,9 @@ def constrain(raw: str, model: str, pairs: list[tuple[str, str]] | None = None) 
                 pieces.append(("m", j1, j2))
         else:
             rk, mk = raw_keys[i1:i2], [t.key for t in mw[j1:j2]]
-            if replace_ok(rk, mk, pair_rows):
+            if _drops_contraction(rw[i1:i2], mw[j1:j2]):
+                pieces.append(("r", i1, i2))
+            elif replace_ok(rk, mk, pair_rows):
                 pieces.append(("m", j1, j2))
             else:
                 covered = _cover(rk, mk, pair_rows, raw_keys, i1, j1)
@@ -1563,11 +1623,13 @@ def _selftest() -> int:
     check("interleaved stutter dropped",
           constrain("only one disk is being shown shown also also there is one", "Only one disk is being shown. Also, there is one."),
           lambda s: s == "Only one disk is being shown. Also, there is one.")
-    check("filler like dropped, content like kept",
+    check("like stays unless it glues a new sentence",
           constrain("we are going to completely like improve it", "We are going to completely improve it.")
           + " | " + constrain("it looks like a bug", "It looks a bug.")
-          + " | " + constrain("I like the red one", "I the red one."),
-          lambda s: s == "We are going to completely improve it. | It looks like a bug. | I like the red one.")
+          + " | " + constrain("I like the red one", "I the red one.")
+          + " | " + constrain("we ship it like we fix the docs", "We ship it. We fix the docs."),
+          lambda s: s == "We are going to completely like improve it. | It looks like a bug. | I like the red one."
+                       " | We ship it. We fix the docs.")
     check("false start opening with okay dropped",
           constrain("fix it okay before that before starting that I need things",
                     "Fix it. Before starting that, I need things."),
@@ -1589,9 +1651,12 @@ def _selftest() -> int:
               ("use one point five volts", "Use 1.5 volts."),
               ("open port four zero", "Open port 4."),
               ("meet at three thirty", "Meet at 3:30."),
+              ("about two fifty for lunch", "About 250 for lunch."),
+              ("in nineteen eighty four", "In 1984."),
           ]),
           lambda s: s == "Set it to 1.25 volts now. | It was -5 degrees outside. | Use one point five volts."
-                       " | Use 1.5 volts. | Open port four zero. | Meet at 3:30.")
+                       " | Use 1.5 volts. | Open port four zero. | Meet at three thirty."
+                       " | About two fifty for lunch. | In 1984.")
     check("content the deletion rules must keep",
           " | ".join(constrain(r, m) for r, m in [
               ("we should not scratch that or move it", "We should move it."),
@@ -1603,6 +1668,28 @@ def _selftest() -> int:
           lambda s: s == "We should not scratch that or move it. | Send to Alice then send to Bob."
                        " | If the path fails turn right. | Compare lakes like Erie and Ontario."
                        " | I want the red one.")
+    check("grok review: contractions, items, like, tags, so, doubles",
+          " | ".join(constrain(r, m) for r, m in [
+              ("I'd like to ship it today", "I like to ship it today."),
+              ("I'll check the logs now", "I check the logs now."),
+              ("we'll ship it Friday", "Well ship it Friday."),
+              ("we're late for the meeting", "were late for the meeting."),
+              ("buy milk buy eggs", "Buy eggs."),
+              ("we have we need to fix this", "We need to fix this."),
+              ("works like magic", "Works magic."),
+              ("that's okay", "That's."),
+              ("so much better this way", "Much better this way."),
+              ("apples and oranges", "Apples, oranges."),
+              ("I had had enough of it", "I had enough of it."),
+              ("no no no don't do that", "No, don't do that."),
+              ("we need need to fix it", "We need to fix it."),
+              ("all the disks in the fast fast fast fetch", "All the disks in the fastfetch."),
+          ]),
+          lambda s: s == "I'd like to ship it today. | I'll check the logs now. | We'll ship it Friday."
+                       " | We're late for the meeting. | Buy milk buy eggs. | We need to fix this."
+                       " | Works like magic. | That's okay. | So much better this way. | Apples and oranges."
+                       " | I had had enough of it. | No no no, don't do that. | We need to fix it."
+                       " | All the disks in the fastfetch.")
     check("trivial short takes",
           f"{is_trivial('Apple Music')},{is_trivial('New thread.')},{is_trivial('um okay')},"
           f"{is_trivial('the the')},{is_trivial('Go home', hints='x')},{is_trivial('erase a PR')}",
