@@ -8,7 +8,7 @@
 # or window context: those are stubbed out), sends it to each model, and runs
 # the reply through the same gate the live path uses. Writes one JSONL per
 # model under $OUT and prints latency, rejections and the outputs side by side.
-# Providers: groq, zen (OpenCode Zen), openrouter. Keys come from secrets.env.
+# Providers: groq, cerebras, zen (OpenCode Zen), openrouter. Keys come from secrets.env.
 # BENCH_SLEEP=<s> paces the calls (Groq's free tier limits input tokens per
 # minute, and each request is ~2k tokens). Zen's free models answer only
 # inside the OpenCode app, not over this API.
@@ -45,6 +45,7 @@ for spec in "${MODELS[@]}"; do
   case "$prov" in
     groq) url=https://api.groq.com/openai/v1/chat/completions; key=$(secret GROQ_API_KEY)
           extra='{"reasoning_effort":"none"}'; [[ "$model" == openai/* ]] && extra='{"reasoning_effort":"low"}' ;;
+    cerebras) url=https://api.cerebras.ai/v1/chat/completions; key=$(secret CEREBRAS_API_KEY); extra='{"reasoning_effort":"none"}' ;;
     zen)  url=https://opencode.ai/zen/v1/chat/completions; key=$(secret OPENCODE_API_KEY); extra='{}' ;;
     openrouter) url=https://openrouter.ai/api/v1/chat/completions; key=$(secret OPENROUTER_API_KEY); extra='{}' ;;
     *) echo "unknown provider $prov"; continue ;;

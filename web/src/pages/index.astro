@@ -35,7 +35,7 @@ const faqs = [
   },
   {
     q: 'How does Shuush stop the cleanup model from changing what I said?',
-    a: 'A deterministic gate (voxtype_pp_gate.py) aligns the cleaned text with what you said, word by word, and puts your words back wherever a change is not a real repair. Negations, numbers, contractions and your own wording cannot change; a word is replaced only when it sounds like a name in your vocabulary, on your screen, in your selection or in a fresh clipboard copy. If the whole answer breaks a rule, your words are typed as heard.',
+    a: 'A deterministic gate (voxtype_pp_gate.py) aligns the cleaned text with what you said, word by word, and puts your words back wherever a change is not a real repair. Negations, numbers, contractions and your own wording cannot change; a word is replaced only by a similar-sounding word that fits where it plainly does not, most often a name from your vocabulary, your screen, your selection or a fresh clipboard copy. If the whole answer breaks a rule, your words are typed as heard.',
   },
   {
     q: 'Does Shuush learn from my corrections?',

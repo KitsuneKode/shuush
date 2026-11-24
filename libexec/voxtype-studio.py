@@ -2607,7 +2607,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
                 write_env_flag("PP_ORDER_PREV", " ".join(cur), quoted=True)
             self._save_provider_order(["local"], "Offline-only mode on (Ollama local)")
         else:
-            prev = read_env_flag("PP_ORDER_PREV", "groq groq2 openrouter").split()
+            prev = read_env_flag("PP_ORDER_PREV", "groq groq2 cerebras openrouter").split()
             restored = [p for p in prev if p in PROVIDER_BY_ID] or ["groq", "openrouter"]
             self._save_provider_order(restored, f"Restored cloud chain: {' → '.join(restored)}")
         return False
@@ -2643,7 +2643,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         return pop
 
     def _current_provider_order(self) -> list[str]:
-        raw = read_env_flag("PP_ORDER", "groq groq2 openrouter").split()
+        raw = read_env_flag("PP_ORDER", "local groq").split()
         seen: list[str] = []
         for p in raw:
             if p in PROVIDER_BY_ID and p not in seen:
@@ -2881,7 +2881,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         else:
             self.kpi_latency.set_text("—")
         self.sparkline.set_values(latencies)
-        self.kpi_prov_pill.set_text(read_env_flag("PP_ORDER", "groq").split()[0])
+        self.kpi_prov_pill.set_text(read_env_flag("PP_ORDER", "local groq").split()[0])
 
         pairs = learn.load()
         suggs = suggest_from_history(self.history, pairs)

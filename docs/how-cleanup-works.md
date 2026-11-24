@@ -25,7 +25,7 @@ When the model's whole answer breaks one of these rules, it is thrown away and y
 
 ## When there is no model
 
-No key, no network, a provider down, or the time budget used up: your words are typed as heard, with only the filler sounds removed. A two-word take ("New thread") or a number-only take skips the model entirely.
+No key, no network, a provider down, or the time budget used up: your words are typed as heard, with only filler sounds ("um", "uh") removed and the first letter capitalised. A one-word take, or one that is only numbers, skips the model entirely.
 
 ## Privacy
 

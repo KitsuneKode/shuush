@@ -232,7 +232,7 @@ fi
 # Selection & fresh (<=15s) clipboard raw text (redacted inside gate prepare)
 SEL_RAW=""
 CLIP_RAW=""
-if [ "${PP_APP_CONTEXT:-0}" = 1 ] && [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
+if [ "${PP_APP_CONTEXT:-1}" = 1 ] && [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
   if [ -f "$RT/take_selection" ] && [ $(( $(date +%s) - $(stat -c %Y "$RT/take_selection" 2>/dev/null || echo 0) )) -le 900 ]; then
     SEL_RAW=$(head -c 600 "$RT/take_selection" 2>/dev/null || true)
   fi
@@ -267,7 +267,7 @@ PREP_JSON=$(jq -nc \
   --arg raw "$raw" --arg mode "$MODE" --arg cls "$cls" --arg title "$title" \
   --arg screen_raw "$SCREEN_RAW" --arg draft_raw "$DRAFT_RAW" \
   --arg sel_raw "$SEL_RAW" --arg clip_raw "$CLIP_RAW" \
-  --argjson app_ctx "$([ "${PP_APP_CONTEXT:-0}" = 1 ] && echo true || echo false)" \
+  --argjson app_ctx "$([ "${PP_APP_CONTEXT:-1}" = 1 ] && echo true || echo false)" \
   --argjson screen_ctx "$([ "${PP_SCREEN_CONTEXT:-1}" = 1 ] && echo true || echo false)" \
   --argjson private_guard "$([ "${PP_PRIVATE_GUARD:-1}" = 1 ] && echo true || echo false)" \
   --argjson atspi_password "$([ "$AT_SPI_PASSWORD" = 1 ] && echo true || echo false)" \
@@ -318,8 +318,7 @@ export PP_TITLE_PAIR PP_SCREEN_TERMS
 # The OSD pill shows this while "Polishing" (the watcher clears it at idle).
 printf '%s\n' "$raw" 2>/dev/null >"$RT/live_text"
 
-# A single word, a numbers-only take, or a short clean one ("New thread") has
-# nothing for an LLM to improve (and raw digits sent to one only risk corruption).
+# A single word or a numbers-only take has nothing for an LLM to improve (and raw digits sent to one only risk corruption).
 words=$(wc -w <<< "$raw")
 [ "$MODE" != command ] && { [ "$words" -lt 2 ] || [ "${NUMBERS_ONLY:-0}" = 1 ]; } && { VIA=short; emit "$raw"; }
 
@@ -414,7 +413,7 @@ fi
 DICT="<dictation>${RAW_FRAMED:-$raw}</dictation>"
 [ -n "${CTX//[[:space:]]/}" ] && DICT="<previous>$CTX</previous>
 $DICT"
-if [ "${PP_APP_CONTEXT:-0}" = 1 ]; then
+if [ "${PP_APP_CONTEXT:-1}" = 1 ]; then
   [ -n "${APP//[[:space:]]/}" ] && DICT="<app>$APP</app>
 $DICT"
   if [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
@@ -708,7 +707,7 @@ body_for() {  # model [extra-json]
 }
 # Cerebras serves the same qwen3.8-27b the prompt was tuned on with Groq.
 try_groq2()      { try_compat https://api.groq.com/openai/v1/chat/completions "$(secret GROQ_API_KEY2)" \
-                     "$(body_for "qwen/qwen3.8-27b" '{"reasoning_effort":"none"}')" 3; }
+                     "$(body_for "${PP_GROQ_MODEL:-qwen/qwen3.8-27b}" '{"reasoning_effort":"none"}')" 3; }
 try_cerebras()   { try_compat https://api.cerebras.ai/v1/chat/completions "$(secret CEREBRAS_API_KEY)" \
                      "$(body_for "$PP_CEREBRAS_MODEL" '{"reasoning_effort":"none"}')"; }
 try_opencode()   { try_compat "$PP_OPENCODE_URL" "$(secret OPENCODE_API_KEY)" \
