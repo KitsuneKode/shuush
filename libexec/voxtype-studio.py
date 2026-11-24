@@ -1251,7 +1251,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
     def _do_live_reload(self) -> bool:
         self._live_reload_id = None
         prev_ts = (self.history[0].get("ts") if self.history else None)
-        self.reload_all()
+        self.reload_all(live=True)
         if self.history and self.history[0].get("ts") != prev_ts:
             self.show_toast("New dictation recorded")
         return False
@@ -1633,11 +1633,9 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             self.filter_mode = mode
             self._render_history_list()
 
-    def _render_history_list(self) -> None:
-        while (row := self.hist_list.get_first_child()) is not None:
-            self.hist_list.remove(row)
+    def _history_visible(self) -> list[dict]:
         q = self.hist_search.get_text().strip().lower()
-        shown = 0
+        out = []
         for d in self.history:
             if self.filter_mode == "review" and not d.get("review"):
                 continue
@@ -1647,61 +1645,61 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
                 continue
             if q and q not in (d.get("raw", "") + " " + d.get("clean", "")).lower():
                 continue
-            shown += 1
+            out.append(d)
+        return out
 
-            row = Gtk.ListBoxRow()
-            row._entry = d  # type: ignore[attr-defined]
-            line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-            line.set_margin_top(10)
-            line.set_margin_bottom(10)
-            line.set_margin_start(8)
-            line.set_margin_end(8)
+    @staticmethod
+    def _entry_key(d: dict) -> tuple:
+        return (d.get("ts"), d.get("raw"))
 
-            ts = Gtk.Label(label=(d.get("ts") or "")[11:16] or "—", xalign=0)
-            ts.add_css_class("mono-num")
-            ts.set_size_request(54, -1)
-            line.append(ts)
+    def _history_scroll(self) -> Gtk.Adjustment | None:
+        w = self.hist_list.get_parent()
+        while w is not None and not isinstance(w, Gtk.ScrolledWindow):
+            w = w.get_parent()
+        return w.get_vadjustment() if w is not None else None
 
-            mode = Gtk.Label(label=d.get("mode") or "default", xalign=0)
-            mode.add_css_class("pill")
-            mode.add_css_class("pill-neutral")
-            mode.set_size_request(70, -1)
-            line.append(mode)
-
-            txt = Gtk.Label(
-                label=(d.get("clean") or d.get("raw") or "").replace("\n", " "),
-                xalign=0,
-                hexpand=True,
-                ellipsize=Pango.EllipsizeMode.END,
-            )
-            line.append(txt)
-
-            status = Gtk.Label()
-            status.add_css_class("pill")
-            if d.get("via") == "passthrough":
-                status.set_text("● Fallback")
-                status.add_css_class("pill-danger")
-            elif d.get("review"):
-                status.set_text("● Review")
-                status.add_css_class("pill-review")
-            elif d.get("swaps"):
-                n_sw = len(d["swaps"])
-                status.set_text(f"{n_sw} {'fix' if n_sw == 1 else 'fixes'}")
-                status.add_css_class("pill-fix")
-            else:
-                status.set_text("Clean")
-                status.add_css_class("pill-clean")
-            status.set_size_request(92, -1)
-            line.append(status)
-
-            ms = Gtk.Label(label=f"{d.get('pp_ms', 0)} ms", xalign=1)
-            ms.add_css_class("mono-num")
-            ms.set_size_request(66, -1)
-            line.append(ms)
-
-            row.set_child(line)
+    def _render_history_list(self, live: bool = False) -> None:
+        """Rebuild the history list; `live` (a new take landed) only adds the
+        new rows at the top, so selection, scroll and the rows on screen stay
+        put. Rebuilding ~2000 rows per take blanked the list and jumped it."""
+        visible = self._history_visible()
+        shown = getattr(self, "_hist_shown", None)
+        adj = self._history_scroll()
+        if live and shown and visible:
+            keys = [self._entry_key(d) for d in visible]
+            first = self._entry_key(shown[0])
+            if first in keys:
+                k = keys.index(first)
+                rest = visible[k:]
+                if [self._entry_key(d) for d in rest] == [self._entry_key(d) for d in shown[:len(rest)]]:
+                    added = 0
+                    for i, d in enumerate(visible[:k]):
+                        row = self._history_row(d)
+                        self.hist_list.insert(row, i)
+                        added += row.measure(Gtk.Orientation.VERTICAL, -1)[1]
+                    for _ in range(len(shown) - len(rest)):  # the oldest fell off the cap
+                        last = self.hist_list.get_last_child()
+                        if last is not None:
+                            self.hist_list.remove(last)
+                    # Reading further down: keep what is on screen where it is.
+                    if adj is not None and adj.get_value() > 0 and added:
+                        adj.set_value(adj.get_value() + added)
+                    self._hist_shown = visible
+                    return
+        sel = self.hist_list.get_selected_row()
+        sel_key = self._entry_key(sel._entry) if sel is not None and hasattr(sel, "_entry") else None
+        scroll = adj.get_value() if adj is not None else 0
+        while (row := self.hist_list.get_first_child()) is not None:
+            self.hist_list.remove(row)
+        for d in visible:
+            row = self._history_row(d)
             self.hist_list.append(row)
-        if shown == 0:
+            if sel_key is not None and self._entry_key(d) == sel_key:
+                self.hist_list.select_row(row)
+        if adj is not None and scroll:
+            GLib.idle_add(lambda: (adj.set_value(min(scroll, adj.get_upper() - adj.get_page_size())), False)[1])
+        self._hist_shown = visible
+        if not visible:
             er = Gtk.ListBoxRow(selectable=False, activatable=False)
             msg = (
                 "No matching dictations for this filter."
@@ -1716,6 +1714,60 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             el.set_margin_end(14)
             er.set_child(el)
             self.hist_list.append(er)
+
+    def _history_row(self, d: dict) -> Gtk.ListBoxRow:
+        row = Gtk.ListBoxRow()
+        row._entry = d  # type: ignore[attr-defined]
+        line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        line.set_margin_top(10)
+        line.set_margin_bottom(10)
+        line.set_margin_start(8)
+        line.set_margin_end(8)
+
+        ts = Gtk.Label(label=(d.get("ts") or "")[11:16] or "—", xalign=0)
+        ts.add_css_class("mono-num")
+        ts.set_size_request(54, -1)
+        line.append(ts)
+
+        mode = Gtk.Label(label=d.get("mode") or "default", xalign=0)
+        mode.add_css_class("pill")
+        mode.add_css_class("pill-neutral")
+        mode.set_size_request(70, -1)
+        line.append(mode)
+
+        txt = Gtk.Label(
+            label=(d.get("clean") or d.get("raw") or "").replace("\n", " "),
+            xalign=0,
+            hexpand=True,
+            ellipsize=Pango.EllipsizeMode.END,
+        )
+        line.append(txt)
+
+        status = Gtk.Label()
+        status.add_css_class("pill")
+        if d.get("via") == "passthrough":
+            status.set_text("● Fallback")
+            status.add_css_class("pill-danger")
+        elif d.get("review"):
+            status.set_text("● Review")
+            status.add_css_class("pill-review")
+        elif d.get("swaps"):
+            n_sw = len(d["swaps"])
+            status.set_text(f"{n_sw} {'fix' if n_sw == 1 else 'fixes'}")
+            status.add_css_class("pill-fix")
+        else:
+            status.set_text("Clean")
+            status.add_css_class("pill-clean")
+        status.set_size_request(92, -1)
+        line.append(status)
+
+        ms = Gtk.Label(label=f"{d.get('pp_ms', 0)} ms", xalign=1)
+        ms.add_css_class("mono-num")
+        ms.set_size_request(66, -1)
+        line.append(ms)
+
+        row.set_child(line)
+        return row
 
     def _on_history_selected(self, _lb, row) -> None:
         if row is None:
@@ -3002,9 +3054,9 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         wl_copy(build_ai_audit_prompt(self.history, ins, suggs))
         self.show_toast("Copied AI audit summary — paste into T3 Code or Claude to tune further")
 
-    def reload_all(self) -> None:
+    def reload_all(self, live: bool = False) -> None:
         self.history = load_history()
-        self._render_history_list()
+        self._render_history_list(live=live)
         self._render_insights()
         self._render_corrections()
         self._render_vocab()
