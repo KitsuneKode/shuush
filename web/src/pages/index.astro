@@ -23,19 +23,27 @@ const faqs = [
   },
   {
     q: 'Can Shuush run 100% offline without sending audio or text to the cloud?',
-    a: 'Yes. Speech recognition always runs locally via voxtype, and Shuush Studio has a 1-click air-gapped offline mode that pins cleanup to local Ollama (127.0.0.1:11434). Password fields detected via AT-SPI bypass LLM cleanup entirely and are never written to history.',
+    a: 'Yes. Speech recognition always runs locally via voxtype, and Shuush Studio has a 1-click air-gapped offline mode that pins cleanup to local Ollama (127.0.0.1:11434). Password fields, password managers, sign-in pages and sudo prompts skip LLM cleanup entirely and are never written to history or the clipboard, and a password manager\'s clipboard copy is never used as context.',
   },
   {
     q: 'What are the default Shuush hotkeys?',
     a: 'Super+Ctrl+D toggles dictation. Hold F9 for push-to-talk, or tap it (under 300 ms) for hands-free. Super+Ctrl+E is voice command, which rewrites your highlighted selection in place. Super+Alt+D opens Shuush Studio, and a double-tap of Esc cancels a take.',
   },
   {
-    q: 'Why build Shuush on top of voxtype instead of forking it?',
-    a: "voxtype already nails PipeWire audio capture, CUDA/Vulkan/CPU inference (Parakeet, Whisper, Cohere GGUF), and Wayland typing. Keeping Shuush as a companion layer means zero fork drift, instant compatibility with stock voxtype-bin from the Arch AUR and Omarchy, and proper credit to Peter Jackson's MIT daemon.",
+    q: 'Do I need a fork of voxtype?',
+    a: "No. voxtype already nails PipeWire audio capture, CUDA/Vulkan/CPU inference and Wayland typing, and Shuush works on stock voxtype-bin from the Arch AUR and Omarchy. A few extras need changes inside voxtype itself (live text in the focused field while you speak, learning from your fixes in Electron apps, recognition-level vocabulary); they live in an optional companion fork that tracks upstream, and are being offered to voxtype as pull requests so the fork can go away.",
   },
   {
-    q: 'How does the anti-paraphrase span gate prevent LLM hallucinations?',
-    a: 'voxtype_pp_gate.py aligns every cleaned reply back against the raw recognizer transcript. Ordinary English words are never rewritten unless grounded by a phonetic match in your vocabulary, the visible AT-SPI screen, your highlighted selection, or a fresh (15 seconds or newer) clipboard.',
+    q: 'How does Shuush stop the cleanup model from changing what I said?',
+    a: 'A deterministic gate (voxtype_pp_gate.py) aligns the cleaned text with what you said, word by word, and puts your words back wherever a change is not a real repair. Negations, numbers, contractions and your own wording cannot change; a word is replaced only when it sounds like a name in your vocabulary, on your screen, in your selection or in a fresh clipboard copy. If the whole answer breaks a rule, your words are typed as heard.',
+  },
+  {
+    q: 'Does Shuush learn from my corrections?',
+    a: 'Yes. Fix a word in Studio and press Ctrl+Enter, or approve suggestions in the Learning Inbox. Shuush also watches the text field for a few minutes after each take: a name you correct by hand there is noted, and learned the second time. Ordinary English words are never learned as mishearings.',
+  },
+  {
+    q: 'Which cleanup model should I use?',
+    a: 'Groq with qwen3.8-27b (a free key) was the fastest and most literal on real dictations, about 0.7 s per take; add a second Groq key and a free Cerebras key as fallbacks, or Ollama for fully offline use. OpenCode Zen free models only answer inside the OpenCode app, so they cannot be used here.',
   },
 ];
 
@@ -342,7 +350,8 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
               <tr><th scope="row">GPU &amp; ASR freedom</th><td>Cloud only</td><td>Apple Silicon / cloud</td><td class="col-us">NVIDIA CUDA · AMD/Intel Vulkan · CPU</td></tr>
               <tr><th scope="row">Context sources</th><td>App + screen</td><td>App + selection + clipboard</td><td class="col-us">App + AT-SPI screen &amp; draft + selection + ≤15 s clipboard + date</td></tr>
               <tr><th scope="row">Offline privacy mode</th><td>No</td><td>Paid local tier</td><td class="col-us">1-click air-gapped Ollama + AT-SPI password bypass</td></tr>
-              <tr><th scope="row">Self-learning dictionary</th><td>Proprietary</td><td>Manual / AI audit</td><td class="col-us">Phonetic auto-mine + reject list + daemon <code>[text]</code> sync</td></tr>
+              <tr><th scope="row">Self-learning dictionary</th><td>Learns from your edits</td><td>Manual / AI audit</td><td class="col-us">Learns names you fix by hand + phonetic auto-mine + reject list</td></tr>
+              <tr><th scope="row">Guard against meaning changes</th><td>Closed prompt</td><td>Closed prompt</td><td class="col-us">Deterministic gate: negations, numbers, contractions and wording stay yours</td></tr>
             </tbody>
           </table>
         </div>
@@ -404,7 +413,7 @@ const copyIcons = `<svg class="ic-copy" viewBox="0 0 24 24" fill="none" stroke="
         </div>
 
         <div class="credit">
-          <p><strong>Shuush wouldn't exist without voxtype.</strong> It's a companion layer, not a fork: zero drift, works with stock <code>voxtype-bin</code>, and the MIT credit stays where it belongs.</p>
+          <p><strong>Shuush wouldn't exist without voxtype.</strong> It's a companion layer that works with stock <code>voxtype-bin</code>. A few extras need changes inside voxtype; they live in an <a href="https://github.com/KitsuneKode/shuush/blob/main/docs/voxtype-fork.md">optional companion fork</a> and are being offered upstream, and the MIT credit stays where it belongs.</p>
           <a class="btn btn-ghost btn-sm" href="https://github.com/peteonrails/voxtype">peteonrails/voxtype <span class="arrow" aria-hidden="true">↗</span></a>
         </div>
 

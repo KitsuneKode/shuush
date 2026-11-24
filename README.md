@@ -33,7 +33,7 @@
 </p>
 
 > **Powered by [`peteonrails/voxtype`](https://github.com/peteonrails/voxtype) (MIT, Peter Jackson).**
-> Shuush does **not** fork or replace your `voxtype` binary — it drops cleanly on top of stock `voxtype-bin` from Arch AUR or Omarchy repos with one command.
+> Shuush does **not** fork or replace your `voxtype` binary — it drops cleanly on top of stock `voxtype-bin` from Arch AUR or Omarchy repos with one command. A few extras (live text in the field while you speak, learning from your fixes in Electron apps, recognition-level vocabulary) need changes inside voxtype; they live in an [optional companion fork](docs/voxtype-fork.md) and are being offered upstream.
 >
 > **Links:** [Live Website](https://shuush.kitsunekode.in/) · [Architecture &amp; Benchmarks Blog](https://shuush.kitsunekode.in/blog/why-we-built-shuush/) · [1-Line Installer](https://shuush.kitsunekode.in/install.sh) · [Pre-Flight Doctor](https://shuush.kitsunekode.in/doctor.sh) · [Launch Video (1080p MP4)](assets/shuush-launch.mp4)
 
@@ -63,9 +63,17 @@ Measured across **333 real coding & chat dictations** on a daily-driver Linux la
 | **GPU support** | Cloud | Apple Silicon / Cloud | **NVIDIA CUDA · AMD ROCm/Vulkan · Intel Vulkan · CPU** |
 | **Context awareness** | App + screen | App + selection + clipboard + date | **App + AT-SPI `<screen>` + focused `<draft>` + `<selection>` + fresh `≤15s` `<clipboard>` + `<now>`** |
 | **Privacy guard** | Cloud telemetry | Cloud option | **AT-SPI password-field bypass + 1-click Air-Gapped Ollama mode** |
-| **Anti-hallucination** | Closed prompt | Closed prompt | **Deterministic anti-paraphrase span gate (`voxtype_pp_gate.py`)** |
-| **Self-learning** | Proprietary | Manual + AI audit | **Phonetic grounded auto-learning + reject blocklist + daemon `[text]` sync** |
+| **Anti-hallucination** | Closed prompt | Closed prompt | **Deterministic gate: negations, numbers, contractions and your wording can't change** |
+| **Self-learning** | Learns from your edits | Manual + AI audit | **Learns names you fix by hand after a take, plus grounded auto-learning with a reject blocklist** |
 | **Control Center** | Electron | Native macOS | **Native GTK4 + Libadwaita Studio (live updates, diff inspector, insights, API keys, DnD failover)** |
+
+---
+
+## What it does to your words
+
+Fillers, stutters, false starts and self-corrections go; mishearings of names on your screen and in your vocabulary are repaired; long dictations get sentences, lists and paragraphs. A deterministic gate then checks every change against what you said and puts your words back wherever the model paraphrased: negations, numbers, contractions and your own wording never change, and nothing is typed that you didn't say. Details: [How cleanup works](docs/how-cleanup-works.md).
+
+**Docs:** [How cleanup works](docs/how-cleanup-works.md) · [Configuration](docs/configuration.md) · [Choosing a cleanup model](docs/models.md) · [Stock voxtype or the companion fork](docs/voxtype-fork.md)
 
 ---
 
@@ -141,11 +149,13 @@ This safely installs:
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now voxtype.service shuush-llm-proxy.service shuush-live-osd.service
-gsettings set org.gnome.desktop.interface toolkit-accessibility true
+gsettings set org.gnome.desktop.interface toolkit-accessibility true   # screen & field context (AT-SPI)
 
 shuush doctor
 shuush studio
 ```
+
+Electron apps (VS Code, Slack, Discord) only share their text with AT-SPI when started with `--force-renderer-accessibility`; the [companion fork](docs/voxtype-fork.md) reads the focused field through the input method instead.
 
 Then open **Settings (`Alt+6`)** in Studio to either:
 - Toggle **Air-gapped offline mode** (local Ollama `qwen3:4b` — zero cloud calls), **or**
@@ -157,11 +167,8 @@ Then open **Settings (`Alt+6`)** in Studio to either:
 
 Shuush has native first-party support for **[`kuwai`](https://github.com/KitsuneKode/kuwai)** (Hyprland 0.57 Lua + Quickshell island):
 
-1. Add one line to `~/.config/hypr/user.lua`:
-   ```lua
-   K.voxtype_scripts = K.home .. "/.local/share/shuush/libexec/"
-   ```
-2. `kuwai/voxtype.lua` automatically binds every hotkey (`Super+Ctrl+D`, `F9` hold/tap, `Super+Ctrl+E` voice command, double-tap `Esc` cancel guard, `Super+Alt+D` Studio, `Super+Ctrl+Shift+D` teach fix).
+1. Nothing to configure: `kuwai/voxtype.lua` finds Shuush in `~/.local/share/shuush/libexec/` (set `K.voxtype_scripts` in `user.lua` only for another location).
+2. It binds every hotkey (`Super+Ctrl+D`, `F9` hold/tap, `Super+Ctrl+E` voice command, double-tap `Esc` cancel guard, `Super+Alt+D` Studio, `Super+Ctrl+Shift+D` teach fix).
 3. Notifications route automatically through `kuwai-notify`, and `VOXTYPE_OSD_HOST` lets `kuwai`'s island host the pill with zero conflict.
 
 For standard Hyprland (including **Omarchy**), include [`config/hyprland-binds.conf`](config/hyprland-binds.conf).

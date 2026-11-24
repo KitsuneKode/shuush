@@ -240,6 +240,8 @@ qpp = pp.replace("\\", "\\\\").replace('"', '\\"')
 lines = set_section_keys(lines, "output.post_process", [
     ("command", f'"{qpp}"'),
     ("timeout_ms", "20000"),
+    # Keep the leading space smart join adds (Shuush trims the model's own).
+    ("trim", "false"),
 ])
 for prof in ("terminal", "chat", "command"):
     lines = set_section_keys(lines, f"profiles.{prof}", [
