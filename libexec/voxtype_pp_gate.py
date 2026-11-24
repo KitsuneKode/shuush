@@ -1098,9 +1098,26 @@ _SECRET = [
     (re.compile(r"\bAIza[0-9A-Za-z_-]{30,}"), "[redacted]"),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}"), "[redacted]"),
     (re.compile(r"(?i)\b(password|passwd|passphrase|secret|token|api[_-]?key|authorization)(\s*[:=]\s*|\s+)\S+"), r"\1\2[redacted]"),
+    (re.compile(r"://[^\s:/@]+:[^\s/@]+@"), "://[redacted]@"),
     (re.compile(r"\b[A-Fa-f0-9]{32,}\b"), "[redacted]"),
     (re.compile(r"\b[A-Za-z0-9+/_-]{40,}={0,2}"), "[redacted]"),
 ]
+
+
+def looks_like_password(text: str) -> bool:
+    """A copied password: one token mixing three of lower, upper, digits and
+    symbols. Identifiers (`useDictationShortcut`, `kitsune/live`) mix fewer,
+    and a URL is kept (its credentials are redacted instead)."""
+    t = text.strip()
+    if not 8 <= len(t) <= 128 or any(c.isspace() for c in t) or "://" in t:
+        return False
+    kinds = (
+        any(c.islower() for c in t),
+        any(c.isupper() for c in t),
+        any(c.isdigit() for c in t),
+        any(not c.isalnum() for c in t),
+    )
+    return sum(kinds) >= 3
 
 
 def screen_block(text: str, lines: int = 12, limit: int = 1200) -> str:
@@ -1234,9 +1251,9 @@ def prepare_payload(req: dict) -> dict:
                 screen_str = screen_block(screen_raw)
             if draft_raw.strip():
                 draft_str = screen_block(draft_raw)
-            if sel_raw.strip():
+            if sel_raw.strip() and not looks_like_password(sel_raw):
                 sel_str = screen_block(sel_raw)[:450]
-            if clip_raw.strip():
+            if clip_raw.strip() and not looks_like_password(clip_raw):
                 clip_str = screen_block(clip_raw)[:500]
             combined = "\n".join(x for x in (title, screen_str, draft_str, sel_str, clip_str) if x)
             if combined:
@@ -1349,6 +1366,11 @@ def _selftest() -> int:
     check("vocab inside word kept", finish("githubbing", T), lambda s: s == "githubbing")
     check("fallback fillers", fallback_clean("um so uh we need to, hmm, fix the bounce"), lambda s: s == "So we need to fix the bounce")
     check("fallback keeps words", fallback_clean("umbrella and hummus"), lambda s: s == "Umbrella and hummus")
+    check("a copied password is not context",
+          [looks_like_password(x) for x in ("Tr0ub4dor&3", "hunter2!X", "useDictationShortcut", "kitsune/live", "voxtype_pp_gate.py", "https://a.b/c?d=1", "two words")],
+          lambda r: r == [True, True, False, False, False, False, False])
+    check("URL credentials are redacted", screen_block("see https://me:s3cret@git.example.com/repo"),
+          lambda r: "s3cret" not in r and "git.example.com/repo" in r)
     check("screen redacts", screen_block("export OPENAI_API_KEY=sk-abcdefghijklmnopqrstuv\n│ > fix the hero section │"),
           lambda s: "sk-abc" not in s and "fix the hero section" in s and "│" not in s)
     check("screen redacts tokens", screen_block("token: ghp_abcdefghijklmnopqrstuvwxyz123456"), lambda s: "ghp_" not in s)

@@ -29,7 +29,7 @@ See [models.md](models.md) for which provider to pick.
 |---|---|---|
 | `PP_APP_CONTEXT` | `1` | Use the focused app's name and window title to recognise project and file names. `0` sends no context from your desktop at all: none of the screen, field, selection or clipboard text below. |
 | `PP_SCREEN_CONTEXT` | `1` | Read visible text, the text field you are typing into, and highlighted text (AT-SPI), so names on screen are spelled right. `0` turns off all screen, selection and clipboard context. |
-| `PP_CLIPBOARD_CONTEXT` | `1` | Use text you copied within the last 15 seconds (needs the two settings above). A password manager's copy is never used. |
+| `PP_CLIPBOARD_CONTEXT` | `1` | Use text you copied within the last 15 seconds (needs the two settings above). A password manager's copy, or a copied word shaped like a password, is never used, and credentials in URLs are removed. |
 | `PP_PRIVATE_GUARD` | `1` | Password fields, password managers, sign-in pages and `sudo` prompts: the take is typed exactly as heard, never sent to a model, not saved to history or the clipboard. |
 
 ## Learning
