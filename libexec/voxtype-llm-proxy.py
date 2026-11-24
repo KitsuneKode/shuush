@@ -57,10 +57,14 @@ class Upstream:
         self.key_index = 0       # sticky: stay on the key that last worked
 
     def _connect(self) -> None:
-        if self.conn:
-            self.conn.close()
+        self._drop()
         self.conn = http.client.HTTPSConnection(HOST, timeout=10)
         self.conn.connect()
+
+    def _drop(self) -> None:
+        if self.conn:
+            self.conn.close()
+        self.conn = None
 
     def request(self, method: str, path: str, body: bytes | None) -> tuple[int, bytes]:
         keys = api_keys()
@@ -84,7 +88,7 @@ class Upstream:
                 self.conn.request(method, path, body=body, headers=headers)
                 return self.conn.getresponse()
             except (http.client.HTTPException, OSError):
-                self.conn = None
+                self._drop()
                 if attempt == 2:
                     raise
         raise RuntimeError("unreachable")
@@ -94,7 +98,7 @@ class Upstream:
             resp = self._open(method, path, body, key)
             data = resp.read()
         except (http.client.HTTPException, OSError):
-            self.conn = None
+            self._drop()
             raise
         self.last_used = time.monotonic()
         return resp.status, data
@@ -124,7 +128,7 @@ class Upstream:
                 except (http.client.HTTPException, OSError):
                     # Caller went away (cancel, timeout) or upstream broke
                     # mid-body: the connection is half-read, never reuse it.
-                    self.conn = None
+                    self._drop()
                     raise
                 self.last_used = time.monotonic()
                 return
@@ -136,9 +140,14 @@ class Upstream:
 
 
 UP = Upstream()
+MAX_BODY = 1 << 20   # a cleanup request is a few KB
 
 
 class Handler(BaseHTTPRequestHandler):
+    # A caller that stops reading would otherwise hold the upstream lock, and
+    # every later cleanup with it.
+    timeout = 10
+
     def log_message(self, *_):   # quiet; failures are visible in the caller's timings
         pass
 
@@ -161,7 +170,10 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         if not self.path.startswith("/openai/v1/"):
             return self._reply(404, b"{}")
-        body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if not 0 <= length <= MAX_BODY:
+            return self._reply(413, b"{}")
+        body = self.rfile.read(length)
         try:
             streaming = json.loads(body or b"{}").get("stream") is True
         except ValueError:
