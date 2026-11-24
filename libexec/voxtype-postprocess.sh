@@ -114,6 +114,9 @@ emit() {
   # Vocabulary spelled exactly (gate finish); and when no model answered, the
   # raw words without the sounds that are never words (gate fallback).
   if [ -n "${text//[[:space:]]/}" ] && [ "$STREAMED" != 1 ]; then
+    # voxtype keeps our whitespace ([output.post_process] trim = false), so
+    # the model's stray spaces go here and smart_join's leading one survives.
+    text="${text#"${text%%[![:space:]]*}"}"; text="${text%"${text##*[![:space:]]}"}"
     # (A snippet, a private take and an edit are typed exactly as they are.)
     if [ "$VIA" = passthrough ] && [ "$MODE" != command ]; then
       text=$(printf '%s' "$text" | python3 -I "$SCRIPT_DIR/voxtype_pp_gate.py" fallback 2>/dev/null || printf '%s' "$text")
