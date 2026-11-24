@@ -61,6 +61,8 @@ FILLER_PHRASES = (("you", "know"), ("so", "yeah"), ("kind", "of"), ("sort", "of"
 # sentence ("…this and also think" -> "…this. Also, think"); restoring it gave
 # "this. And Also, think".
 DISCOURSE = frozenset("and so like okay ok right yeah well alright basically".split())
+# Only these may go at the very end of a take: "it works well" keeps "well".
+TAGS = frozenset("okay ok right yeah alright".split())
 # "like" stays after these: "I like it", "looks like", "something like that",
 # "would like". Anywhere else it is the spoken filler ("can I like test").
 LIKE_KEEPS = frozenset(
@@ -68,6 +70,8 @@ LIKE_KEEPS = frozenset(
     "sounded feel feels felt seem seems seemed something anything nothing everything "
     "things stuff just more much exactly kind sort dont doesnt didnt really".split()
 )
+# ... and before these: "like a", "like the old one", "like this", "like them".
+LIKE_BEFORE_CONTENT = frozenset("a an the this that these those it them him her me us you".split())
 ARTICLES = frozenset({"a", "an", "the"})
 # Expansions of contractions are stopwords on the model side ("it's" -> "it is").
 STOP = frozenset(
@@ -290,7 +294,8 @@ def delete_ok(keys: list[str], i1: int, i2: int) -> bool:
         return True
     if tuple(span) in FILLER_PHRASES:
         return True
-    if span == ["like"] and (i1 == 0 or keys[i1 - 1] not in LIKE_KEEPS):
+    if span == ["like"] and (i1 == 0 or keys[i1 - 1] not in LIKE_KEEPS) \
+            and (i2 >= len(keys) or keys[i2] not in LIKE_BEFORE_CONTENT):
         return True
     # Every cut word sits next to its own copy: "shown [shown also] also".
     if len(span) <= 4 and all(
@@ -308,7 +313,10 @@ def delete_ok(keys: list[str], i1: int, i2: int) -> bool:
     core = span
     while len(core) > 1 and core[0] in DISCOURSE:
         core = core[1:]
-    if len(core) <= 4 and not any(k in NEGATIONS for k in span) and (
+    # Short, or trailing off on a function word: "fix the header fix the
+    # footer" is two items, not a restart.
+    if (len(core) <= 2 or (len(core) <= 4 and core[-1] in STOP | {"that", "this"})) \
+            and not any(k in NEGATIONS for k in span) and (
             (i2 < len(keys) and keys[i2] == core[0])
             or (i1 > 0 and keys[i1 - 1] == core[-1] and len(core) >= 2)):
         return True
@@ -330,7 +338,7 @@ def _discourse_cut(span: list[str], model: str, mw: list, j: int) -> bool:
     gap = model[mw[j - 1].end:mw[j].start if j < len(mw) else len(model)] if j > 0 else ""
     ends_before = j == 0 or re.search(r"[.!?…:]", gap) is not None
     starts_after = j < len(mw) and mw[j].surface[:1].isupper()
-    return ends_before and (starts_after or j == len(mw))
+    return ends_before and (starts_after or (j == len(mw) and all(k in TAGS for k in span)))
 
 
 def insert_ok(keys: list[str]) -> bool:
@@ -747,6 +755,10 @@ def _stitch(raw: str, rw: list[Tok], model: str, mw: list[Tok], pieces: list[tup
             if b != len(mw):
                 right = mw[b - 1].end
             chunk = model[left:right]
+            # Words restored after the model's last word: its closing
+            # punctuation goes after them (added at the end), not before.
+            if b == len(mw) and idx + 1 < len(pieces):
+                chunk = re.sub(r"[.!?…]+\s*$", "", chunk)
             if trim_next_punct:
                 trim_next_punct = False
                 chunk = re.sub(r"^[.!?…]+\s*", "", chunk)
@@ -1505,6 +1517,15 @@ def _selftest() -> int:
     check("sentence-initial and dropped cleanly",
           constrain("you can do this and also think about it", "You can do this. Also, think about it."),
           lambda s: s == "You can do this. Also, think about it.")
+    check("two items are not a false start",
+          constrain("fix the header fix the footer", "Fix the footer."),
+          lambda s: "header" in s)
+    check("trailing well kept, trailing okay dropped",
+          constrain("it works well", "It works.") + " | " + constrain("we need to fix it okay", "We need to fix it."),
+          lambda s: s == "It works well. | We need to fix it.")
+    check("like before an article kept",
+          constrain("make it like the old one", "Make it the old one."),
+          lambda s: "like the" in s)
     check("interleaved stutter dropped",
           constrain("only one disk is being shown shown also also there is one", "Only one disk is being shown. Also, there is one."),
           lambda s: s == "Only one disk is being shown. Also, there is one.")
