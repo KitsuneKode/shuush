@@ -82,9 +82,12 @@ focus_target() {
 smart_join() {
   [ "$MODE" = command ] && return 0
   [ "$(sed -n 's/^PP_SMART_JOIN=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)" = 0 ] && return 0
-  local f="$RT/take_screen_ctx.json" before prev first rest lower
+  # voxtype's input method sees the field directly (no AT-SPI needed, so
+  # Electron apps too); the record-start AT-SPI capture is the fallback.
+  local f="$RT/field_text.json" q='.before // "" | .[-40:]' before prev first rest lower
+  [ -f "$f" ] || { f="$RT/take_screen_ctx.json"; q='.before_caret // "" | .[-40:]'; }
   [ -f "$f" ] || return 0
-  before=$(jq -j '.before_caret // "" | .[-40:]' "$f" 2>/dev/null; printf x)
+  before=$(jq -j "$q" "$f" 2>/dev/null; printf x)
   before=${before%x}
   [ -n "$before" ] || return 0
   prev=${before: -1}

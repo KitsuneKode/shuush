@@ -28,7 +28,14 @@ text="$1"; smart_join; printf "%s" "$text"' _ "$text")
   rm -rf "$TMPJ"
   [ "$got" = "$want" ] || { echo "smart_join: [$before]+[$text] -> [$got], want [$want]"; exit 1; }
 done
-ok "smart_join spaces and continues back-to-back takes"
+TMPJ="$(mktemp -d)"; mkdir -p "$TMPJ/voxtype"
+printf '{"before_caret":"("}' > "$TMPJ/voxtype/take_screen_ctx.json"
+printf '{"before":"Done.","after":""}' > "$TMPJ/voxtype/field_text.json"
+got=$(MODE=default RT="$TMPJ/voxtype" CONF="$TMPJ" bash -c "$(sed -n '/^smart_join() {/,/^}/p' "$ROOT/libexec/voxtype-postprocess.sh")"'
+text="$1"; smart_join; printf "%s" "$text"' _ "Next.")
+rm -rf "$TMPJ"
+[ "$got" = " Next." ] || { echo "smart_join ignored the input method's field text: [$got]"; exit 1; }
+ok "smart_join spaces and continues back-to-back takes (input-method field text first)"
 
 echo "=== 3. Sandbox Install: Stock voxtype (Whisper / AMD-Intel Vulkan) ==="
 TMP1="$(mktemp -d)"

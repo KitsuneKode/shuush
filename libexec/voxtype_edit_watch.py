@@ -3,7 +3,7 @@
 
 Started (detached) by voxtype-review.py after a dictation is typed. For up to
 five minutes it re-reads the focused text field of the window the dictation
-went into (AT-SPI, same source as <draft>), finds the dictated text there and
+went into, finds the dictated text there and
 diffs it against what was typed. A word you replaced with a name-like term
 ("hyper land" -> "Hyprland") is handed to voxtype_learn.tally(), which applies
 the usual non-poisoning guards: it shows up in Studio's Learning Inbox at the
@@ -11,6 +11,11 @@ first sighting and is auto-learned at the second (PP_AUTO_LEARN=1).
 
 Only replacements count. Words you add or delete are new content, not a
 mishearing, and a rewrite of more than 60% of the take is ignored.
+
+The field is read from voxtype's input method when it holds one
+($XDG_RUNTIME_DIR/voxtype/field_text.json, written by the fork's `[output]
+preedit` while the field stays focused: no polling, works in Electron apps
+that hide from AT-SPI), else through AT-SPI.
 
 Usage (env from voxtype-review.py): RV_RAW, RV_CLEAN; target from
 $XDG_RUNTIME_DIR/voxtype/target_window.
@@ -31,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 RT = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "voxtype"
 PIDFILE = RT / "edit_watch.pid"
+FIELD = RT / "field_text.json"
 LOG = RT / "pp.log"
 # Seconds after the dictation at which the field is read again.
 TICKS = (3, 6, 10, 15, 25, 40, 60, 90, 120, 180, 240, 300)
@@ -108,6 +114,15 @@ def find_hunks(raw: str, clean: str, field: str) -> list[tuple[str, str]] | None
     return hunks
 
 
+def im_field() -> dict | None:
+    """The field text voxtype's input method sees, when it holds one."""
+    try:
+        data = json.loads(FIELD.read_text())
+        return {"password": False, "text": (data.get("before") or "") + (data.get("after") or "")}
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
 def active_address() -> str | None:
     try:
         out = subprocess.run(["hyprctl", "activewindow", "-j"], capture_output=True,
@@ -168,7 +183,7 @@ def main() -> int:
         time.sleep(max(0.0, tick - (time.monotonic() - t0)))
         if addr and active_address() not in (None, addr):
             continue
-        field = sc.focused_field(pid, cls, title)
+        field = im_field() or sc.focused_field(pid, cls, title)
         if field is None:
             continue
         if field.get("password"):
