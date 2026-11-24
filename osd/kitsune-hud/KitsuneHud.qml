@@ -75,7 +75,68 @@ Item {
     // emptied: an empty write there is the end-of-session clear, which can
     // land before the idle state does (separate file watches), and taking
     // it folded the pill back to "Polishing" under the delivered check.
-    onLiveTextChanged: if (_isActive(vstate) && (liveText !== "" || vstate !== "transcribing")) shownText = liveText
+    onLiveTextChanged: if (_isActive(vstate) && !finalShown && (liveText !== "" || vstate !== "transcribing")) shownText = liveText
+
+    // ------------------------------------------------------------------
+    // Cleaned text
+    // voxtype-postprocess.sh writes pp_final ("<epoch ms>" then the text) as
+    // it hands the cleaned text over. The pill swaps the heard words for it
+    // and the words cleanup actually changed (a repaired name, a fixed
+    // mishearing) glow in the accent colour and settle. Capitals and
+    // punctuation alone do not count; a rewrite of most of the take swaps
+    // without marking, since marking everything says nothing.
+    property bool finalShown: false
+    property var _changed: []          // per word of the cleaned text
+    property double _changedAt: 0
+    property int changedCount: 0
+    readonly property int highlightMs: 900
+    readonly property bool highlighting: _changedAt > 0 && nowMs < _changedAt + highlightMs
+    function _norm(w) { return w.toLowerCase().replace(/[.,!?;:"'()\[\]{}…“”‘’*_-]/g, ""); }
+    function _changedWords(heard, cleaned) {
+        const a = heard.map(_norm), b = cleaned.map(_norm);
+        const n = a.length, m = b.length;
+        if (n === 0 || m === 0) return new Array(m).fill(false);
+        // Longest common subsequence: a cleaned word on it was heard as is.
+        const L = [];
+        for (let i = 0; i <= n; i++) L.push(new Array(m + 1).fill(0));
+        for (let i = n - 1; i >= 0; i--)
+            for (let j = m - 1; j >= 0; j--)
+                L[i][j] = a[i] === b[j] ? L[i + 1][j + 1] + 1 : Math.max(L[i + 1][j], L[i][j + 1]);
+        const changed = new Array(m).fill(true);
+        let i = 0, j = 0;
+        while (i < n && j < m) {
+            if (a[i] === b[j]) { changed[j] = false; i++; j++; }
+            else if (L[i + 1][j] >= L[i][j + 1]) i++;
+            else j++;
+        }
+        for (let k = 0; k < m; k++) if (b[k] === "") changed[k] = false;
+        return changed;
+    }
+    FileView {
+        path: root._runtimeDir.length > 0 ? root._runtimeDir + "/voxtype/pp_final" : ""
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: {
+            const raw = text() || "";
+            const nl = raw.indexOf("\n");
+            const at = Number(nl > 0 ? raw.substring(0, nl) : 0);
+            const cleaned = nl > 0 ? root._cap(raw.substring(nl + 1)) : "";
+            if (!(at >= root.localStart - 100) || cleaned.length === 0) return;
+            if (!(root.polishing || root.lingering || root.active)) return;
+            const heard = root.transcriptShown;
+            const words = cleaned.split(" ");
+            let changed = heard.length > 0 ? root._changedWords(heard.split(" "), words) : [];
+            const count = changed.filter(c => c).length;
+            if (count === 0 || count > words.length / 2) changed = [];
+            root.finalShown = true;
+            root._changed = changed;
+            root.changedCount = changed.length > 0 ? count : 0;
+            root.shownText = cleaned;
+            root._changedAt = root.changedCount > 0 ? Date.now() : 0;
+            root.nowMs = Date.now();
+        }
+    }
 
     // ------------------------------------------------------------------
     // Exit and delivery confirmation
@@ -88,7 +149,8 @@ Item {
     property bool lingering: false
     property bool confirmed: false
     property double outputDoneAt: 0
-    readonly property int confirmHoldMs: 420
+    // Longer when cleanup changed words, so the marked ones can be read.
+    readonly property int confirmHoldMs: changedCount > 0 ? 800 : 420
     // Delivered, but as heard: every cleanup provider failed and
     // voxtype-postprocess.sh fell through to the raw transcript. The check
     // turns amber and the pill says so, held long enough to read, instead of
@@ -263,7 +325,16 @@ Item {
         nowMs = Date.now();
     }
     onTranscriptShownChanged: _trackWords(transcriptShown)
-    Timer { interval: 16; repeat: true; running: root.revealing; onTriggered: root.nowMs = Date.now() }
+    Timer { interval: 16; repeat: true; running: root.revealing || (root.highlighting && !root.reducedMotion); onTriggered: root.nowMs = Date.now() }
+    // Reduced motion: the marked words hold their tint, then turn plain at once.
+    Timer { interval: root.highlightMs; running: root.highlighting && root.reducedMotion; onTriggered: root.nowMs = Date.now() }
+    readonly property var markStop: washStops[1]
+    function _mark(p) {     // 0..1 progress -> accent fading into the text colour
+        const f = reducedMotion ? 0 : Math.pow(Math.max(0, (p - 0.35) / 0.65), 1.6);
+        const end = [fg.r * 255, fg.g * 255, fg.b * 255];
+        const c = (i) => (markStop[i] + (end[i] - markStop[i]) * f) / 255;
+        return Qt.rgba(c(0), c(1), c(2), 1).toString();
+    }
     function _wash(p) {     // 0..1 progress -> "#aarrggbb" for that moment of the reveal
         const a = 1 - Math.pow(1 - p, 2.4);                       // ease: quick start, soft landing
         const stops = washStops;
@@ -277,6 +348,11 @@ Item {
     }
     readonly property string transcriptMarkup: {
         const w = _words, b = _births, now = nowMs;
+        if (highlighting && _changed.length === w.length && w.join(" ") === transcriptShown) {
+            const color = _mark((now - _changedAt) / highlightMs);
+            return w.map((word, i) => _changed[i]
+                ? '<font color="' + color + '">' + _esc(word) + '</font>' : _esc(word)).join(" ");
+        }
         if (!revealing || w.length === 0 || w.join(" ") !== transcriptShown) return _esc(transcriptShown);
         let out = "", plain = "";
         for (let i = 0; i < w.length; i++) {
@@ -358,6 +434,10 @@ Item {
             lingering = false;
             liveText = "";
             shownText = "";
+            finalShown = false;
+            _changed = [];
+            changedCount = 0;
+            _changedAt = 0;
             localStart = Date.now();
             elapsed = 0;
             level = 0;
@@ -380,6 +460,10 @@ Item {
         wasCancelled = false;
         liveText = "";
         shownText = "";
+        finalShown = false;
+        _changed = [];
+        changedCount = 0;
+        _changedAt = 0;
         level = 0;
     }
 

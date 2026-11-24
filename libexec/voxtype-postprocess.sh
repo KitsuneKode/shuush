@@ -134,6 +134,14 @@ emit() {
     fi
     smart_join
   fi
+  # "<epoch ms>" then the text, for the pill to show the cleaned words and
+  # mark the ones that changed. Never for a private take.
+  if [ "$VIA" != private ] && [ "$MODE" != command ] && [ -n "${text//[[:space:]]/}" ]; then
+    (umask 077; printf '%s\n%s' "$(date +%s%3N)" "${text# }" > "$RT/pp_final.tmp" \
+      && mv -f "$RT/pp_final.tmp" "$RT/pp_final") 2>/dev/null
+  else
+    rm -f "$RT/pp_final"
+  fi
   # The target window's border goes back to its usual width as the text lands.
   "$SCRIPT_DIR/voxtype-outline.sh" off >/dev/null 2>&1 || true
   focus_target
