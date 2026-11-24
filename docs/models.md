@@ -9,14 +9,14 @@ Cleanup is one short request per dictation (about 2,000 tokens of instructions a
 | 1 | **Groq** `qwen/qwen3.8-27b` (free key) | Fastest and most literal in our tests: 687 ms median on real dictations, with paragraph breaks and the fewest restored words. |
 | 2 | **Groq** with a second key (`groq2`) | Groq's free tier limits input tokens per minute; several quick dictations in a row can hit it. |
 | 3 | **Cerebras** `qwen-3.8-27b` (free key) | The same model, very fast inference; a natural second provider. |
-| 4 | **OpenRouter** free models | Works, but free models are often busy; last resort. |
+| 4 | **OpenRouter** free models | Last resort: free models share an upstream pool that is often rate-limited, and some return nothing in time. |
 | offline | **Ollama** `qwen3:4b` | Private and free, weaker; shares GPU memory with speech recognition. |
 
 ```sh
 PP_ORDER="groq groq2 cerebras openrouter"
 ```
 
-Measured 2026-11-23 on 10 real dictations (GPT-OSS 120B and 20B on Groq were slower, 0.9–1.0 s, and broke sentences more often).
+Measured 2026-11-23 on 10 real dictations (GPT-OSS 120B and 20B on Groq were slower, 0.9–1.0 s, and broke sentences more often). In daily use since (300 dictations to 2026-11-24), Groq answered 284 at 427 ms median and 869 ms at the 90th percentile; 2 fell back to the words as heard. On 2026-11-24 no OpenRouter free model was usable: Gemma 4 31B and 26B and Ling 3.2 Flash were rate-limited upstream, and Nemotron 3.5 Lightning and ERNIE 5.5 Flash took 4–7 s and returned no text.
 
 Not usable from Shuush: **OpenCode Zen's free models** (they answer only inside the OpenCode app), and subscription quotas of coding tools (they are meant for those apps, and their models are tuned for agent work, not sub-second rewrites).
 
