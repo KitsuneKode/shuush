@@ -2087,22 +2087,23 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             self.corr_list.append(r)
 
     def _on_accept_sugg(self, _btn, h: str, m: str) -> None:
-        before = learn.load()
-        why = learn.remember(h, m, "user")
+        before, cands_before = learn.load(), learn.load_candidates()
+        hint = learn.is_hint_only(h, m)
+        why = learn.accept_pair(h, m)
         if why:
             self.show_toast(f"Refused: {why}")
             return
-        learn._add_vocab_if_distinctive(m)
-        learn.sync_replacements()
-        cands = learn.load_candidates()
-        for k in [k for k in cands if k.split("\t", 1)[0] == h]:
-            cands.pop(k, None)
-        learn.save_candidates(cands)
         self.reload_all()
-        self.show_toast(
-            f"Learned & synced: {h} → {m}",
-            undo_cb=lambda: (learn.save(before), learn.sync_replacements()),
-        )
+
+        def undo() -> None:
+            learn.save(before)
+            learn.save_candidates(cands_before)
+            if h not in before:
+                learn.remove_replacement(h)
+            self.reload_all()
+
+        self.show_toast(f"Learned as a hint: {h} → {m}" if hint else f"Learned & synced: {h} → {m}",
+                        undo_cb=undo)
 
     def _on_reject_sugg(self, _btn, h: str, m: str) -> None:
         key = learn.reject_pair(h, m)
@@ -2114,9 +2115,10 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         pairs = learn.load()
         if pairs.pop(h, None) is not None:
             learn.save(pairs)
+            learn.remove_replacement(h)
             self._render_corrections()
             self._refresh_kpis()
-            self.show_toast(f"Removed '{h}'", undo_cb=lambda: learn.save(before))
+            self.show_toast(f"Removed '{h}'", undo_cb=lambda: (learn.save(before), learn.sync_replacements()))
 
     # ── Tab 3: Vocabulary ────────────────────────────────────────────────
     def _build_vocab_page(self) -> Gtk.Widget:

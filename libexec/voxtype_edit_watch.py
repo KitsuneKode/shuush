@@ -114,6 +114,41 @@ def find_hunks(raw: str, clean: str, field: str) -> list[tuple[str, str]] | None
     return hunks
 
 
+def sentence_starts(s: str) -> list[bool]:
+    """Per word that tokens() keeps: whether it starts a sentence."""
+    out, after_end = [], True
+    for t in s.split():
+        k = re.sub(r"[^\w'.+#-]", "", t.strip(_STRIP).lower()).strip(".-'")
+        if k:
+            out.append(after_end)
+            after_end = t.rstrip("\"')]}*_`")[-1:] in ".!?"
+    return out
+
+
+def find_casing(clean: str, field: str) -> list[str]:
+    """Words whose spelling the user fixed only in case ("shuush" ->
+    "Shuush"): a name not yet in the vocabulary. Not at a sentence start,
+    where a capital says nothing."""
+    import voxtype_learn as learn
+
+    ck, cc = tokens(clean)
+    fk, fc = tokens(field)
+    if len(ck) < 3 or not fk:
+        return []
+    starts = sentence_starts(field)
+    common = learn._common_words()
+    vocab = learn._vocab_map()
+    out: list[str] = []
+    for a, b, size in difflib.SequenceMatcher(a=ck, b=fk, autojunk=False).get_matching_blocks():
+        for k in range(size):
+            said, fixed = cc[a + k], fc[b + k]
+            if (said != fixed and said.lower() == fixed.lower() and fixed[:1].isupper()
+                    and fixed.lower() not in common and fk[b + k] not in vocab
+                    and not (b + k < len(starts) and starts[b + k]) and fixed not in out):
+                out.append(fixed)
+    return out
+
+
 def im_field() -> dict | None:
     """The field text voxtype's input method sees, when it holds one."""
     try:
@@ -172,25 +207,43 @@ def _app_name(cls: str) -> str:
     return _APP_NAMES.get(cls) or (cls.rsplit(".", 1)[-1] if cls else "")
 
 
-def learn_from(hunks: list[tuple[str, str]], app: str = "") -> None:
+def _unasked_spellings(words: list[str]) -> list[str]:
+    """Spellings not offered before (tracked as candidates with no heard
+    side, which Studio's inbox skips)."""
+    import voxtype_learn as learn
+
+    cands = learn.load_candidates()
+    fresh = [w for w in words if f"\t{w}" not in cands]
+    if fresh:
+        for w in fresh:
+            cands[f"\t{w}"] = {"n": 1, "asked": True}
+        learn.save_candidates(cands)
+    return fresh
+
+
+def learn_from(hunks: list[tuple[str, str]], app: str = "", spellings: list[str] | None = None) -> None:
     import voxtype_learn as learn
 
     swaps = [f"{h} -> {m}" for h, m in hunks]
     # The meant side is visible in the field the user just edited: that is
     # the grounding is_safe_auto_candidate asks screen terms for.
     terms = " ".join(m for _, m in hunks)
-    promoted = learn.tally(swaps, screen_terms=terms)
-    log(f"saw {'; '.join(swaps)}" + (f"  learned {len(promoted)}" if promoted else ""))
+    promoted = learn.tally(swaps, screen_terms=terms) if swaps else []
+    hints = learn.note_hints(swaps) if swaps else []
+    if swaps or spellings:
+        log(f"saw {'; '.join(swaps + [f'spelling {w}' for w in spellings or []])}"
+            + (f"  learned {len(promoted)}" if promoted else "") + (f"  hints {len(hints)}" if hints else ""))
     # A fix seen once used to wait silently in Studio's inbox: ask now, once.
-    ask = learn.unasked(swaps, screen_terms=terms)
-    if not ask:
+    ask = learn.unasked(swaps, screen_terms=terms) if swaps else []
+    spell = _unasked_spellings(spellings or [])
+    if not ask and not spell:
         return
-    one = len(ask) == 1
-    shown = ask[:3]
-    pairs = "\n".join(f"{h} → {m}" for h, m in shown) + (f"\n+{len(ask) - 3} more" if len(ask) > 3 else "")
+    lines = [f"{h} → {m}" for h, m in ask] + [f"{w} (spelling)" for w in spell]
+    one = len(lines) == 1
+    pairs = "\n".join(lines[:3]) + (f"\n+{len(lines) - 3} more" if len(lines) > 3 else "")
     where = f"in {app}" if app else "after a dictation"
     choice = learn.notify(
-        "Learn this fix?" if one else f"Learn {len(ask)} fixes?",
+        "Learn this fix?" if one else f"Learn {len(lines)} fixes?",
         pairs,
         actions=[("learn", "Learn" if one else "Learn all"),
                  ("dismiss", "Not a mishearing" if one else "Not mishearings")],
@@ -199,9 +252,11 @@ def learn_from(hunks: list[tuple[str, str]], app: str = "") -> None:
                "x-kuwai-status": f"You fixed {'it' if one else 'them'} by hand {where}",
                "x-kuwai-glyph": "\U000f036c"})
     if choice == "learn":
+        for w in spell:
+            learn._add_vocab_if_distinctive(w)
         refused = [f"{h}: {why}" for h, m in ask if (why := learn.accept_pair(h, m))]
         log(f"learned from the prompt: {pairs.replace(chr(10), '; ')}" + (f"  refused {refused}" if refused else ""))
-        learn.notify("Learned" if one else f"Learned {len(ask) - len(refused)} fixes", pairs,
+        learn.notify("Learned" if one else f"Learned {len(lines) - len(refused)} fixes", pairs,
                      hints={"x-kuwai-calm": "1", "x-kuwai-group": "shuush-learn", "x-kuwai-tone": "positive"},
                      transient=True)
     elif choice == "dismiss":
@@ -225,6 +280,8 @@ def main() -> int:
 
     last: list[tuple[str, str]] = []
     stable: list[tuple[str, str]] = []    # same fix on two reads: not mid-edit
+    last_spell: list[str] = []
+    spellings: list[str] = []
     seen_once = False
     t0 = time.monotonic()
     for tick in TICKS:
@@ -239,14 +296,16 @@ def main() -> int:
         hunks = find_hunks(raw, clean, field.get("text", ""))
         if hunks is None:
             if seen_once:
-                stable = last  # sent or cleared: what was there last is final
+                # sent or cleared: what was there last is final
+                stable, spellings = last, last_spell
                 break
             continue
         seen_once = True
-        if hunks and hunks == last:
-            stable = hunks
+        spell = find_casing(clean, field.get("text", ""))
+        if (hunks or spell) and hunks == last and spell == last_spell:
+            stable, spellings = hunks, spell
             break
-        last = hunks
+        last, last_spell = hunks, spell
     # Before the prompt, which waits for a click: the next take's watcher
     # must not stop this one while it is asking.
     with _pid_lock():
@@ -255,8 +314,8 @@ def main() -> int:
                 PIDFILE.unlink()
         except OSError:
             pass
-    if stable:
-        learn_from(stable, _app_name(cls))
+    if stable or spellings:
+        learn_from(stable, _app_name(cls), spellings)
     return 0
 
 
@@ -278,6 +337,24 @@ if __name__ == "__main__":
             if got != want:
                 bad += 1
                 print(f"FAIL {field!r}: {got!r} != {want!r}")
+        casing = [
+            ("Also check the kwarzle pill today.", "Also check the Kwarzle pill today.", ["Kwarzle"]),
+            ("Also check the shuush pill today.", "Also check the shuush pill today.", []),
+            ("done. the plan is fine here.", "done. The plan is fine here.", []),   # sentence start
+            ("we ship the build today.", "we ship the Build today.", []),         # English word
+        ]
+        for clean, field, want in casing:
+            got = find_casing(clean, field)
+            if got != want:
+                bad += 1
+                print(f"FAIL casing {field!r}: {got!r} != {want!r}")
+        import voxtype_learn as learn
+        for heard, meant, want in [("grog", "Groq", "Groq"), ("get hub", "GitHub", "GitHub"),
+                                   ("the", "The", None), ("cargo", "Car", None)]:
+            got = learn.hint_candidate(heard, meant)
+            if got != want:
+                bad += 1
+                print(f"FAIL hint {heard!r} -> {meant!r}: {got!r} != {want!r}")
         print("edit-watch selftest ok" if not bad else f"{bad} failed")
         sys.exit(1 if bad else 0)
     sys.exit(main())

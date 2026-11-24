@@ -215,6 +215,22 @@ def _add_vocab_if_distinctive(term: str) -> bool:
     return True
 
 
+def hint_candidate(heard: str, meant: str) -> str | None:
+    """A hand fix from an English word to a name (grog -> Groq, get hub ->
+    GitHub) that is_safe_auto_candidate refuses because the heard words are
+    English. Worth asking about, and once accepted it is a hint for the
+    cleanup model only (source "hint"): "grog" is never rewritten blindly."""
+    h, m = norm(heard), meant.strip()
+    if not h or not m or h in AMBIGUOUS or is_rejected(h, m) or not is_mishearing(h, m):
+        return None
+    toks = words(h)
+    if len(toks) > 3 or toks[0] in STOPWORDS or toks[-1] in STOPWORDS:
+        return None
+    if not any(c.isupper() for c in m) or m.lower() in _common_words():
+        return None
+    return m if sounds_alike(h, m) else None
+
+
 def is_safe_auto_candidate(heard: str, meant: str, screen_terms: str = "") -> str | None:
     """Return canonical meant form if (heard -> meant) is safe to track/auto-learn.
 
@@ -378,9 +394,57 @@ def save_candidates(cands: dict) -> None:
     tmp.replace(CANDIDATES)
 
 
+def is_hint_only(heard: str, meant: str) -> bool:
+    v = load_candidates().get(f"{norm(heard)}\t{meant}")
+    return isinstance(v, dict) and bool(v.get("hint"))
+
+
+def note_hints(swaps: list[str]) -> list[tuple[str, str]]:
+    """Track hand fixes from English words to names (hint_candidate) as
+    candidates flagged hint. Never learned without the user saying so."""
+    existing = load()
+    cands = load_candidates()
+    noted = []
+    for swap in swaps:
+        raw_h, _, raw_m = swap.partition(" -> ")
+        h = norm(raw_h)
+        if not raw_m or h in existing or is_safe_auto_candidate(raw_h, raw_m):
+            continue
+        m = hint_candidate(raw_h, raw_m)
+        if not m:
+            continue
+        key = f"{h}\t{m}"
+        n, asked = _cand_view(cands.get(key))
+        cands[key] = {"n": n + 1, "asked": asked, "hint": True}
+        noted.append((h, m))
+    if noted:
+        save_candidates(cands)
+    return noted
+
+
+def remove_replacement(heard: str) -> bool:
+    """Take `heard` out of config.toml's [text] replacements (an undo of
+    sync_replacements, which only ever adds)."""
+    if not CONFIG_TOML.exists():
+        return False
+    text = CONFIG_TOML.read_text(encoding="utf-8", errors="replace")
+    key = re.escape(norm(heard).replace("\\", "\\\\").replace('"', '\\"'))
+    entry = r'"' + key + r'"\s*=\s*"(?:[^"\\]|\\.)*"'
+    # Inline table: the entry and one comma next to it.
+    updated = re.sub(r",[ \t]*" + entry + r"|" + entry + r"[ \t]*,?[ \t]*\n?", "", text, count=1, flags=re.I)
+    if updated == text:
+        return False
+    tmp = CONFIG_TOML.with_suffix(".tmp")
+    tmp.write_text(updated, encoding="utf-8")
+    tmp.replace(CONFIG_TOML)
+    return True
+
+
 def accept_pair(heard: str, meant: str) -> str | None:
-    """Learn (heard -> meant) as the user's own fix; why not, if refused."""
-    why = remember(heard, meant, "user")
+    """Learn (heard -> meant) as the user's own fix; why not, if refused.
+    A fix from an English word (is_hint_only) is kept as a hint only."""
+    hint = is_hint_only(heard, meant)
+    why = remember(heard, meant, "hint" if hint else "user")
     if why:
         return why
     _add_vocab_if_distinctive(meant)
@@ -399,12 +463,13 @@ def unasked(swaps: list[str], screen_terms: str = "") -> list[tuple[str, str]]:
     fresh = []
     for swap in swaps:
         raw_h, _, raw_m = swap.partition(" -> ")
-        canonical = is_safe_auto_candidate(raw_h, raw_m, screen_terms) if raw_m else None
+        canonical = raw_m and (is_safe_auto_candidate(raw_h, raw_m, screen_terms)
+                               or hint_candidate(raw_h, raw_m))
         key = f"{norm(raw_h)}\t{canonical}"
         if canonical and key in cands:
             n, asked = _cand_view(cands[key])
             if not asked:
-                cands[key] = {"n": n, "asked": True}
+                cands[key] = {**cands[key], "n": n, "asked": True} if isinstance(cands[key], dict) else {"n": n, "asked": True}
                 fresh.append((norm(raw_h), canonical))
     if fresh:
         save_candidates(cands)
@@ -469,8 +534,8 @@ def sync_replacements() -> int:
     text = CONFIG_TOML.read_text(encoding="utf-8", errors="replace")
     common = _common_words()
     learned: dict[str, str] = {}
-    for h, (meant, _src, _n) in sorted(load().items()):
-        if h in AMBIGUOUS or not h or not meant:
+    for h, (meant, src, _n) in sorted(load().items()):
+        if h in AMBIGUOUS or not h or not meant or src == "hint":
             continue
         toks = words(h)
         if len(toks) == 1 and toks[0] in common:
@@ -703,14 +768,12 @@ def main(argv: list[str]) -> int:
             print("not found", file=sys.stderr)
             return 1
         heard, _, meant = hit[0].partition("\t")
-        why = remember(heard, meant, "auto")
+        hint = is_hint_only(heard, meant)
+        why = accept_pair(heard, meant)
         if why:
             print(f"refused: {why}", file=sys.stderr)
             return 1
-        for k in hit:
-            del cands[k]
-        save_candidates(cands)
-        print(f"learned: {heard} -> {meant}")
+        print(f"learned{' as a hint' if hint else ''}: {heard} -> {meant}")
     elif cmd == "reject" and len(argv) == 3:
         want = norm(argv[2])
         cands = load_candidates()

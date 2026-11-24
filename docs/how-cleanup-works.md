@@ -36,7 +36,9 @@ No key, no network, a provider down, or the time budget used up: your words are 
 ## Learning
 
 - **Studio:** fix a word in a take's inspector and press `Ctrl+Enter` ("Learn & Copy"), or approve suggestions in the **Learning Inbox**.
-- **From your own fixes:** for a few minutes after a take, a name you correct by hand in that text field is noted (`PP_WATCH_EDITS`). The first time it goes to the Learning Inbox; the second time it is learned.
+- **From your own fixes:** for a few minutes after a take, a name you correct by hand in that text field is noticed (`PP_WATCH_EDITS`), and you are asked once: "Learn this fix?" (in Kuwai's notch, with Learn and Not a mishearing). Several fixes in one take make one prompt. Ignored, it waits in the Learning Inbox, and making the same fix again learns it.
+- **Ordinary words that were names:** a fix from an English word to a name ("grog" → Groq) is only learned when you say so, and only as a hint for the model, so "grog" is never rewritten where you meant it.
+- **Spelling:** capitalising a name by hand ("shuush" → Shuush) offers to add it to your vocabulary.
 - **Automatically:** a repair the model makes twice is learned (`PP_AUTO_LEARN`).
 
 Learning only accepts sound-alike fixes toward a distinctive spelling (a name, a tool, code): ordinary English words are never learned as "mishearings", and anything you reject stays rejected.

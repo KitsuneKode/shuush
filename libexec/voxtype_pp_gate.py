@@ -166,7 +166,10 @@ def norm_phrase(s: str) -> str:
     return " ".join(re.sub(r"[^\w'+#]", " ", s.lower()).split())
 
 
-def load_pairs() -> list[tuple[str, str]]:
+def load_pairs(rewrite: bool = False) -> list[tuple[str, str]]:
+    """(heard, meant) from corrections.tsv. `rewrite`: only pairs that may be
+    rewritten blindly; a "hint" pair (an English heard word) is left to the
+    model."""
     pairs = []
     if not TSV.exists():
         return pairs
@@ -175,6 +178,8 @@ def load_pairs() -> list[tuple[str, str]]:
             continue
         f = line.split("\t")
         if len(f) >= 2 and f[0].strip():
+            if rewrite and len(f) >= 3 and f[2].strip() == "hint":
+                continue
             pairs.append((norm_phrase(f[0]), f[1].strip()))
     return pairs
 
@@ -217,7 +222,7 @@ def hard_apply(text: str, pairs: list[tuple[str, str]] | None = None) -> str:
     always "kaitai", and the span gate only keeps the change when the model
     makes it.
     """
-    rows = list(load_pairs() if pairs is None else pairs)
+    rows = list(load_pairs(rewrite=True) if pairs is None else pairs)
     rows.sort(key=lambda hm: (-len(hm[0].split()), -len(hm[0])))
     low = text.lower()
     for heard, meant in rows:
