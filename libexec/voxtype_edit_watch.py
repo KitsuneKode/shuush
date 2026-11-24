@@ -140,13 +140,19 @@ def log(msg: str) -> None:
         pass
 
 
-def _claim() -> None:
-    """One watcher at a time: the newest dictation replaces an older watch."""
+def _pid_lock():
+    """The pid file is read and written under this lock, or two watchers
+    starting or ending together each miss the other."""
     import fcntl
 
-    # Locked, or two watchers started together each miss the other.
-    with open(PIDFILE.with_suffix(".lock"), "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    lock = open(PIDFILE.with_suffix(".lock"), "a")
+    fcntl.flock(lock, fcntl.LOCK_EX)
+    return lock
+
+
+def _claim() -> None:
+    """One watcher at a time: the newest dictation replaces an older watch."""
+    with _pid_lock():
         try:
             old = int(PIDFILE.read_text().strip())
             cmd = Path(f"/proc/{old}/cmdline").read_bytes()
@@ -205,11 +211,12 @@ def main() -> int:
         last = hunks
     if stable:
         learn_from(stable)
-    try:
-        if PIDFILE.read_text().strip() == str(os.getpid()):
-            PIDFILE.unlink()
-    except OSError:
-        pass
+    with _pid_lock():
+        try:
+            if PIDFILE.read_text().strip() == str(os.getpid()):
+                PIDFILE.unlink()
+        except OSError:
+            pass
     return 0
 
 

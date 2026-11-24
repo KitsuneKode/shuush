@@ -13,11 +13,14 @@ mkdir -p "$RT" 2>/dev/null || true
 chmod 700 "$RT" 2>/dev/null || true
 PP_LOG="$RT/pp.log"
 # A run killed on timeout skips its EXIT trap: clear what such runs left, and
-# keep the log (in RAM) from growing without bound.
-find "$RT" -maxdepth 1 -name 'pp-stream.*' -mmin +10 -exec rm -rf {} + 2>/dev/null
-if [ "$(stat -c %s "$PP_LOG" 2>/dev/null || echo 0)" -gt 262144 ]; then
-  tail -n 500 "$PP_LOG" > "$PP_LOG.tmp" 2>/dev/null && mv -f "$PP_LOG.tmp" "$PP_LOG"
-fi
+# keep the log (in RAM) from growing without bound. In the background, off
+# the dictation's path; stdout closed so voxtype is not left waiting on it.
+(
+  find "$RT" -maxdepth 1 -name 'pp-stream.*' -mmin +10 -exec rm -rf {} +
+  if [ "$(stat -c %s "$PP_LOG" 2>/dev/null || echo 0)" -gt 262144 ]; then
+    tail -c 65536 "$PP_LOG" > "$PP_LOG.tmp" && mv -f "$PP_LOG.tmp" "$PP_LOG"
+  fi
+) </dev/null >/dev/null 2>&1 &
 VIA="passthrough"   # which path produced the output: local | groq | skip | short | snippet | private | passthrough
 LLM_MS=0
 printf '%s  invoked  mode=%s  in=%dB\n' "$(date +%T)" "$MODE" "${#raw}" >> "$PP_LOG"
@@ -273,16 +276,16 @@ if [ "${PP_APP_CONTEXT:-1}" = 1 ] && [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
 fi
 
 # Single Python call runs private check, strip, snippet, hard_apply, app/screen/draft/sel/clip redaction, terms, and hints
-PREP_JSON=$(jq -nc \
-  --arg raw "$raw" --arg mode "$MODE" --arg cls "$cls" --arg title "$title" \
-  --arg screen_raw "$SCREEN_RAW" --arg draft_raw "$DRAFT_RAW" \
-  --arg sel_raw "$SEL_RAW" --arg clip_raw "$CLIP_RAW" \
+# The text goes through the environment, never argv (readable in /proc).
+PREP_JSON=$(PPX_RAW="$raw" PPX_TITLE="$title" PPX_SCREEN="$SCREEN_RAW" PPX_DRAFT="$DRAFT_RAW" \
+  PPX_SEL="$SEL_RAW" PPX_CLIP="$CLIP_RAW" jq -nc \
+  --arg mode "$MODE" --arg cls "$cls" \
   --argjson app_ctx "$([ "${PP_APP_CONTEXT:-1}" = 1 ] && echo true || echo false)" \
   --argjson screen_ctx "$([ "${PP_SCREEN_CONTEXT:-1}" = 1 ] && echo true || echo false)" \
   --argjson private_guard "$([ "${PP_PRIVATE_GUARD:-1}" = 1 ] && echo true || echo false)" \
   --argjson atspi_password "$([ "$AT_SPI_PASSWORD" = 1 ] && echo true || echo false)" \
-  '{raw:$raw, mode:$mode, cls:$cls, title:$title, screen_raw:$screen_raw, draft_raw:$draft_raw,
-    sel_raw:$sel_raw, clip_raw:$clip_raw, app_ctx:$app_ctx, screen_ctx:$screen_ctx,
+  '{raw:$ENV.PPX_RAW, mode:$mode, cls:$cls, title:$ENV.PPX_TITLE, screen_raw:$ENV.PPX_SCREEN,
+    draft_raw:$ENV.PPX_DRAFT, sel_raw:$ENV.PPX_SEL, clip_raw:$ENV.PPX_CLIP, app_ctx:$app_ctx, screen_ctx:$screen_ctx,
     private_guard:$private_guard, atspi_password:$atspi_password}' \
   | python3 -I "$GATE" prepare 2>/dev/null || true)
 
@@ -770,7 +773,7 @@ for provider in $PP_ORDER; do
         continue
     fi
     if [ "$STREAMED" != 1 ] && [ -n "$out" ]; then
-        if gated=$(printf '%s' "$out" | python3 -I "$GATE" constrain-check "$raw" 2>>"$PP_LOG"); then
+        if gated=$(printf '%s' "$out" | PP_HEARD="$raw" python3 -I "$GATE" constrain-check - 2>>"$PP_LOG"); then
             if [ -n "$gated" ]; then
                 [ "$gated" != "$out" ] && printf '%s  gate  restored heard words\n' "$(date +%T)" >> "$PP_LOG"
                 out=$gated

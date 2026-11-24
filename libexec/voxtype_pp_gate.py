@@ -1270,8 +1270,10 @@ def main(argv: list[str]) -> int:
     elif cmd == "constrain" and len(argv) == 3:
         sys.stdout.write(constrain(argv[2], _read_stdin()))
     elif cmd == "constrain-check" and len(argv) == 3:
-        out = constrain(argv[2], _read_stdin())
-        if not output_invariants_ok(argv[2], out):
+        # "-": the transcript is in PP_HEARD, kept off the command line.
+        heard = os.environ.get("PP_HEARD", "") if argv[2] == "-" else argv[2]
+        out = constrain(heard, _read_stdin())
+        if not output_invariants_ok(heard, out):
             return 1
         sys.stdout.write(out)
     elif cmd == "check" and len(argv) == 3:
