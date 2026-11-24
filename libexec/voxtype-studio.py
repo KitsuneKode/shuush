@@ -1096,9 +1096,18 @@ def build_ai_audit_prompt(entries: list[dict], ins: dict, suggs: list[tuple[str,
 
 # ── Main Window ──────────────────────────────────────────────────────────────
 
+HISTORY_FIRST_ROWS = 150
+HISTORY_BATCH_ROWS = 250
+
+
 class VoxtypeStudioWindow(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application, initial_tab: str = "history") -> None:
         super().__init__(application=app, title="Voxtype Studio")
+        # No GTK frame: its shadow and resize margins made the first frame
+        # floating-style (23px offset) and the next one tiled once Hyprland
+        # sent its tiled states, a visible jump on every open. The header bar
+        # is our own; the compositor draws border, corners and shadow.
+        self.set_decorated(False)
         self.set_default_size(1140, 720)
         self.set_size_request(760, 520)
         self.history: list[dict] = []
@@ -1288,12 +1297,14 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             self.tab_stack.set_transition_duration(dur)
             self.tab_buttons[key].set_active(True)
             self.tab_stack.set_visible_child_name(key)
+            self._render_shown_tab()
 
     def _on_tab_toggled(self, btn: Gtk.ToggleButton, key: str) -> None:
         if btn.get_active():
             if not self._reduced_motion and self.tab_stack.get_visible_child_name() != key:
                 self.tab_stack.set_transition_duration(110)
             self.tab_stack.set_visible_child_name(key)
+            self._render_shown_tab()
 
     def _set_drawer_open(self, open_: bool) -> None:
         if not self._reduced_motion:
@@ -1662,6 +1673,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         """Rebuild the history list; `live` (a new take landed) only adds the
         new rows at the top, so selection, scroll and the rows on screen stay
         put. Rebuilding ~2000 rows per take blanked the list and jumped it."""
+        self._finish_history_rows()
         visible = self._history_visible()
         shown = getattr(self, "_hist_shown", None)
         adj = self._history_scroll()
@@ -1691,11 +1703,16 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         scroll = adj.get_value() if adj is not None else 0
         while (row := self.hist_list.get_first_child()) is not None:
             self.hist_list.remove(row)
-        for d in visible:
+        # What fits on screen and a bit more now; the rest below the fold
+        # after the window is up (2000 rows took ~0.2 s before the first frame).
+        self._hist_pending = (visible[HISTORY_FIRST_ROWS:], sel_key)
+        for d in visible[:HISTORY_FIRST_ROWS]:
             row = self._history_row(d)
             self.hist_list.append(row)
             if sel_key is not None and self._entry_key(d) == sel_key:
-                self.hist_list.select_row(row)
+                self._select_quietly(row)
+        if self._hist_pending[0]:
+            GLib.idle_add(self._append_history_batch)
         if adj is not None and scroll:
             GLib.idle_add(lambda: (adj.set_value(min(scroll, adj.get_upper() - adj.get_page_size())), False)[1])
         self._hist_shown = visible
@@ -1714,6 +1731,29 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             el.set_margin_end(14)
             er.set_child(el)
             self.hist_list.append(er)
+
+    def _append_history_batch(self) -> bool:
+        rest, sel_key = getattr(self, "_hist_pending", ([], None))
+        batch, rest = rest[:HISTORY_BATCH_ROWS], rest[HISTORY_BATCH_ROWS:]
+        for d in batch:
+            row = self._history_row(d)
+            self.hist_list.append(row)
+            if sel_key is not None and self._entry_key(d) == sel_key:
+                self._select_quietly(row)
+        self._hist_pending = (rest, sel_key)
+        return bool(rest)
+
+    def _select_quietly(self, row: Gtk.ListBoxRow) -> None:
+        self._restoring_selection = True
+        try:
+            self.hist_list.select_row(row)
+        finally:
+            self._restoring_selection = False
+
+    def _finish_history_rows(self) -> None:
+        """Append any rows still waiting, before the list is changed again."""
+        while getattr(self, "_hist_pending", ([], None))[0]:
+            self._append_history_batch()
 
     def _history_row(self, d: dict) -> Gtk.ListBoxRow:
         row = Gtk.ListBoxRow()
@@ -1818,7 +1858,9 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
 
         is_latest = bool(self.history) and d is self.history[0]
         self.replay_btn.set_visible(is_latest and (RT / "last_take.wav").exists())
-        self._set_drawer_open(True)
+        # A refresh re-selecting the row you had is not you opening it.
+        if not getattr(self, "_restoring_selection", False):
+            self._set_drawer_open(True)
 
     def _on_replay_audio(self, _btn) -> None:
         wav = RT / "last_take.wav"
@@ -3057,12 +3099,24 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
     def reload_all(self, live: bool = False) -> None:
         self.history = load_history()
         self._render_history_list(live=live)
-        self._render_insights()
-        self._render_corrections()
-        self._render_vocab()
-        self._render_snippets()
-        self._refresh_settings_card()
         self._refresh_kpis()
+        # The other tabs render when shown: opening Studio waited on all six.
+        self._stale_tabs = {"insights", "corrections", "vocab", "snippets", "settings"}
+        self._render_shown_tab()
+
+    def _render_shown_tab(self) -> None:
+        key = self.tab_stack.get_visible_child_name() if hasattr(self, "tab_stack") else None
+        stale = getattr(self, "_stale_tabs", set())
+        if key not in stale:
+            return
+        stale.discard(key)
+        {
+            "insights": self._render_insights,
+            "corrections": self._render_corrections,
+            "vocab": self._render_vocab,
+            "snippets": self._render_snippets,
+            "settings": self._refresh_settings_card,
+        }[key]()
 
 
 class VoxtypeStudioApp(Adw.Application):
