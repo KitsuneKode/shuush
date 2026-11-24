@@ -6,7 +6,7 @@ environment. Appends the history line, with two extra fields:
   swaps   words the cleanup replaced, as "heard -> written" (deletions such as
           fillers and self-corrections are not swaps)
   review  why a human should check this one, or "" when it can be trusted
-and sends a desktop notification when review is set. The Waybar widget turns
+and notifies only when cleanup fails (at most once per half hour). The Waybar widget turns
 amber and lists the reason and swaps until the next dictation.
 
 Flagged when:
@@ -19,6 +19,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 
 e = os.environ
@@ -88,23 +89,26 @@ if (voxtype_learn and e.get("RV_MODE") != "command" and via != "snippet" and len
     except OSError:
         pass
 
-if review:
-    body = "\n".join(swaps[:6]) if swaps else clean[:120]
-    nbin = next(
-        (str(p) for p in (
-            Path(e.get("KUWAI_ROOT", "")) / "bin/kuwai-notify",
-            Path.home() / ".local/share/kuwai/bin/kuwai-notify",
-            Path.home() / "Projects/rice/bin/kuwai-notify",
-        ) if p.is_file() and os.access(p, os.X_OK)),
-        "notify-send",
-    )
+# Repairs are marked in the pill and kept in history (Studio, the bar widget);
+# a notification for them only repeated it. A failed cleanup is shown in the
+# pill too: the notification is for an outage, once per half hour.
+if via == "passthrough" and review and voxtype_learn:
+    mark = Path(e.get("XDG_RUNTIME_DIR", "/tmp")) / "voxtype/pp_fail_notified"
     try:
-        subprocess.Popen(
-            # You're looking at the text it just typed: repairs go in the list
-            # quietly (low: no toast, no notch); a failed cleanup still says so.
-            [nbin, "-a", "Shuush", "-u", "normal" if via == "passthrough" else "low",
-             "-i", "audio-input-microphone", f"Check this dictation: {review}", body],
-            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            start_new_session=True)
+        recent = (time.time() - mark.stat().st_mtime) < 1800
     except OSError:
-        pass
+        recent = False
+    if not recent:
+        try:
+            mark.parent.mkdir(parents=True, exist_ok=True)
+            mark.touch()
+            subprocess.Popen(
+                [sys.executable, "-I", "-c",
+                 "import sys; sys.path.insert(0, sys.argv[1]); import voxtype_learn as l; "
+                 "l.notify('Cleanup is not answering', 'Dictations are typed as heard until it is back. '"
+                 "'Check the API keys or the network.', hints={'x-kuwai-group': 'shuush-outage'})",
+                 str(Path(__file__).resolve().parent)],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                start_new_session=True)
+        except OSError:
+            pass
