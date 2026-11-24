@@ -219,12 +219,17 @@ def hard_apply(text: str, pairs: list[tuple[str, str]] | None = None) -> str:
     """
     rows = list(load_pairs() if pairs is None else pairs)
     rows.sort(key=lambda hm: (-len(hm[0].split()), -len(hm[0])))
+    low = text.lower()
     for heard, meant in rows:
         if heard in AMBIGUOUS or not heard or not meant:
+            continue
+        # Compiling a pattern costs ~0.4 ms; most pairs are not in the text.
+        if not all(w.lower() in low for w in heard.split()):
             continue
         parts = [re.escape(w) for w in heard.split()]
         pat = re.compile(r"(?<![A-Za-z0-9])" + r"\s+".join(parts) + r"(?![A-Za-z0-9])", re.I)
         text = pat.sub(lambda _m, meant=meant: meant, text)
+        low = text.lower()
     return text
 
 
@@ -1040,9 +1045,12 @@ def _common_words() -> set[str]:
 
 def finish(text: str, terms: list[str] | None = None) -> str:
     terms = vocab_terms() if terms is None else terms
+    # A term can only match where its letters run in order once spaces and
+    # hyphens are gone; skip the rest before compiling a pattern for each.
+    squashed = re.sub(r"[\s-]", "", text).lower()
     for term in sorted(terms, key=len, reverse=True):
         letters = re.sub(r"[^0-9A-Za-z]", "", term)
-        if not letters:
+        if not letters or letters.lower() not in squashed:
             continue
         # The term's letters, with an optional space or hyphen between any two.
         body = r"[\s-]?".join(re.escape(c) for c in letters)
@@ -1269,6 +1277,14 @@ def main(argv: list[str]) -> int:
         sys.stdout.write(hint_line(_read_stdin()))
     elif cmd == "constrain" and len(argv) == 3:
         sys.stdout.write(constrain(argv[2], _read_stdin()))
+    elif cmd == "constrain-finish" and len(argv) == 3:
+        # constrain-check, then finish, in one process: the model's answer
+        # passed or not, and when it passed it is typed after finish anyway.
+        heard = os.environ.get("PP_HEARD", "") if argv[2] == "-" else argv[2]
+        out = constrain(heard, _read_stdin())
+        if not output_invariants_ok(heard, out):
+            return 1
+        sys.stdout.write(finish(out))
     elif cmd == "constrain-check" and len(argv) == 3:
         # "-": the transcript is in PP_HEARD, kept off the command line.
         heard = os.environ.get("PP_HEARD", "") if argv[2] == "-" else argv[2]

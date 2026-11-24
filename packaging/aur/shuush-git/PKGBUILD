@@ -58,6 +58,10 @@ EOF
     esac
   done
 
+  # The gate runs on every dictation: ship its bytecode (/usr/lib is not
+  # writable at run time, so Python could not cache it there).
+  python -m compileall -q -d /usr/lib/shuush/libexec "$pkgdir/usr/lib/shuush/libexec"
+
   install -Dm644 osd/kitsune-hud/KitsuneHud.qml "$pkgdir/usr/share/shuush/osd/kitsune-hud/KitsuneHud.qml"
   install -Dm644 osd/kitsune-hud/voxtype-osd.toml "$pkgdir/usr/share/shuush/osd/kitsune-hud/voxtype-osd.toml"
   install -Dm644 config/postprocess.env.example "$pkgdir/usr/share/shuush/config/postprocess.env.example"

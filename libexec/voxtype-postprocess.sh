@@ -23,6 +23,7 @@ PP_LOG="$RT/pp.log"
 ) </dev/null >/dev/null 2>&1 &
 VIA="passthrough"   # which path produced the output: local | groq | skip | short | snippet | private | passthrough
 LLM_MS=0
+FINISHED=0   # the gate already ran finish on the text being typed
 printf '%s  invoked  mode=%s  in=%dB\n' "$(date +%T)" "$MODE" "${#raw}" >> "$PP_LOG"
 RAW_ORIG="$raw"
 # Streaming (voxtype reads our stdout as it arrives and types each piece:
@@ -128,9 +129,9 @@ emit() {
     text="${text#"${text%%[![:space:]]*}"}"; text="${text%"${text##*[![:space:]]}"}"
     # (A snippet, a private take and an edit are typed exactly as they are.)
     if [ "$VIA" = passthrough ] && [ "$MODE" != command ]; then
-      text=$(printf '%s' "$text" | python3 -I "$SCRIPT_DIR/voxtype_pp_gate.py" fallback 2>/dev/null || printf '%s' "$text")
-    elif [ "$VIA" != snippet ] && [ "$VIA" != private ] && [ "$MODE" != command ]; then
-      text=$(printf '%s' "$text" | python3 -I "$SCRIPT_DIR/voxtype_pp_gate.py" finish 2>/dev/null || printf '%s' "$text")
+      text=$(printf '%s' "$text" | python3 -I "$GATE" fallback 2>/dev/null || printf '%s' "$text")
+    elif [ "$VIA" != snippet ] && [ "$VIA" != private ] && [ "$MODE" != command ] && [ "$FINISHED" != 1 ]; then
+      text=$(printf '%s' "$text" | python3 -I "$GATE" finish 2>/dev/null || printf '%s' "$text")
     fi
     smart_join
   fi
@@ -183,7 +184,7 @@ emit() {
   exit 0
 }
 [ -z "${raw//[[:space:]]/}" ] && emit "$raw"
-GATE="$SCRIPT_DIR/voxtype_pp_gate.py"
+GATE="$SCRIPT_DIR/voxtype_pp_gate_run.py"
 
 # ── Where this take goes, read once ─────────────────────────────────────
 # Captured at record start by voxtype-toggle.sh (the toggle, F9 and command
@@ -781,10 +782,11 @@ for provider in $PP_ORDER; do
         continue
     fi
     if [ "$STREAMED" != 1 ] && [ -n "$out" ]; then
-        if gated=$(printf '%s' "$out" | PP_HEARD="$raw" python3 -I "$GATE" constrain-check - 2>>"$PP_LOG"); then
+        if gated=$(printf '%s' "$out" | PP_HEARD="$raw" python3 -I "$GATE" constrain-finish - 2>>"$PP_LOG"); then
             if [ -n "$gated" ]; then
-                [ "$gated" != "$out" ] && printf '%s  gate  restored heard words\n' "$(date +%T)" >> "$PP_LOG"
+                [ "$gated" != "$out" ] && printf '%s  gate  restored heard words or spelling\n' "$(date +%T)" >> "$PP_LOG"
                 out=$gated
+                FINISHED=1
             fi
         else
             printf '%s  %s  rejected(invariants)  llm=%dms\n' "$(date +%T)" "$provider" "$LLM_MS" >> "$PP_LOG"
