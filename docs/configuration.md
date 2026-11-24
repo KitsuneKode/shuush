@@ -37,7 +37,7 @@ See [models.md](models.md) for which provider to pick.
 | Setting | Default | What it does |
 |---|---|---|
 | `PP_AUTO_LEARN` | `1` | A mishearing seen twice is learned automatically (with guards against ordinary English words). Seen once, it waits in Studio's **Learning Inbox**. |
-| `PP_WATCH_EDITS` | `1` | For a few minutes after a take, a name you fix by hand in that field counts as a mishearing. Reads the field through AT-SPI, or through voxtype's input method when you run the [companion fork](voxtype-fork.md) (that also covers Electron apps). |
+| `PP_WATCH_EDITS` | `1` | For a few minutes after a take, a name you fix by hand in that field counts as a mishearing. Reads the field through AT-SPI, or through voxtype's input method when you run the [companion fork](voxtype-fork.md) with `preedit = true` (that also covers Electron apps). |
 
 ## Typing
 
