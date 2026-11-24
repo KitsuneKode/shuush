@@ -372,6 +372,39 @@ def save_candidates(cands: dict) -> None:
     CANDIDATES.write_text(json.dumps(cands, ensure_ascii=False, indent=2) + "\n")
 
 
+def accept_pair(heard: str, meant: str) -> str | None:
+    """Learn (heard -> meant) as the user's own fix; why not, if refused."""
+    why = remember(heard, meant, "user")
+    if why:
+        return why
+    _add_vocab_if_distinctive(meant)
+    sync_replacements()
+    cands = load_candidates()
+    for k in [k for k in cands if norm(k.split("\t", 1)[0]) == norm(heard)]:
+        cands.pop(k, None)
+    save_candidates(cands)
+    return None
+
+
+def unasked(swaps: list[str], screen_terms: str = "") -> list[tuple[str, str]]:
+    """Pending candidates among `swaps` the user has not been asked about;
+    marks them asked, so each is offered once."""
+    cands = load_candidates()
+    fresh = []
+    for swap in swaps:
+        raw_h, _, raw_m = swap.partition(" -> ")
+        canonical = is_safe_auto_candidate(raw_h, raw_m, screen_terms) if raw_m else None
+        key = f"{norm(raw_h)}\t{canonical}"
+        if canonical and key in cands:
+            n, asked = _cand_view(cands[key])
+            if not asked:
+                cands[key] = {"n": n, "asked": True}
+                fresh.append((norm(raw_h), canonical))
+    if fresh:
+        save_candidates(cands)
+    return fresh
+
+
 def tally(swaps: list[str], screen_terms: str = "") -> list[tuple[str, str]]:
     """Track only grounded, non-English mishearing swaps in learn-candidates.json.
 
@@ -566,21 +599,55 @@ def fix() -> list[tuple[str, str]]:
     return learned
 
 
-def notify(title: str, body: str) -> None:
-    nbin = next(
+def notify(title: str, body: str, actions: list[tuple[str, str]] | None = None,
+           wait_s: float = 0) -> str:
+    """Show a notification. With `actions` (key, label) and `wait_s`, wait
+    that long for a click and return its key ("" when closed or timed out)."""
+    kuwai = next(
         (str(p) for p in (
             Path(os.environ.get("KUWAI_ROOT", "")) / "bin/kuwai-notify",
             Path.home() / ".local/share/kuwai/bin/kuwai-notify",
             Path.home() / "Projects/rice/bin/kuwai-notify",
         ) if p.is_file() and os.access(p, os.X_OK)),
-        "notify-send",
+        None,
     )
+    if kuwai:
+        cmd = [kuwai, "-a", "Dictation", "-i", "audio-input-microphone"]
+        for key, label in actions or []:
+            cmd += ["-A", f"{key}={label}"]
+        waiting = bool(actions and wait_s)
+        if waiting:
+            cmd.append("-w")
+        cmd += [title, body]
+        try:
+            # Its own session: a wait that times out takes its D-Bus monitor
+            # with it instead of leaving it running.
+            proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True, start_new_session=True)
+        except OSError:
+            return ""
+        try:
+            out, _ = proc.communicate(timeout=wait_s if waiting else 5)
+            return out.strip() if waiting else ""
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, 15)
+            except OSError:
+                pass
+            proc.wait()
+            return ""
+    # Without Kuwai: straight over D-Bus (notify-send can break on a libnotify
+    # mismatch), without buttons.
     try:
-        subprocess.run([nbin, "-a", "Dictation", "-t", "5000",
-                        "-i", "audio-input-microphone", title, body],
-                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except OSError:
+        subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
+                        "--object-path", "/org/freedesktop/Notifications",
+                        "--method", "org.freedesktop.Notifications.Notify",
+                        "Dictation", "0", "audio-input-microphone", title, body, "[]", "{}", "5000"],
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                       timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
         pass
+    return ""
 
 
 def main(argv: list[str]) -> int:

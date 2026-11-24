@@ -169,8 +169,25 @@ def learn_from(hunks: list[tuple[str, str]]) -> None:
     swaps = [f"{h} -> {m}" for h, m in hunks]
     # The meant side is visible in the field the user just edited: that is
     # the grounding is_safe_auto_candidate asks screen terms for.
-    promoted = learn.tally(swaps, screen_terms=" ".join(m for _, m in hunks))
+    terms = " ".join(m for _, m in hunks)
+    promoted = learn.tally(swaps, screen_terms=terms)
     log(f"saw {'; '.join(swaps)}" + (f"  learned {len(promoted)}" if promoted else ""))
+    # A fix seen once used to wait silently in Studio's inbox: ask now, once.
+    ask = learn.unasked(swaps, screen_terms=terms)
+    if not ask:
+        return
+    pairs = "\n".join(f"{h} → {m}" for h, m in ask)
+    choice = learn.notify("Learn this fix?" if len(ask) == 1 else f"Learn these {len(ask)} fixes?",
+                          pairs, actions=[("learn", "Learn"), ("dismiss", "Not a mishearing")],
+                          wait_s=60)
+    if choice == "learn":
+        refused = [f"{h}: {why}" for h, m in ask if (why := learn.accept_pair(h, m))]
+        log(f"learned from the prompt: {pairs.replace(chr(10), '; ')}" + (f"  refused {refused}" if refused else ""))
+        learn.notify("Learned", pairs)
+    elif choice == "dismiss":
+        for h, m in ask:
+            learn.reject_pair(h, m)
+        log(f"dismissed from the prompt: {pairs.replace(chr(10), '; ')}")
 
 
 def main() -> int:

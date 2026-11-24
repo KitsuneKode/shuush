@@ -1245,12 +1245,24 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         except Exception:
             pass
         try:
+            # A fix noticed after the take lands here seconds later.
+            cm = Gio.File.new_for_path(str(learn.CANDIDATES)).monitor_file(Gio.FileMonitorFlags.NONE, None)
+            cm.connect("changed", lambda *_a: GLib.timeout_add(200, self._on_candidates_changed))
+            self._monitors.append(cm)
+        except Exception:
+            pass
+        try:
             RT.mkdir(parents=True, exist_ok=True)
             sm = Gio.File.new_for_path(str(RT / "state")).monitor_file(Gio.FileMonitorFlags.NONE, None)
             sm.connect("changed", self._on_state_file_changed)
             self._monitors.append(sm)
         except Exception:
             pass
+
+    def _on_candidates_changed(self) -> bool:
+        self._render_corrections()
+        self._refresh_kpis()
+        return False
 
     def _on_history_file_changed(self, *_args) -> None:
         if self._live_reload_id is not None:
