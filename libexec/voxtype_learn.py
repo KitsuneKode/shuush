@@ -443,7 +443,10 @@ def tally(swaps: list[str], screen_terms: str = "") -> list[tuple[str, str]]:
         for _h, m in promoted:
             _add_vocab_if_distinctive(m)
         sync_replacements()
-        notify("Auto-learned dictation fix", "\n".join(f"{h} → {m}" for h, m in promoted))
+        notify("Learned" if len(promoted) == 1 else f"Learned {len(promoted)} fixes",
+               "\n".join(f"{h} → {m}" for h, m in promoted),
+               hints={"x-kuwai-calm": "1", "x-kuwai-group": "shuush-learn",
+                      "x-kuwai-status": "Seen twice", "x-kuwai-tone": "positive"})
     return promoted
 
 
@@ -600,9 +603,11 @@ def fix() -> list[tuple[str, str]]:
 
 
 def notify(title: str, body: str, actions: list[tuple[str, str]] | None = None,
-           wait_s: float = 0) -> str:
+           wait_s: float = 0, hints: dict[str, str] | None = None, transient: bool = False) -> str:
     """Show a notification. With `actions` (key, label) and `wait_s`, wait
-    that long for a click and return its key ("" when closed or timed out)."""
+    that long for a click and return its key ("" when closed or timed out).
+    `hints` are Kuwai's x-kuwai-* (notch, group, status line); `transient`
+    keeps it out of the notification history."""
     kuwai = next(
         (str(p) for p in (
             Path(os.environ.get("KUWAI_ROOT", "")) / "bin/kuwai-notify",
@@ -612,9 +617,13 @@ def notify(title: str, body: str, actions: list[tuple[str, str]] | None = None,
         None,
     )
     if kuwai:
-        cmd = [kuwai, "-a", "Dictation", "-i", "audio-input-microphone"]
+        cmd = [kuwai, "-a", "Shuush", "-i", "audio-input-microphone"]
         for key, label in actions or []:
             cmd += ["-A", f"{key}={label}"]
+        for key, value in (hints or {}).items():
+            cmd += ["-H", f"{key}={value}"]
+        if transient:
+            cmd.append("-t")
         waiting = bool(actions and wait_s)
         if waiting:
             cmd.append("-w")
@@ -642,7 +651,7 @@ def notify(title: str, body: str, actions: list[tuple[str, str]] | None = None,
         subprocess.run(["gdbus", "call", "--session", "--dest", "org.freedesktop.Notifications",
                         "--object-path", "/org/freedesktop/Notifications",
                         "--method", "org.freedesktop.Notifications.Notify",
-                        "Dictation", "0", "audio-input-microphone", title, body, "[]", "{}", "5000"],
+                        "Shuush", "0", "audio-input-microphone", title, body, "[]", "{}", "5000"],
                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                        timeout=5)
     except (OSError, subprocess.TimeoutExpired):

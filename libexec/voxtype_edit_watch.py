@@ -163,7 +163,16 @@ def _claim() -> None:
         PIDFILE.write_text(str(os.getpid()))
 
 
-def learn_from(hunks: list[tuple[str, str]]) -> None:
+# What the prompt calls the app the fix was made in.
+_APP_NAMES = {"com.t3tools.T3Code": "T3 Code", "code": "VS Code", "code-oss": "VS Code",
+              "Slack": "Slack", "discord": "Discord", "obsidian": "Obsidian"}
+
+
+def _app_name(cls: str) -> str:
+    return _APP_NAMES.get(cls) or (cls.rsplit(".", 1)[-1] if cls else "")
+
+
+def learn_from(hunks: list[tuple[str, str]], app: str = "") -> None:
     import voxtype_learn as learn
 
     swaps = [f"{h} -> {m}" for h, m in hunks]
@@ -176,14 +185,25 @@ def learn_from(hunks: list[tuple[str, str]]) -> None:
     ask = learn.unasked(swaps, screen_terms=terms)
     if not ask:
         return
-    pairs = "\n".join(f"{h} → {m}" for h, m in ask)
-    choice = learn.notify("Learn this fix?" if len(ask) == 1 else f"Learn these {len(ask)} fixes?",
-                          pairs, actions=[("learn", "Learn"), ("dismiss", "Not a mishearing")],
-                          wait_s=60)
+    one = len(ask) == 1
+    shown = ask[:3]
+    pairs = "\n".join(f"{h} → {m}" for h, m in shown) + (f"\n+{len(ask) - 3} more" if len(ask) > 3 else "")
+    where = f"in {app}" if app else "after a dictation"
+    choice = learn.notify(
+        "Learn this fix?" if one else f"Learn {len(ask)} fixes?",
+        pairs,
+        actions=[("learn", "Learn" if one else "Learn all"),
+                 ("dismiss", "Not a mishearing" if one else "Not mishearings")],
+        wait_s=60,
+        hints={"x-kuwai-island": "1", "x-kuwai-group": "shuush-learn",
+               "x-kuwai-status": f"You fixed {'it' if one else 'them'} by hand {where}",
+               "x-kuwai-glyph": "\U000f036c"})
     if choice == "learn":
         refused = [f"{h}: {why}" for h, m in ask if (why := learn.accept_pair(h, m))]
         log(f"learned from the prompt: {pairs.replace(chr(10), '; ')}" + (f"  refused {refused}" if refused else ""))
-        learn.notify("Learned", pairs)
+        learn.notify("Learned" if one else f"Learned {len(ask) - len(refused)} fixes", pairs,
+                     hints={"x-kuwai-calm": "1", "x-kuwai-group": "shuush-learn", "x-kuwai-tone": "positive"},
+                     transient=True)
     elif choice == "dismiss":
         for h, m in ask:
             learn.reject_pair(h, m)
@@ -227,7 +247,7 @@ def main() -> int:
             break
         last = hunks
     if stable:
-        learn_from(stable)
+        learn_from(stable, _app_name(cls))
     with _pid_lock():
         try:
             if PIDFILE.read_text().strip() == str(os.getpid()):
