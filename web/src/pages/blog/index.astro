@@ -11,7 +11,7 @@ const categories = ['All', 'Architecture', 'Guides', 'Omarchy', 'Wayland', 'Loca
 const jsonLd = {
   '@context': 'https://schema.org',
   '@type': 'Blog',
-  name: 'Shuush — Engineering & Benchmarks',
+  name: 'Shuush: Engineering and Benchmarks',
   url: new URL('/blog/', Astro.site).toString(),
   blogPost: posts.map((p) => ({
     '@type': 'TechArticle',
@@ -22,8 +22,8 @@ const jsonLd = {
 };
 ---
 <BaseLayout
-  title="Writing — Shuush Engineering & Benchmarks"
-  description="Minimalist engineering notes, real-world ASR and LLM cleanup benchmarks, and Wayland voice dictation guides from Shuush."
+  title="Writing: Shuush Engineering and Benchmarks"
+  description="Engineering notes, real-world ASR and LLM cleanup benchmarks, and Wayland voice dictation guides from Shuush."
   jsonLd={jsonLd}
 >
   <main id="main" class="dir-wrap">
@@ -60,12 +60,12 @@ const jsonLd = {
         </header>
 
         <div class="dir-search-wrap">
-          <svg class="dir-search-ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+          <svg class="dir-search-ic" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
           <input
             id="dir-search"
             class="dir-search"
             type="search"
-            placeholder="Search essays…"
+            placeholder="Search essays..."
             aria-label="Search essays"
             autocomplete="off"
           />

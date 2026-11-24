@@ -4,8 +4,8 @@
   "description": "Open-source local GPU voice dictation for Linux & Wayland, built on voxtype.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#fbfaf7",
-  "theme_color": "#fbfaf7",
+  "background_color": "#090a0d",
+  "theme_color": "#090a0d",
   "icons": [
     {
       "src": "/icon-192.png",
