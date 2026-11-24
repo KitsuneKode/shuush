@@ -14,8 +14,8 @@ mishearing, and a rewrite of more than 60% of the take is ignored.
 
 The field is read from voxtype's input method when it holds one
 ($XDG_RUNTIME_DIR/voxtype/field_text.json, written by the fork's `[output]
-preedit` while the field stays focused: no polling, works in Electron apps
-that hide from AT-SPI), else through AT-SPI.
+read_field` or `preedit` while the field stays focused: no polling, works in
+Electron apps that hide from AT-SPI), else through AT-SPI.
 
 Usage (env from voxtype-review.py): RV_RAW, RV_CLEAN; target from
 $XDG_RUNTIME_DIR/voxtype/target_window.
