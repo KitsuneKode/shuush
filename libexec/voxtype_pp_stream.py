@@ -224,6 +224,11 @@ class Emitter:
                 text = _gate.finish(text, _TERMS)
             except Exception:
                 pass
+        if _gate is not None:
+            try:
+                text = _gate.expand_inline(text)
+            except Exception:
+                pass
         if not self.parts:
             text = text.lstrip()
             if not text:

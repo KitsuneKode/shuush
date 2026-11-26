@@ -1202,6 +1202,30 @@ def snippet(text: str, table: dict[str, str] | None = None) -> str | None:
     return table.get(words) if words and len(words.split()) <= 8 else None
 
 
+# Inside a sentence, a snippet whose trigger starts with "my" (my email, my
+# phone, my address) is written out where it is used as the thing itself:
+# "send it to my email" -> "send it to me@example.com". Where it is talked
+# about ("my email is broken", "change my email") the words stay.
+_INLINE_BEFORE = (r"(?:to|at|is|it's|use|via|on|cc|bcc|send|email|mail|reach|contact|ping|message|"
+                  r"text|call|forward|share|here's|here is|with|into|from)")
+_INLINE_STOP = (r"(?:is|was|has|had|isn't|wasn't|doesn't|does|did|keeps|seems|got|will|would|should|"
+                r"can|could|need|needs|went|broke|changed|stopped|'s)")
+_INLINE_TAIL = r"(?:\s+(?:address|id|handle|link|number|url))?"
+
+
+def expand_inline(text: str, table: dict[str, str] | None = None) -> str:
+    table = load_snippets() if table is None else table
+    for key in sorted((k for k in table if k.startswith("my ")), key=len, reverse=True):
+        val = table[key]
+        if "\n" in val:
+            continue
+        words = r"\s+".join(re.escape(w) for w in key.split())
+        pat = re.compile(r"(?i)(?<![\w'])(" + _INLINE_BEFORE + r"\s+)" + words + _INLINE_TAIL
+                         + r"(?![\w'])(?!\s+" + _INLINE_STOP + r"(?![\w']))")
+        text = pat.sub(lambda m, v=val: m.group(1) + v, text)
+    return text
+
+
 def prepare_payload(req: dict) -> dict:
     """Run all pre-LLM deterministic steps in a single Python invocation.
 
@@ -1306,7 +1330,7 @@ def main(argv: list[str]) -> int:
         out = constrain(heard, _read_stdin())
         if not output_invariants_ok(heard, out):
             return 1
-        sys.stdout.write(finish(out))
+        sys.stdout.write(expand_inline(finish(out)))
     elif cmd == "constrain-check" and len(argv) == 3:
         # "-": the transcript is in PP_HEARD, kept off the command line.
         heard = os.environ.get("PP_HEARD", "") if argv[2] == "-" else argv[2]
@@ -1322,9 +1346,9 @@ def main(argv: list[str]) -> int:
         pair, block = app_fields(_read_stdin(), argv[2], argv[3])
         sys.stdout.write(pair + "\x1e" + block)
     elif cmd == "finish":
-        sys.stdout.write(finish(_read_stdin()))
+        sys.stdout.write(expand_inline(finish(_read_stdin())))
     elif cmd == "fallback":
-        sys.stdout.write(fallback_clean(_read_stdin()))
+        sys.stdout.write(expand_inline(fallback_clean(_read_stdin())))
     elif cmd == "screen":
         sys.stdout.write(screen_block(_read_stdin()))
     elif cmd == "terms":
@@ -1569,6 +1593,15 @@ def _selftest() -> int:
           lambda s: s == "Thanks,\nM")
     check("snippet inside a sentence is not a trigger", snippet("send it to my email today", table) or "",
           lambda s: s == "")
+    for said, want in [
+        ("Send it to my email today.", "Send it to me@example.com today."),
+        ("You can reach me at my email address.", "You can reach me at me@example.com."),
+        ("My email is broken again.", "My email is broken again."),
+        ("I need to change my email.", "I need to change my email."),
+        ("The problem is my email keeps bouncing.", "The problem is my email keeps bouncing."),
+        ("Send the sign off to my emails folder.", "Send the sign off to my emails folder."),
+    ]:
+        check(f"inline snippet {said!r}", expand_inline(said, table), lambda g, w=want: g == w)
     check("t3code login thread not private", private_reason("com.t3tools.T3Code", "Fix login password bug", ""),
           lambda s: s == "")
     check("sentence-initial and may go where the model starts a sentence",
