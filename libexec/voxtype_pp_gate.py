@@ -118,8 +118,14 @@ _ORDINAL_VAL = {
     "one": 1, "first": 1, "two": 2, "second": 2, "three": 3, "third": 3,
     "four": 4, "fourth": 4, "five": 5, "fifth": 5, "six": 6, "sixth": 6,
     "seven": 7, "seventh": 7, "eight": 8, "eighth": 8, "nine": 9, "ninth": 9,
-    "ten": 10, "tenth": 10,
+    "ten": 10, "tenth": 10, "eleven": 11, "eleventh": 11, "twelve": 12, "twelfth": 12,
+    "thirteen": 13, "thirteenth": 13, "fourteen": 14, "fourteenth": 14, "fifteen": 15, "fifteenth": 15,
+    "sixteen": 16, "sixteenth": 16, "seventeen": 17, "seventeenth": 17, "eighteen": 18, "eighteenth": 18,
+    "nineteen": 19, "nineteenth": 19, "twenty": 20, "twentieth": 20,
 }
+# Said alone, an ordinal leads a list item ("first ... second ..." -> "1. ... 2.").
+_LONE_ORDINAL = {k: v for k, v in _ORDINAL_VAL.items() if k.endswith(("st", "nd", "rd", "th"))}
+_LONE_ORDINAL.update({"firstly": 1, "secondly": 2, "thirdly": 3, "fourthly": 4, "fifthly": 5})
 LIST_LEADS = frozenset({"number", "point", "bullet", "item"})
 ORDINALS = frozenset(_ORDINAL_VAL)
 # A marker inside a deleted span is the speaker taking the words back.
@@ -326,6 +332,9 @@ def delete_ok(keys: list[str], i1: int, i2: int, surfaces: list[str] | None = No
         return True
     if tuple(span) in FILLER_PHRASES:
         return True
+    # A spoken list marker the model wrote as "- ".
+    if tuple(span) in {("bullet",), ("bullet", "point")}:
+        return True
     # Every cut word is a stutter next to its own copy: "shown [shown also] also".
     if len(span) <= 4 and all(_stutter_at(keys, p) for p in range(i1, i2)):
         return True
@@ -333,6 +342,10 @@ def delete_ok(keys: list[str], i1: int, i2: int, surfaces: list[str] | None = No
     # right after it ("I don't want, scratch that, I want ..."): "we should
     # not scratch that or move it" is an instruction, not a correction.
     negated = any(k in NEGATIONS and k != "no" for k in span)
+    # A negated false start that ends right on "no wait" / "I mean": the
+    # speaker took it back and restarted ("I do not want blue no wait green").
+    if negated and len(span) >= 3 and tuple(span[-2:]) in {("no", "wait"), ("wait", "no"), ("i", "mean")}:
+        return True
     if _contains_marker(span, strict=negated) and (
             not negated or (i2 < len(keys) and keys[i2] == span[0])):
         return True
@@ -593,6 +606,8 @@ def _number_ok(raw_keys: list[str], model_keys: list[str]) -> bool:
 def _list_ok(raw_keys: list[str], model_keys: list[str]) -> bool:
     if len(model_keys) != 1 or not re.fullmatch(r"\d+", model_keys[0]):
         return False
+    if len(raw_keys) == 1 and raw_keys[0] in _LONE_ORDINAL:
+        return str(_LONE_ORDINAL[raw_keys[0]]) == model_keys[0]
     if not (len(raw_keys) == 2 and raw_keys[0] in LIST_LEADS and raw_keys[1] in ORDINALS):
         return False
     return str(_ORDINAL_VAL[raw_keys[1]]) == model_keys[0]
@@ -1593,6 +1608,16 @@ def _selftest() -> int:
           lambda s: s == "Thanks,\nM")
     check("snippet inside a sentence is not a trigger", snippet("send it to my email today", table) or "",
           lambda s: s == "")
+    for heard, model, want in [
+        ("we need three things first fix the login bug second update the docs third ship the release",
+         "We need three things:\n1. Fix the login bug\n2. Update the docs\n3. Ship the release", None),
+        ("here are the items bullet fix login bullet update docs bullet ship release",
+         "Here are the items:\n- Fix login\n- Update docs\n- Ship release", None),
+        ("number eleven check the logs", "11. Check the logs", None),
+        ("I do not want the blue button no wait make it green", "Make it green.", None),
+        ("I do not want the blue button make it green", "Make it green.", "I do not want the blue button make it green."),
+    ]:
+        check(f"list/take-back {heard[:30]!r}", constrain(heard, model), lambda g, m=model, w=want: g == (w or m))
     for said, want in [
         ("Send it to my email today.", "Send it to me@example.com today."),
         ("You can reach me at my email address.", "You can reach me at me@example.com."),

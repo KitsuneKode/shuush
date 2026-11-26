@@ -565,7 +565,12 @@ PP_OPENROUTER_MODELS="google/gemma-4-31b-it:free google/gemma-4-26b-a4b-it:free"
 # Cerebras and then a free OpenRouter model, and the streamer would sit for
 # 15s on its own. Past this, the raw transcript is typed. The daemon's
 # timeout stays a little above this so it does not kill the script first.
-PP_BUDGET_MS=${PP_BUDGET_MS:-6000}
+# A long take needs longer: 15 ms a word past 100, at most 20 s in all.
+RAW_WORDS=$(printf '%s' "$raw" | wc -w)
+PP_BUDGET_MS=${PP_BUDGET_MS:-$(( 6000 + (RAW_WORDS > 100 ? (RAW_WORDS - 100) * 15 : 0) ))}
+[ "$PP_BUDGET_MS" -gt 20000 ] && PP_BUDGET_MS=20000
+export PP_MAXTOK=${PP_MAXTOK:-$(( RAW_WORDS * 2 > 1024 ? RAW_WORDS * 2 : 1024 ))}
+export PP_MAXTOK_LOCAL=${PP_MAXTOK_LOCAL:-$(( RAW_WORDS * 2 > 512 ? RAW_WORDS * 2 : 512 ))}
 # Command mode writes a whole selection back, not one sentence.
 [ "$MODE" = command ] && PP_BUDGET_MS=${PP_COMMAND_BUDGET_MS:-11000}
 DEADLINE_MS=$((T0 + PP_BUDGET_MS))
@@ -793,7 +798,7 @@ for provider in $PP_ORDER; do
         else
             printf '%s  %s  rejected(invariants)  llm=%dms\n' "$(date +%T)" "$provider" "$LLM_MS" >> "$PP_LOG"
             out=""
-            break
+            continue
         fi
     fi
     if sane; then
