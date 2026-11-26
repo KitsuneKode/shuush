@@ -174,7 +174,10 @@ case "$verb" in
             [ -z "$tail_ms" ] && tail_ms=$(sed -n 's/^PP_RELEASE_TAIL_MS=\([0-9]*\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
             tail_ms="${tail_ms:-200}"
             if [ "$tail_ms" -gt 0 ] 2>/dev/null; then
+                let_go=$(now_ms)
                 sleep "$(awk -v m="$tail_ms" 'BEGIN{printf "%.3f", m/1000}')"
+                # Cancelled while the tail ran: that take is gone, and a new one isn't ours to stop.
+                [ "$(cat "$rt/cancelled" 2>/dev/null || echo 0)" -ge "$let_go" ] 2>/dev/null && exit 0
             fi
         fi
         exec voxtype record stop ;;
