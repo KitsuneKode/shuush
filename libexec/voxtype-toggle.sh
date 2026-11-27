@@ -46,6 +46,13 @@ active_window_json() {
 }
 
 start() {  # [profile]
+    # A muted microphone records silence: say so instead of starting a take.
+    if wpctl get-volume @DEFAULT_AUDIO_SOURCE@ 2>/dev/null | grep -q MUTED; then
+        msg="Microphone is muted · Ctrl+Alt+M turns it on"
+        qs ipc -p "${KUWAI_SHELL:-$HOME/.local/share/kuwai/shell}" call moment say "$msg" >/dev/null 2>&1 \
+            || notify-send -a Voxtype -t 4000 "$msg" 2>/dev/null
+        exit 0
+    fi
     # Gone before the background capture refills it: a take that ends first
     # must not read the previous field's caret, draft or password state.
     rm -f "$rt/handsfree" "$rt/take_screen_ctx.json"
