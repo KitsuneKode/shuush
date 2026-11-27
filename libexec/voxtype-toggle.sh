@@ -18,10 +18,36 @@
 set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 verb="${1:-toggle}"
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
 rt="${XDG_RUNTIME_DIR:-/run/user/$UID}/voxtype"
 mkdir -p "$rt"
 state=$(cat "$rt/state" 2>/dev/null || echo idle)
 now_ms() { date +%s%3N; }
+
+# Queued dictation (voxtype-fork feat/warm-mic-queue): allow a new hold take
+# while the previous one is still transcribing. Guarded so stock voxtype keeps
+# its existing behavior unless the running daemon advertises queue_pid or the
+# user explicitly opts in via VOXTYPE_QUEUE=1.
+daemon_supports_queue() {
+    local flag="${VOXTYPE_QUEUE:-}"
+    if [ -z "$flag" ] && [ -f "$CONF/postprocess.env" ]; then
+        flag=$(sed -n 's/^VOXTYPE_QUEUE=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
+    fi
+    case "$flag" in
+        1) return 0 ;;
+        0) return 1 ;;
+    esac
+    local qpid dpid
+    [ -r "$rt/queue_pid" ] || return 1
+    IFS= read -r qpid < "$rt/queue_pid" || true
+    [[ "$qpid" =~ ^[0-9]+$ ]] || return 1
+    kill -0 "$qpid" 2>/dev/null || return 1
+    if [ -r "$rt/pid" ]; then
+        IFS= read -r dpid < "$rt/pid" || true
+        [ -n "$dpid" ] && [ "$qpid" != "$dpid" ] && return 1
+    fi
+    return 0
+}
 
 # Pressed while "Polishing": skip the cleanup script and type the raw
 # transcript now. (A plain toggle here would queue a NEW recording that
@@ -79,19 +105,37 @@ start() {  # [profile]
         else
             rm -f "$rt/take_selection"
         fi
-        CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
-        clip=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 || true)
-        if [ -n "${clip//[[:space:]]/}" ]; then
-            chash=$(printf '%s' "$clip" | sha256sum | awk '{print $1}')
-            self_hash=$(awk 'NR==1{print $1}' "$rt/clip_self_hash" 2>/dev/null || true)
-            prev_hash=$(awk 'NR==1{print $1}' "$rt/clip_seen" 2>/dev/null || true)
-            now_s=$(date +%s)
-            if [ "$chash" != "$self_hash" ] && [ "$chash" != "$prev_hash" ]; then
-                printf '%s\n%s\n' "$chash" "$now_s" > "$rt/clip_seen"
+        now_s=$(date +%s)
+        clip_types=""
+        clip=""
+        if clip_types=$(timeout 0.15 wl-paste --list-types 2>/dev/null); then
+            if grep -qx 'x-kde-passwordManagerHint' <<<"$clip_types"; then
+                rm -f "$rt/take_clip"
+                printf 'secret\n%s\n' "$now_s" > "$rt/take_clip_start"
+            else
+                clip=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 || true)
+                if [ -n "${clip//[[:space:]]/}" ]; then
+                    chash=$(printf '%s' "$clip" | sha256sum | awk '{print $1}')
+                    self_hash=$(awk 'NR==1{print $1}' "$rt/clip_self_hash" 2>/dev/null || true)
+                    prev_hash=$(awk 'NR==1{print $1}' "$rt/clip_seen" 2>/dev/null || true)
+                    prev_ts=$(awk 'NR==2{print $1}' "$rt/clip_seen" 2>/dev/null || echo 0)
+                    if [ "$chash" != "$self_hash" ] && [ "$chash" != "$prev_hash" ]; then
+                        printf '%s\n%s\n' "$chash" "$now_s" > "$rt/clip_seen"
+                        prev_ts=$now_s
+                    fi
+                    if [ "$chash" != "$self_hash" ] && [ $(( now_s - prev_ts )) -le 15 ]; then
+                        printf '%s' "$clip" > "$rt/take_clip"
+                    else
+                        rm -f "$rt/take_clip"
+                    fi
+                    printf '%s\n%s\n' "$chash" "$now_s" > "$rt/take_clip_start"
+                else
+                    rm -f "$rt/take_clip"
+                    printf 'empty\n%s\n' "$now_s" > "$rt/take_clip_start"
+                fi
             fi
-            printf '%s\n%s\n' "$chash" "$now_s" > "$rt/take_clip_start"
         else
-            rm -f "$rt/take_clip_start"
+            rm -f "$rt/take_clip" "$rt/take_clip_start"
         fi
         # Pre-capture screen & draft context in the background while talking
         sc_on=$(sed -n 's/^PP_SCREEN_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
@@ -161,6 +205,15 @@ case "$verb" in
                 rm -f "$rt/hold_ignore_release"
                 now_ms > "$rt/hold_start"
                 start ;;
+            transcribing)
+                if daemon_supports_queue; then
+                    rm -f "$rt/hold_ignore_release"
+                    now_ms > "$rt/hold_start"
+                    start
+                else
+                    : > "$rt/hold_ignore_release"
+                    exit 0
+                fi ;;
             recording|streaming)
                 # Hands-free (or a toggle take): this press ends it, and
                 # its release must not count as a tap.
