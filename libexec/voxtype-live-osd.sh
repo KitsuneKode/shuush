@@ -25,6 +25,7 @@ SESSION_START="$RT/session_start"
 POLL=0.1
 
 INHIBIT_PID=""
+INOTIFY_PID=""
 ACTIVE=""
 
 # Load the local cleanup model while the user is still talking, so a cold
@@ -46,6 +47,7 @@ prewarm() {
 
 inhibit_on() {
   [ -n "$INHIBIT_PID" ] && kill -0 "$INHIBIT_PID" 2>/dev/null && return
+  command -v systemd-inhibit >/dev/null 2>&1 || return 0
   systemd-inhibit --what=idle --who=voxtype --why="Dictation in progress" \
     --mode=block sleep infinity >/dev/null 2>&1 &
   INHIBIT_PID=$!
@@ -55,17 +57,16 @@ inhibit_off() {
   INHIBIT_PID=""
 }
 
-trap 'inhibit_off; : > "$LIVE"; exit 0' TERM INT
+cleanup() {
+  [ -n "$INOTIFY_PID" ] && kill "$INOTIFY_PID" 2>/dev/null || true
+  inhibit_off
+  : > "$LIVE"
+  exit 0
+}
+trap cleanup TERM INT
 
-mkdir -p "$RT"
-: > "$LIVE"
-
-# The 10 Hz poll without a process per tick: `$(cat …)` and `sleep` forked
-# twice every 100 ms, all day (~20 processes a second while idle). Bash's own
-# read does both: the file directly, and a timed wait on a pipe nobody writes.
-exec {TICK}<> <(:)
-
-while true; do
+handle_state() {
+  local state
   if [ -r "$STATE" ]; then IFS= read -r state < "$STATE" || true; else state=idle; fi
   case "$state" in
     "")
@@ -87,5 +88,32 @@ while true; do
       inhibit_off
       ;;
   esac
-  read -r -t "$POLL" -u "$TICK" _ || true
-done
+}
+
+poll_loop() {
+  # Fallback 10 Hz poll without a process per tick when inotifywait is absent:
+  # bash's own read handles both reading the state file and the timed wait.
+  exec {TICK}<> <(:)
+  while true; do
+    handle_state
+    read -r -t "$POLL" -u "$TICK" _ || true
+  done
+}
+
+mkdir -p "$RT"
+: > "$LIVE"
+
+handle_state
+
+# Prefer kernel inotify on $RT (watching the directory survives atomic renames
+# of $STATE and works even before $STATE exists) with zero idle wakeups.
+if [ "${VOXTYPE_OSD_POLL:-0}" != 1 ] && command -v inotifywait >/dev/null 2>&1; then
+  coproc INOT { inotifywait -m -q -e close_write,moved_to,create,delete --format '%f' "$RT" 2>/dev/null; }
+  INOTIFY_PID=$INOT_PID
+  while IFS= read -r fname <&"${INOT[0]}"; do
+    [ "$fname" = "state" ] && handle_state
+  done
+  INOTIFY_PID=""
+fi
+
+poll_loop
