@@ -252,5 +252,11 @@ grep -q 'style = "kitsune-hud"' "$TMP5/home/.config/voxtype/config.toml"
 bash -n "$ROOT/packaging/aur/shuush-git/PKGBUILD" "$ROOT/packaging/aur/shuush-git/shuush-git.install"
 ok "AUR /usr layout resolves libexec/share cleanly, seeds KitsuneHud + postprocess.env, and PKGBUILD syntax passes"
 
+if python3 -m pytest --version >/dev/null 2>&1; then
+  echo "=== 9. Pytest Suite (Queue, Single-jq, WPM, Re-clean, Clipboard Snippet, Inotify OSD) ==="
+  python3 -m pytest -q -p no:cacheprovider "$ROOT/tests/test_dictation_pass.py"
+  ok "Pytest dictation-pass suite passed"
+fi
+
 echo ""
 echo "ALL $PASS SANDBOX TEST SUITES PASSED"
