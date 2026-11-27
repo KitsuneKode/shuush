@@ -1240,10 +1240,89 @@ def load_snippets(path: Path | None = None) -> dict[str, str]:
     return out
 
 
-def snippet(text: str, table: dict[str, str] | None = None) -> str | None:
+CLIPBOARD_MAX_BYTES = 2048
+_CLIPBOARD_READ_CAP = 65536
+_CLIPBOARD_SECRET_MIME = "x-kde-passwordManagerHint"
+
+
+def validate_clipboard_text(types: list[str], data: bytes) -> str | None:
+    """Return plain text for the 'my clipboard' snippet only when the clipboard
+    is plain text, single-line or under 2 KB, and not marked secret."""
+    clean_types = [t.strip() for t in types if t.strip()]
+    if not clean_types or _CLIPBOARD_SECRET_MIME in clean_types:
+        return None
+    if not any(t == "text/plain" or t.startswith("text/plain;") or t == "UTF8_STRING" for t in clean_types):
+        return None
+    if not data or b"\x00" in data:
+        return None
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+    if not text.strip():
+        return None
+    is_single_line = ("\n" not in text and "\r" not in text)
+    if not is_single_line and len(data) >= CLIPBOARD_MAX_BYTES:
+        return None
+    return text
+
+
+def _read_wayland_clipboard() -> tuple[list[str], bytes] | None:
+    import subprocess
+    try:
+        lt = subprocess.run(
+            ["wl-paste", "--list-types"],
+            capture_output=True,
+            timeout=0.15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if lt.returncode != 0:
+        return None
+    types = [line.strip() for line in lt.stdout.decode("utf-8", errors="replace").splitlines() if line.strip()]
+    if not types or _CLIPBOARD_SECRET_MIME in types:
+        return types, b""
+    plain_type = next(
+        (t for t in types if t == "text/plain;charset=utf-8"),
+        next((t for t in types if t == "text/plain" or t.startswith("text/plain;") or t == "UTF8_STRING"), None),
+    )
+    if plain_type is None:
+        return types, b""
+    try:
+        res = subprocess.run(
+            ["wl-paste", "--no-newline", "--type", plain_type],
+            capture_output=True,
+            timeout=0.15,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if res.returncode != 0:
+        return None
+    return types, res.stdout[:_CLIPBOARD_READ_CAP]
+
+
+def read_clipboard_snippet(clipboard_reader=None) -> str | None:
+    """Resolve the current clipboard for 'my clipboard' snippet expansion."""
+    reader = _read_wayland_clipboard if clipboard_reader is None else clipboard_reader
+    got = reader()
+    if got is None:
+        return None
+    types, data = got
+    return validate_clipboard_text(types, data)
+
+
+def snippet(text: str, table: dict[str, str] | None = None, clipboard_reader=None) -> str | None:
     table = load_snippets() if table is None else table
     words = _snip_key(text)
-    return table.get(words) if words and len(words.split()) <= 8 else None
+    if not words or len(words.split()) > 8:
+        return None
+    if words in table:
+        return table[words]
+    if words == "my clipboard":
+        return read_clipboard_snippet(clipboard_reader)
+    return None
 
 
 # Inside a sentence, a snippet whose trigger starts with "my" (my email, my
@@ -1252,12 +1331,14 @@ def snippet(text: str, table: dict[str, str] | None = None) -> str | None:
 # about ("my email is broken", "change my email") the words stay.
 _INLINE_BEFORE = (r"(?:to|at|is|it's|use|via|on|cc|bcc|send|email|mail|reach|contact|ping|message|"
                   r"text|call|forward|share|here's|here is|with|into|from)")
+_CLIP_INLINE_BEFORE = (r"(?:to|at|is|it's|use|via|on|cc|bcc|send|email|mail|reach|contact|ping|message|"
+                       r"text|call|forward|share|here's|here is|with|into|from|paste|insert)")
 _INLINE_STOP = (r"(?:is|was|has|had|isn't|wasn't|doesn't|does|did|keeps|seems|got|will|would|should|"
                 r"can|could|need|needs|went|broke|changed|stopped|'s)")
 _INLINE_TAIL = r"(?:\s+(?:address|id|handle|link|number|url))?"
 
 
-def expand_inline(text: str, table: dict[str, str] | None = None) -> str:
+def expand_inline(text: str, table: dict[str, str] | None = None, clipboard_reader=None) -> str:
     table = load_snippets() if table is None else table
     for key in sorted((k for k in table if k.startswith("my ")), key=len, reverse=True):
         val = table[key]
@@ -1267,10 +1348,19 @@ def expand_inline(text: str, table: dict[str, str] | None = None) -> str:
         pat = re.compile(r"(?i)(?<![\w'])(" + _INLINE_BEFORE + r"\s+)" + words + _INLINE_TAIL
                          + r"(?![\w'])(?!\s+" + _INLINE_STOP + r"(?![\w']))")
         text = pat.sub(lambda m, v=val: m.group(1) + v, text)
+    if "my clipboard" not in table and re.search(r"(?i)(?<![\w'])my\s+clipboard(?![\w'])", text):
+        clip_pat = re.compile(
+            r"(?i)(?<![\w'])(" + _CLIP_INLINE_BEFORE + r"\s+)my\s+clipboard"
+            + r"(?![\w'])(?!\s+" + _INLINE_STOP + r"(?![\w']))"
+        )
+        if clip_pat.search(text):
+            val = read_clipboard_snippet(clipboard_reader)
+            if val is not None:
+                text = clip_pat.sub(lambda m, v=val: m.group(1) + v, text)
     return text
 
 
-def prepare_payload(req: dict) -> dict:
+def prepare_payload(req: dict, clipboard_reader=None) -> dict:
     """Run all pre-LLM deterministic steps in a single Python invocation.
 
     Replaces ~9 separate python3 subprocess startups per dictation with one call,
@@ -1303,7 +1393,7 @@ def prepare_payload(req: dict) -> dict:
         return {"private_why": "", "stripped": stripped, "empty": True}
 
     if mode != "command":
-        snip = snippet(stripped)
+        snip = snippet(stripped, clipboard_reader=clipboard_reader)
         if snip is not None:
             return {"private_why": "", "stripped": stripped, "snippet": snip}
 
