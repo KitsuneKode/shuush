@@ -221,13 +221,42 @@ def strip_hallucinations(text: str) -> str:
     return " ".join(kept)
 
 
-def hard_apply(text: str, pairs: list[tuple[str, str]] | None = None) -> str:
+PROTECTED = re.compile(r"`[^`]+`|https?://\S+|www\.\S+|(?<![\w/])(?:~|\.{1,2})?/[\w.\-]+(?:/[\w.\-]+)+"
+                       r"|\b[\w-]+\.(?:js|jsx|ts|tsx|py|rs|go|md|json|toml|ya?ml|lua|qml|sh|css|html)\b")
+
+
+def _shield(text: str, vocab: list[str]) -> tuple[str, list[str]]:
+    """Code, links, paths, file names and vocabulary spelled right, set aside
+    so no rule rewrites them (Hex: a 'next' rule never touches 'Next.js')."""
+    spans = [(m.start(), m.end()) for m in PROTECTED.finditer(text)]
+    for term in vocab:
+        for m in re.finditer(r"(?<![A-Za-z0-9])" + re.escape(term) + r"(?![A-Za-z0-9])", text):
+            spans.append((m.start(), m.end()))
+    spans.sort()
+    kept, out, at = [], [], 0
+    for a, b in spans:
+        if a < at:
+            continue
+        out.append(text[at:a])
+        out.append("\ue000%d\ue001" % len(kept))
+        kept.append(text[a:b])
+        at = b
+    out.append(text[at:])
+    return "".join(out), kept
+
+
+def _unshield(text: str, kept: list[str]) -> str:
+    return re.sub("\ue000(\\d+)\ue001", lambda m: kept[int(m.group(1))], text)
+
+
+def hard_apply(text: str, pairs: list[tuple[str, str]] | None = None, vocab: list[str] | None = None) -> str:
     """Rewrite sure names before the model. Ambiguous English stays put.
 
     The one title pair is not applied here. It is a hint: "kite eye" is not
     always "kaitai", and the span gate only keeps the change when the model
     makes it.
     """
+    text, kept = _shield(text, vocab_terms() if vocab is None else vocab)
     rows = list(load_pairs(rewrite=True) if pairs is None else pairs)
     rows.sort(key=lambda hm: (-len(hm[0].split()), -len(hm[0])))
     low = text.lower()
@@ -241,7 +270,7 @@ def hard_apply(text: str, pairs: list[tuple[str, str]] | None = None) -> str:
         pat = re.compile(r"(?<![A-Za-z0-9])" + r"\s+".join(parts) + r"(?![A-Za-z0-9])", re.I)
         text = pat.sub(lambda _m, meant=meant: meant, text)
         low = text.lower()
-    return text
+    return _unshield(text, kept)
 
 
 # Same idea as voxtype_learn.unsafe_heard: a function-word phrase matches
@@ -1433,6 +1462,12 @@ def _selftest() -> int:
     check("watching sentence dropped", strip_hallucinations("Thanks for watching. Ship the fix."),
           lambda s: s.lower() == "ship the fix.")
 
+    check("vocabulary spelled right is never rewritten",
+          hard_apply("use Next.js for the next step", pairs=[("next", "Nest")], vocab=["Next.js"]),
+          lambda s: s == "use Next.js for the Nest step")
+    check("links, paths and code are left alone",
+          hard_apply("open https://next.dev/next and ~/next/app.ts with `next build` then next", pairs=[("next", "Nest")], vocab=[]),
+          lambda s: s == "open https://next.dev/next and ~/next/app.ts with `next build` then Nest")
     check("hyperlane", hard_apply("set up the hyperlane config"),
           lambda s: "Hyprland" in s and "hyperlane" not in s.lower())
     check("omarchi and hyperlane", hard_apply("set up the omarchi theme with the hyperlane config"),

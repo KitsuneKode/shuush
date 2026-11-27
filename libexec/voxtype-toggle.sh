@@ -122,6 +122,14 @@ start() {  # [profile]
                 profile=agent ;;
             zapzap|slack|discord|vesktop|webcord|telegram*|whatsapp*|signal*|beeper*|ferdium*|franz*)
                 profile=chat ;;
+            zen*|firefox*|librewolf*|chromium*|google-chrome*|brave*|vivaldi*|microsoft-edge*|thorium*)
+                # A browser: the site, from its window title.
+                title=$(printf '%s' "$win" | jq -r '.title // empty' 2>/dev/null | tr '[:upper:]' '[:lower:]')
+                case "$title" in
+                    *chatgpt*|*claude*|*gemini*|*perplexity*|*t3.chat*|*"v0 by vercel"*|*bolt.new*|*lovable*) profile=agent ;;
+                    *github*|*gitlab*|*linear*|*jira*|*"stack overflow"*|*localhost*|*vercel*|*supabase*|*codepen*) profile=terminal ;;
+                    *whatsapp*|*slack*|*discord*|*telegram*|*messenger*|*" / x"*|*instagram*|*reddit*) profile=chat ;;
+                esac ;;
         esac
     fi
     printf '%s' "${profile:-default}" > "$rt/target_profile.tmp" 2>/dev/null \
