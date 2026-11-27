@@ -12,8 +12,11 @@ import json
 import os
 import re
 import shutil
+import statistics
 import subprocess
 import sys
+import threading
+import tomllib
 from pathlib import Path
 from typing import Callable
 
@@ -1036,10 +1039,145 @@ class BarChart(Gtk.DrawingArea):
                 cr.show_text(day[5:])
 
 
+def take_wpm(entry: dict) -> float | None:
+    """Words per minute for a single take based on its measured audio_ms."""
+    try:
+        audio_ms = int(entry.get("audio_ms") or 0)
+    except (TypeError, ValueError):
+        return None
+    words = len((entry.get("clean") or entry.get("raw") or "").split())
+    if audio_ms <= 0 or words <= 0:
+        return None
+    return words * 60_000.0 / audio_ms
+
+
+def available_profiles(config_path: Path | None = None) -> list[str]:
+    """Return available cleanup profiles from config.toml, always starting with 'default'."""
+    cfg = CONFIG_TOML if config_path is None else config_path
+    profiles = ["default"]
+    if cfg.exists():
+        try:
+            data = tomllib.loads(cfg.read_text(encoding="utf-8", errors="replace"))
+            raw_profs = data.get("profiles")
+            if isinstance(raw_profs, dict):
+                for name in raw_profs:
+                    if isinstance(name, str) and name.strip() and name not in profiles:
+                        profiles.append(name.strip())
+        except Exception:
+            pass
+    if len(profiles) == 1:
+        profiles.extend(["terminal", "chat"])
+    return profiles
+
+
+def _swap_tokens(s: str) -> tuple[list[str], list[str]]:
+    keys, orig = [], []
+    for t in s.split():
+        cleaned = t.strip(".,;:!?\"'()[]{}")
+        k = re.sub(r"[^\w'.+-]", "", cleaned).lower().strip(".")
+        if k:
+            keys.append(k)
+            orig.append(cleaned or k)
+    return keys, orig
+
+
+def compute_swaps(raw: str, clean: str, mode: str = "default") -> list[str]:
+    if mode == "command":
+        return []
+    a, _ = _swap_tokens(raw)
+    b, b_orig = _swap_tokens(clean)
+    swaps = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(a=a, b=b, autojunk=False).get_opcodes():
+        if op == "replace":
+            swaps.append(f"{' '.join(a[i1:i2])} -> {' '.join(b_orig[j1:j2])}")
+    return swaps
+
+
+def run_reclean(
+    raw: str,
+    mode: str,
+    script: Path | None = None,
+    env: dict[str, str] | None = None,
+    timeout: float = 25.0,
+) -> tuple[bool, str]:
+    """Run voxtype-postprocess.sh <mode> on raw text without touching clipboard or history."""
+    pp = (SCRIPTS / "voxtype-postprocess.sh") if script is None else script
+    run_env = dict(os.environ if env is None else env)
+    run_env["PP_KEEP_ON_CLIPBOARD"] = "0"
+    run_env["PP_NO_HISTORY"] = "1"
+    run_env["VOXTYPE_STREAM_OUTPUT"] = "0"
+    try:
+        proc = subprocess.run(
+            [str(pp), mode],
+            input=raw,
+            text=True,
+            capture_output=True,
+            env=run_env,
+            timeout=timeout,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "Re-clean timed out"
+    except OSError as exc:
+        return False, f"Could not run postprocess: {exc}"
+    if proc.returncode != 0:
+        return False, f"Postprocess failed (exit {proc.returncode})"
+    out = proc.stdout.strip()
+    if not out:
+        return False, "Postprocess returned empty output"
+    return True, out
+
+
+def update_history_entry(
+    history_path: Path,
+    entry: dict,
+    new_clean: str,
+    new_mode: str | None = None,
+) -> bool:
+    """Atomically update a matching entry in history.jsonl with new cleaned text and mode."""
+    if not history_path.exists():
+        return False
+    lines = history_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    target_ts = entry.get("ts")
+    target_raw = entry.get("raw")
+    hit_idx = -1
+    parsed_hit: dict | None = None
+    for idx in range(len(lines) - 1, -1, -1):
+        line = lines[idx].strip()
+        if not line:
+            continue
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(d, dict) and d.get("ts") == target_ts and d.get("raw") == target_raw:
+            hit_idx = idx
+            parsed_hit = d
+            break
+    if hit_idx < 0 or parsed_hit is None:
+        return False
+    eff_mode = new_mode or parsed_hit.get("mode") or "default"
+    parsed_hit["clean"] = new_clean
+    parsed_hit["mode"] = eff_mode
+    parsed_hit["swaps"] = compute_swaps(parsed_hit.get("raw", ""), new_clean, eff_mode)
+    lines[hit_idx] = json.dumps(parsed_hit, ensure_ascii=False)
+    tmp = history_path.with_suffix(".jsonl.tmp")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    tmp.replace(history_path)
+    return True
+
+
 def compute_insights(entries: list[dict]) -> dict:
     total = len(entries)
     words_total = sum(len((e.get("clean") or e.get("raw") or "").split()) for e in entries)
-    hours_saved = words_total / (40.0 * 60.0)
+    per_take_wpm: list[float] = []
+    total_audio_ms = 0
+    for e in entries:
+        wpm = take_wpm(e)
+        if wpm is not None:
+            per_take_wpm.append(wpm)
+            total_audio_ms += int(e.get("audio_ms") or 0)
+    median_wpm = statistics.median(per_take_wpm) if per_take_wpm else None
     pp = sorted(int(e.get("pp_ms") or 0) for e in entries if e.get("pp_ms"))
     p50 = pp[len(pp) // 2] if pp else 0
     p90 = pp[int(len(pp) * 0.9)] if pp else 0
@@ -1059,7 +1197,10 @@ def compute_insights(entries: list[dict]) -> dict:
     return {
         "total": total,
         "words": words_total,
-        "hours_saved": hours_saved,
+        "per_take_wpm": per_take_wpm,
+        "median_wpm": median_wpm,
+        "wpm_count": len(per_take_wpm),
+        "total_audio_ms": total_audio_ms,
         "p50": p50,
         "p90": p90,
         "success_pct": success_pct,
@@ -1073,9 +1214,10 @@ def compute_insights(entries: list[dict]) -> dict:
 
 def build_ai_audit_prompt(entries: list[dict], ins: dict, suggs: list[tuple[str, str, int]]) -> str:
     flagged = [e for e in entries if e.get("review")][:10]
+    wpm_str = f"Median pace: {ins['median_wpm']:.0f} WPM ({ins['wpm_count']} takes)" if ins.get("median_wpm") else "Median pace: n/a"
     lines = [
         "# Voxtype Dictation Audit",
-        f"- Total takes: {ins['total']} | Words: {ins['words']:,} (~{ins['hours_saved']:.1f} hrs saved) | Cleanup success: {ins['success_pct']:.1f}% | Latency P50/P90: {ins['p50']}ms / {ins['p90']}ms",
+        f"- Total takes: {ins['total']} | Words: {ins['words']:,} | {wpm_str} | Cleanup success: {ins['success_pct']:.1f}% | Latency P50/P90: {ins['p50']}ms / {ins['p90']}ms",
         f"- Modes: {dict(ins['by_mode'])} | Providers: {dict(ins['by_via'])}",
         "",
         "## Unlearned safe candidates",
@@ -1113,6 +1255,9 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         self.selected_entry: dict | None = None
         self.filter_mode = "all"
         self.swap_checks: list[tuple[Gtk.CheckButton, str, str]] = []
+        self._reclean_gen = 0
+        self._reclean_pending: tuple[dict, str, str] | None = None
+        self._reclean_profiles: list[str] = []
         self._toast_timer_id: int | None = None
         self._toast_hovered = False
         self._undo_cb: Callable[[], None] | None = None
@@ -1533,7 +1678,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         # Column header
         hdr = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         hdr.add_css_class("table-header")
-        for text, w, exp in [("TIME", 54, False), ("MODE", 70, False), ("TRANSCRIPT", 0, True), ("STATUS", 92, False), ("SPEED", 66, False)]:
+        for text, w, exp in [("TIME", 54, False), ("MODE", 70, False), ("TRANSCRIPT", 0, True), ("STATUS", 92, False), ("SPEED", 112, False)]:
             lbl = Gtk.Label(label=text, xalign=0, hexpand=exp)
             lbl.add_css_class("table-col")
             if w:
@@ -1631,6 +1776,47 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         ed_sc.set_child(self.clean_view)
         drawer.append(ed_sc)
 
+        # Re-clean preview box (shown after background Re-clean finishes)
+        self.reclean_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self.reclean_box.add_css_class("diff-card")
+        self.reclean_box.set_visible(False)
+        rc_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        self.reclean_hdr = Gtk.Label(label="RE-CLEAN PREVIEW", xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
+        self.reclean_hdr.add_css_class("section-kicker")
+        self.reclean_keep_btn = Gtk.Button(label="Keep")
+        self.reclean_keep_btn.add_css_class("btn-primary")
+        self.reclean_keep_btn.connect("clicked", self._on_reclean_keep)
+        rc_disc = Gtk.Button(label="Discard")
+        rc_disc.add_css_class("btn-ghost")
+        rc_disc.connect("clicked", self._on_reclean_discard)
+        rc_top.append(self.reclean_hdr)
+        rc_top.append(self.reclean_keep_btn)
+        rc_top.append(rc_disc)
+        self.reclean_box.append(rc_top)
+        rc_sc = Gtk.ScrolledWindow(
+            hscrollbar_policy=Gtk.PolicyType.NEVER,
+            propagate_natural_width=False,
+            propagate_natural_height=False,
+        )
+        rc_sc.set_size_request(-1, 86)
+        self.reclean_diff = Gtk.Label(xalign=0, yalign=0, wrap=True, selectable=True)
+        self.reclean_diff.set_max_width_chars(44)
+        self.reclean_diff.set_use_markup(True)
+        rc_sc.set_child(self.reclean_diff)
+        self.reclean_box.append(rc_sc)
+        drawer.append(self.reclean_box)
+
+        # Re-clean row (profile picker + Re-clean button)
+        rc_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self._reclean_profiles = available_profiles()
+        self.reclean_mode_dd = Gtk.DropDown.new_from_strings(self._reclean_profiles)
+        self.reclean_mode_dd.set_tooltip_text("Profile mode for Re-clean")
+        self.reclean_btn = Gtk.Button(label="Re-clean", tooltip_text="Re-run cleanup on the raw transcript without touching clipboard or history")
+        self.reclean_btn.add_css_class("btn-secondary")
+        self.reclean_btn.connect("clicked", self._on_reclean_clicked)
+        rc_row.append(self.reclean_mode_dd)
+        rc_row.append(self.reclean_btn)
+
         # Primary CTA row
         acts = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.learn_btn = Gtk.Button(label="Learn & Copy", hexpand=True, tooltip_text="Save word edits & copy cleaned text (Ctrl+Enter)")
@@ -1650,6 +1836,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         acts.append(self.replay_btn)
         acts.append(vocab_btn)
         acts.append(copy_btn)
+        drawer.append(rc_row)
         drawer.append(acts)
 
         self.drawer_revealer.set_child(drawer)
@@ -1819,13 +2006,27 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         status.set_size_request(92, -1)
         line.append(status)
 
-        ms = Gtk.Label(label=f"{d.get('pp_ms', 0)} ms", xalign=1)
+        wpm = take_wpm(d)
+        speed_txt = f"{d.get('pp_ms', 0)} ms · {int(round(wpm))} wpm" if wpm is not None else f"{d.get('pp_ms', 0)} ms"
+        ms = Gtk.Label(label=speed_txt, xalign=1)
         ms.add_css_class("mono-num")
-        ms.set_size_request(66, -1)
+        ms.set_size_request(112, -1)
         line.append(ms)
 
         row.set_child(line)
         return row
+
+    def _sync_reclean_profiles(self, current_mode: str | None = None) -> None:
+        profs = available_profiles()
+        if current_mode and current_mode not in profs:
+            profs.append(current_mode)
+        if profs != self._reclean_profiles:
+            self._reclean_profiles = profs
+            self.reclean_mode_dd.set_model(Gtk.StringList.new(profs))
+        if current_mode and current_mode in self._reclean_profiles:
+            self.reclean_mode_dd.set_selected(self._reclean_profiles.index(current_mode))
+        elif self._reclean_profiles:
+            self.reclean_mode_dd.set_selected(0)
 
     def _on_history_selected(self, _lb, row) -> None:
         if row is None:
@@ -1833,12 +2034,20 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             return
         d = row._entry
         self.selected_entry = d
+        self._reclean_gen += 1
+        self._reclean_pending = None
+        self.reclean_box.set_visible(False)
+        self.reclean_btn.set_sensitive(True)
+        self.reclean_btn.set_label("Re-clean")
+        self._sync_reclean_profiles(d.get("mode") or "default")
         ts = (d.get("ts") or "")[11:16] or "—"
         date = (d.get("ts") or "")[:10]
         self.detail_title.set_text(f"Dictation · {ts}")
         rev = f" · {d['review']}" if d.get("review") else ""
+        wpm = take_wpm(d)
+        wpm_meta = f" · {int(round(wpm))} WPM" if wpm is not None else ""
         self.detail_meta.set_text(
-            f"{date} · {d.get('mode', '?')} · {d.get('via', '?')} · {d.get('pp_ms', 0)} ms (LLM {d.get('llm_ms', 0)} ms){rev}"
+            f"{date} · {d.get('mode', '?')} · {d.get('via', '?')} · {d.get('pp_ms', 0)} ms (LLM {d.get('llm_ms', 0)} ms){wpm_meta}{rev}"
         )
         self.diff_label.set_markup(diff_markup(d.get("raw", ""), d.get("clean", "")))
         self.clean_view.get_buffer().set_text(d.get("clean", ""))
@@ -1879,6 +2088,67 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         # A refresh re-selecting the row you had is not you opening it.
         if not getattr(self, "_restoring_selection", False):
             self._set_drawer_open(True)
+
+    def _on_reclean_clicked(self, _btn) -> None:
+        entry = self.selected_entry
+        if not entry or not entry.get("raw"):
+            return
+        idx = self.reclean_mode_dd.get_selected()
+        mode = self._reclean_profiles[idx] if 0 <= idx < len(self._reclean_profiles) else (entry.get("mode") or "default")
+        self._reclean_gen += 1
+        gen = self._reclean_gen
+        raw = entry.get("raw", "")
+        self.reclean_btn.set_sensitive(False)
+        self.reclean_btn.set_label("Re-cleaning…")
+        self.reclean_box.set_visible(False)
+
+        def worker() -> None:
+            ok, out = run_reclean(raw, mode)
+            GLib.idle_add(self._on_reclean_done, gen, entry, mode, ok, out)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_reclean_done(self, gen: int, entry: dict, mode: str, ok: bool, out: str) -> bool:
+        if gen != self._reclean_gen or self.selected_entry is not entry:
+            return False
+        self.reclean_btn.set_sensitive(True)
+        self.reclean_btn.set_label("Re-clean")
+        if not ok:
+            self.show_toast(out)
+            return False
+        self._reclean_pending = (entry, mode, out)
+        self.reclean_hdr.set_text(f"RE-CLEAN RESULT ({mode})")
+        self.reclean_diff.set_markup(diff_markup(entry.get("raw", ""), out))
+        self.reclean_box.set_visible(True)
+        return False
+
+    def _on_reclean_keep(self, _btn) -> None:
+        pending = self._reclean_pending
+        if not pending:
+            return
+        entry, mode, new_clean = pending
+        prev_clean = entry.get("clean", "")
+        prev_mode = entry.get("mode", "default")
+        self._reclean_pending = None
+        self.reclean_box.set_visible(False)
+        if not update_history_entry(HISTORY, entry, new_clean, mode):
+            self.show_toast("Could not update history entry")
+            return
+        entry["clean"] = new_clean
+        entry["mode"] = mode
+        entry["swaps"] = compute_swaps(entry.get("raw", ""), new_clean, mode)
+        self.diff_label.set_markup(diff_markup(entry.get("raw", ""), new_clean))
+        self.clean_view.get_buffer().set_text(new_clean)
+        self.reload_all()
+
+        def undo() -> None:
+            update_history_entry(HISTORY, entry, prev_clean, prev_mode)
+
+        self.show_toast(f"Kept re-cleaned text ({mode})", undo_cb=undo)
+
+    def _on_reclean_discard(self, _btn) -> None:
+        self._reclean_pending = None
+        self.reclean_box.set_visible(False)
 
     def _on_replay_audio(self, _btn) -> None:
         wav = RT / "last_take.wav"
@@ -2945,25 +3215,25 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         # 4 impact summary cards
         stats_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12, homogeneous=True)
         self.ins_words = Gtk.Label(label="—", xalign=0)
-        self.ins_saved = Gtk.Label(label="—", xalign=0)
+        self.ins_wpm = Gtk.Label(label="—", xalign=0)
+        self.ins_wpm_sub = Gtk.Label(label="median WPM", xalign=0)
         self.ins_acc = Gtk.Label(label="—", xalign=0)
         self.ins_p90 = Gtk.Label(label="—", xalign=0)
-        for lbl_title, val_w, sub in [
-            ("Words dictated", self.ins_words, "all recorded takes"),
-            ("Est. time saved", self.ins_saved, "vs 40 WPM typing"),
-            ("Cleanup reliability", self.ins_acc, "non-fallback rate"),
-            ("P50 / P90 latency", self.ins_p90, "end-to-end cleanup"),
+        for lbl_title, val_w, sub_w in [
+            ("Words dictated", self.ins_words, Gtk.Label(label="all recorded takes", xalign=0)),
+            ("Speaking pace", self.ins_wpm, self.ins_wpm_sub),
+            ("Cleanup reliability", self.ins_acc, Gtk.Label(label="non-fallback rate", xalign=0)),
+            ("P50 / P90 latency", self.ins_p90, Gtk.Label(label="end-to-end cleanup", xalign=0)),
         ]:
             card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
             card.add_css_class("kpi-card")
             t = Gtk.Label(label=lbl_title, xalign=0)
             t.add_css_class("kpi-label")
             val_w.add_css_class("kpi-value")
-            s = Gtk.Label(label=sub, xalign=0)
-            s.add_css_class("kpi-sub")
+            sub_w.add_css_class("kpi-sub")
             card.append(t)
             card.append(val_w)
-            card.append(s)
+            card.append(sub_w)
             stats_row.append(card)
         root.append(stats_row)
 
@@ -3027,7 +3297,13 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
     def _render_insights(self) -> None:
         ins = compute_insights(self.history)
         self.ins_words.set_text(f"{ins['words']:,}")
-        self.ins_saved.set_text(f"{ins['hours_saved']:.1f} hrs")
+        if ins["median_wpm"] is not None:
+            n_wpm = ins["wpm_count"]
+            self.ins_wpm.set_text(f"{int(round(ins['median_wpm']))} WPM")
+            self.ins_wpm_sub.set_text(f"median across {n_wpm} {'take' if n_wpm == 1 else 'takes'}")
+        else:
+            self.ins_wpm.set_text("—")
+            self.ins_wpm_sub.set_text("no timed takes yet")
         self.ins_acc.set_text(f"{ins['success_pct']:.1f}%")
         self.ins_p90.set_text(f"{ins['p50']} / {ins['p90']} ms")
         self.vol_chart.set_bars(ins["by_day"])
