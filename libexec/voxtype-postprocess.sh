@@ -133,7 +133,13 @@ emit() {
     elif [ "$VIA" != snippet ] && [ "$VIA" != private ] && [ "$MODE" != command ] && [ "$FINISHED" != 1 ]; then
       text=$(printf '%s' "$text" | python3 -I "$GATE" finish 2>/dev/null || printf '%s' "$text")
     fi
-    smart_join
+    [ "${PP_NO_HISTORY:-0}" = 1 ] || smart_join
+  fi
+  # Dry-run / Studio Re-clean: print cleaned text only, without touching live
+  # OSD state, window focus, clipboard, or dictation history.
+  if [ "${PP_NO_HISTORY:-0}" = 1 ]; then
+    [ "$STREAMED" = 1 ] || printf '%s' "$text"
+    exit 0
   fi
   # "<epoch ms>" then the text, for the pill to show the cleaned words and
   # mark the ones that changed. Never for a private take.
@@ -157,7 +163,7 @@ emit() {
   # The fork's input method reads the field after a take (field_text.json):
   # never for a private one. field_text.off tells it to stop for a while.
   if [ "$VIA" = private ]; then
-    rm -f "$RT/field_text.json" "$RT/take_selection" "$RT/take_screen_ctx.json" "$RT/take_clip_start"
+    rm -f "$RT/field_text.json" "$RT/take_selection" "$RT/take_screen_ctx.json" "$RT/take_clip_start" "$RT/take_clip"
     : > "$RT/field_text.off"
     exit 0
   fi
@@ -169,7 +175,9 @@ emit() {
   (umask 077; printf '%s\n0\n' "$emit_hash" > "$RT/clip_seen"; printf '%s\n' "$emit_hash" > "$RT/clip_self_hash")
   # PP_KEEP_ON_CLIPBOARD=0: the clipboard is never touched (what you copied
   # stays; a failed typing still lands there through voxtype's own fallback).
-  keep_clip=$(sed -n 's/^PP_KEEP_ON_CLIPBOARD=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
+  # Environment overrides postprocess.env so callers (e.g. Studio Re-clean) can force 0.
+  keep_clip="${PP_KEEP_ON_CLIPBOARD:-}"
+  [ -z "$keep_clip" ] && keep_clip=$(sed -n 's/^PP_KEEP_ON_CLIPBOARD=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
   if [ "${keep_clip:-1}" != 0 ] && command -v wl-copy >/dev/null 2>&1; then
     wl-copy -- "$text" </dev/null >/dev/null 2>&1 &
   fi
@@ -179,7 +187,7 @@ emit() {
   # with stdio detached: voxtype types only once this script exits, and the
   # Python start-up was ~40ms on every insert.
   RV_TS="$(date -Is)" RV_MODE="$MODE" RV_VIA="$VIA" RV_RAW="$RAW_ORIG" RV_CLEAN="$text" \
-  RV_PP="$(( $(date +%s%3N) - T0 ))" RV_LLM="$LLM_MS" RV_SCREEN_TERMS="${PP_SCREEN_TERMS:-}" \
+  RV_PP="$(( $(date +%s%3N) - T0 ))" RV_LLM="$LLM_MS" RV_T0="$T0" RV_SCREEN_TERMS="${PP_SCREEN_TERMS:-}" \
     python3 "$SCRIPT_DIR/voxtype-review.py" </dev/null >/dev/null 2>&1 &
   exit 0
 }
@@ -192,92 +200,132 @@ GATE="$SCRIPT_DIR/voxtype_pp_gate_run.py"
 # whichever one has focus now. Older than 20 minutes is a previous take.
 TARGET="$RT/target_window"
 cls=""; title=""; kpid=""
-age=99999
-[ -f "$TARGET" ] && age=$(( $(date +%s) - $(stat -c %Y "$TARGET" 2>/dev/null || echo 0) ))
-if [ "$age" -le 1200 ]; then
-  win=$(cat "$TARGET" 2>/dev/null)
-else
-  win=$(active_window_json)
-fi
-cls=$(printf '%s' "$win" | jq -r '.class // empty' 2>/dev/null || true)
-title=$(printf '%s' "$win" | jq -r '.title // empty' 2>/dev/null || true)
-kpid=$(printf '%s' "$win" | jq -r '.pid // empty' 2>/dev/null || true)
-
-# Recover profile when voxtype streaming mode invokes default post_process without profile arg
-if [ "$MODE" = default ]; then
-  pf="$RT/target_profile"
-  if [ -f "$pf" ] && [ $(( $(date +%s) - $(stat -c %Y "$pf" 2>/dev/null || echo 0) )) -le 1200 ]; then
-    p_saved=$(cat "$pf" 2>/dev/null || true)
-    case "$p_saved" in terminal|chat|command) MODE="$p_saved" ;; agent) MODE=terminal ;; esac
-  fi
-  if [ "$MODE" = default ] && [ -n "$cls" ]; then
-    case "$(printf '%s' "$cls" | tr '[:upper:]' '[:lower:]')" in
-      ghostty|kitty|alacritty|foot|wezterm|konsole|xterm|*terminal*|neovide|cursor|code|code-oss|zed|dev.zed*|com.t3tools.t3code|devin-desktop*|jetbrains-*|obsidian)
-        MODE=terminal ;;
-      zapzap|slack|discord|vesktop|webcord|telegram*|whatsapp*|signal*|beeper*|ferdium*|franz*)
-        MODE=chat ;;
-    esac
-  fi
-fi
-
-# Screen & draft context: prefer the pre-captured background snapshot from
-# voxtype-toggle.sh (0 ms on the stop->type path); fall back to live capture
-# when invoked from voxtype's built-in hotkey without voxtype-toggle.sh.
 SCREEN_RAW=""
 DRAFT_RAW=""
 AT_SPI_PASSWORD=0
+SEL_RAW=""
+CLIP_RAW=""
 PP_SCREEN_CONTEXT=$(sed -n 's/^PP_SCREEN_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
 PP_APP_CONTEXT=$(sed -n 's/^PP_APP_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
 PP_CLIPBOARD_CONTEXT=$(sed -n 's/^PP_CLIPBOARD_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
 PP_PRIVATE_GUARD=$(sed -n 's/^PP_PRIVATE_GUARD=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
 
-ctx_json=""
-SC_CACHE="$RT/take_screen_ctx.json"
-if [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
-  if [ -f "$SC_CACHE" ] && [ $(( $(date +%s) - $(stat -c %Y "$SC_CACHE" 2>/dev/null || echo 0) )) -le 1200 ]; then
-    ctx_json=$(cat "$SC_CACHE" 2>/dev/null || true)
-  elif [ "$cls" = kitty ] && [ -n "$kpid" ]; then
-    sock="${XDG_RUNTIME_DIR:-/run/user/$UID}/mykitty-$kpid"
-    [ -S "$sock" ] && SCREEN_RAW=$(timeout 0.4 kitten @ --to "unix:$sock" get-text --match state:focused --extent screen 2>/dev/null || true)
+if [ "${PP_NO_HISTORY:-0}" != 1 ]; then
+  age=99999
+  [ -f "$TARGET" ] && age=$(( $(date +%s) - $(stat -c %Y "$TARGET" 2>/dev/null || echo 0) ))
+  if [ "$age" -le 1200 ]; then
+    win=$(cat "$TARGET" 2>/dev/null)
   else
-    ctx_json=$(timeout 0.35 python3 -I "$SCRIPT_DIR/voxtype_screen_ctx.py" "${kpid:-0}" "$cls" "$title" 2>/dev/null || true)
+    win=$(active_window_json)
   fi
-  if [ -n "$ctx_json" ]; then
-    AT_SPI_PASSWORD=$(printf '%s' "$ctx_json" | jq -r 'if .password then 1 else 0 end' 2>/dev/null || echo 0)
-    DRAFT_RAW=$(printf '%s' "$ctx_json" | jq -r '.draft // empty' 2>/dev/null || true)
-    SCREEN_RAW=$(printf '%s' "$ctx_json" | jq -r '.screen // empty' 2>/dev/null || true)
+  if [ -n "$win" ] && win_tsv=$(printf '%s' "$win" | jq -r '[
+    "x" + (.class // "" | tostring),
+    "x" + (.title // "" | tostring),
+    "x" + (.pid // "" | tostring)
+  ] | @tsv' 2>/dev/null) && [ -n "$win_tsv" ]; then
+    IFS=$'\t' read -r cls title kpid <<<"$win_tsv"
+    printf -v cls '%b' "${cls#x}"
+    printf -v title '%b' "${title#x}"
+    printf -v kpid '%b' "${kpid#x}"
   fi
-fi
 
-# Selection & fresh (<=15s) clipboard raw text (redacted inside gate prepare)
-SEL_RAW=""
-CLIP_RAW=""
-if [ "${PP_APP_CONTEXT:-1}" = 1 ] && [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
-  if [ -f "$RT/take_selection" ] && [ $(( $(date +%s) - $(stat -c %Y "$RT/take_selection" 2>/dev/null || echo 0) )) -le 900 ]; then
-    SEL_RAW=$(head -c 600 "$RT/take_selection" 2>/dev/null || true)
-  fi
-  if [ "${PP_CLIPBOARD_CONTEXT:-1}" = 1 ] && command -v wl-paste >/dev/null 2>&1; then
-    # A password manager marks its copies: they never go to a model. When the
-    # types cannot be read in time, the clipboard is not read either.
-    cur_clip=""
-    if clip_types=$(timeout 0.15 wl-paste --list-types 2>/dev/null) \
-      && ! grep -qx 'x-kde-passwordManagerHint' <<<"$clip_types"; then
-      cur_clip=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 || true)
+  # Recover profile when voxtype streaming mode invokes default post_process without profile arg
+  if [ "$MODE" = default ]; then
+    pf="$RT/target_profile"
+    if [ -f "$pf" ] && [ $(( $(date +%s) - $(stat -c %Y "$pf" 2>/dev/null || echo 0) )) -le 1200 ]; then
+      p_saved=$(cat "$pf" 2>/dev/null || true)
+      case "$p_saved" in terminal|chat|command) MODE="$p_saved" ;; agent) MODE=terminal ;; esac
     fi
-    if [ -n "${cur_clip//[[:space:]]/}" ]; then
-      cur_hash=$(printf '%s' "$cur_clip" | sha256sum | awk '{print $1}')
-      self_hash=$(awk 'NR==1{print $1}' "$RT/clip_self_hash" 2>/dev/null || true)
-      seen_hash=$(awk 'NR==1{print $1}' "$RT/clip_seen" 2>/dev/null || true)
-      seen_ts=$(awk 'NR==2{print $1}' "$RT/clip_seen" 2>/dev/null || echo 0)
-      start_hash=$(awk 'NR==1{print $1}' "$RT/take_clip_start" 2>/dev/null || true)
+    if [ "$MODE" = default ] && [ -n "$cls" ]; then
+      case "$(printf '%s' "$cls" | tr '[:upper:]' '[:lower:]')" in
+        ghostty|kitty|alacritty|foot|wezterm|konsole|xterm|*terminal*|neovide|cursor|code|code-oss|zed|dev.zed*|com.t3tools.t3code|devin-desktop*|jetbrains-*|obsidian)
+          MODE=terminal ;;
+        zapzap|slack|discord|vesktop|webcord|telegram*|whatsapp*|signal*|beeper*|ferdium*|franz*)
+          MODE=chat ;;
+      esac
+    fi
+  fi
+
+  # Screen & draft context: prefer the pre-captured background snapshot from
+  # voxtype-toggle.sh (0 ms on the stop->type path); fall back to live capture
+  # when invoked from voxtype's built-in hotkey without voxtype-toggle.sh.
+  ctx_json=""
+  SC_CACHE="$RT/take_screen_ctx.json"
+  if [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
+    if [ -f "$SC_CACHE" ] && [ $(( $(date +%s) - $(stat -c %Y "$SC_CACHE" 2>/dev/null || echo 0) )) -le 1200 ]; then
+      ctx_json=$(cat "$SC_CACHE" 2>/dev/null || true)
+    elif [ "$cls" = kitty ] && [ -n "$kpid" ]; then
+      sock="${XDG_RUNTIME_DIR:-/run/user/$UID}/mykitty-$kpid"
+      [ -S "$sock" ] && SCREEN_RAW=$(timeout 0.4 kitten @ --to "unix:$sock" get-text --match state:focused --extent screen 2>/dev/null || true)
+    else
+      ctx_json=$(timeout 0.35 python3 -I "$SCRIPT_DIR/voxtype_screen_ctx.py" "${kpid:-0}" "$cls" "$title" 2>/dev/null || true)
+    fi
+    if [ -n "$ctx_json" ] && ctx_tsv=$(printf '%s' "$ctx_json" | jq -r '[
+      "x" + (if .password then "1" else "0" end),
+      "x" + (.draft // "" | tostring),
+      "x" + (.screen // "" | tostring)
+    ] | @tsv' 2>/dev/null) && [ -n "$ctx_tsv" ]; then
+      IFS=$'\t' read -r AT_SPI_PASSWORD DRAFT_RAW SCREEN_RAW <<<"$ctx_tsv"
+      AT_SPI_PASSWORD="${AT_SPI_PASSWORD#x}"
+      printf -v DRAFT_RAW '%b' "${DRAFT_RAW#x}"
+      printf -v SCREEN_RAW '%b' "${SCREEN_RAW#x}"
+    fi
+  fi
+
+  # Selection & fresh (<=15s) clipboard raw text (redacted inside gate prepare)
+  if [ "${PP_APP_CONTEXT:-1}" = 1 ] && [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
+    if [ -f "$RT/take_selection" ] && [ $(( $(date +%s) - $(stat -c %Y "$RT/take_selection" 2>/dev/null || echo 0) )) -le 900 ]; then
+      SEL_RAW=$(head -c 600 "$RT/take_selection" 2>/dev/null || true)
+    fi
+    if [ "${PP_CLIPBOARD_CONTEXT:-1}" = 1 ]; then
       now_s=$(date +%s)
-      if [ "$cur_hash" != "$self_hash" ]; then
-        if [ "$cur_hash" != "$seen_hash" ]; then
-          (umask 077; printf '%s\n%s\n' "$cur_hash" "$now_s" > "$RT/clip_seen")
-          seen_ts=$now_s
+      need_live_clip=1
+      if [ -f "$RT/take_clip_start" ] && [ $(( now_s - $(stat -c %Y "$RT/take_clip_start" 2>/dev/null || echo 0) )) -le 900 ]; then
+        start_hash=""
+        IFS= read -r start_hash < "$RT/take_clip_start" || true
+        if [ "$start_hash" = secret ] || [ "$start_hash" = empty ]; then
+          need_live_clip=0
+        elif [ -n "$start_hash" ]; then
+          self_hash=""; seen_hash=""; seen_ts=0
+          [ -r "$RT/clip_self_hash" ] && IFS= read -r self_hash < "$RT/clip_self_hash" || true
+          if [ -r "$RT/clip_seen" ]; then
+            { IFS= read -r seen_hash || true; IFS= read -r seen_ts || true; } < "$RT/clip_seen"
+          fi
+          if [ "$start_hash" = "$self_hash" ]; then
+            need_live_clip=0
+          elif [ "$start_hash" = "$seen_hash" ] && [ $(( now_s - ${seen_ts:-0} )) -gt 15 ]; then
+            need_live_clip=0
+          elif [ -f "$RT/take_clip" ]; then
+            CLIP_RAW=$(head -c 800 "$RT/take_clip" 2>/dev/null || true)
+            need_live_clip=0
+          fi
         fi
-        if [ "$cur_hash" != "$start_hash" ] || [ $(( now_s - seen_ts )) -le 15 ]; then
-          CLIP_RAW="$cur_clip"
+      fi
+      if [ "$need_live_clip" = 1 ] && command -v wl-paste >/dev/null 2>&1; then
+        # A password manager marks its copies: they never go to a model. When the
+        # types cannot be read in time, the clipboard is not read either.
+        cur_clip=""
+        if clip_types=$(timeout 0.15 wl-paste --list-types 2>/dev/null) \
+          && ! grep -qx 'x-kde-passwordManagerHint' <<<"$clip_types"; then
+          cur_clip=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 || true)
+        fi
+        if [ -n "${cur_clip//[[:space:]]/}" ]; then
+          cur_hash=$(printf '%s' "$cur_clip" | sha256sum | awk '{print $1}')
+          self_hash=""; seen_hash=""; seen_ts=0; start_hash=""
+          [ -r "$RT/clip_self_hash" ] && IFS= read -r self_hash < "$RT/clip_self_hash" || true
+          if [ -r "$RT/clip_seen" ]; then
+            { IFS= read -r seen_hash || true; IFS= read -r seen_ts || true; } < "$RT/clip_seen"
+          fi
+          [ -r "$RT/take_clip_start" ] && IFS= read -r start_hash < "$RT/take_clip_start" || true
+          if [ "$cur_hash" != "$self_hash" ]; then
+            if [ "$cur_hash" != "$seen_hash" ]; then
+              (umask 077; printf '%s\n%s\n' "$cur_hash" "$now_s" > "$RT/clip_seen")
+              seen_ts=$now_s
+            fi
+            if [ "$cur_hash" != "$start_hash" ] || [ $(( now_s - ${seen_ts:-0} )) -le 15 ]; then
+              CLIP_RAW="$cur_clip"
+            fi
+          fi
         fi
       fi
     fi
@@ -298,8 +346,30 @@ PREP_JSON=$(PPX_RAW="$raw" PPX_TITLE="$title" PPX_SCREEN="$SCREEN_RAW" PPX_DRAFT
     private_guard:$private_guard, atspi_password:$atspi_password}' \
   | python3 -I "$GATE" prepare 2>/dev/null || true)
 
-if [ -n "$PREP_JSON" ]; then
-  why=$(printf '%s' "$PREP_JSON" | jq -r '.private_why // empty' 2>/dev/null || true)
+if [ -n "$PREP_JSON" ] && prep_tsv=$(printf '%s' "$PREP_JSON" | jq -r '[
+  "x" + (.private_why // "" | tostring),
+  "x" + (if .empty then "1" else "0" end),
+  "x" + (if .snippet != null then "1" else "0" end),
+  "x" + (if .snippet != null then (.snippet | tostring) else "" end),
+  "x" + (if .numbers_only or .trivial then "1" else "0" end),
+  "x" + (.heard // "" | tostring),
+  "x" + (.hard // "" | tostring),
+  "x" + (.hard_framed // "" | tostring),
+  "x" + (.title_pair // "" | tostring),
+  "x" + (.app // "" | tostring),
+  "x" + (.screen // "" | tostring),
+  "x" + (.draft // "" | tostring),
+  "x" + (.selection // "" | tostring),
+  "x" + (.clipboard // "" | tostring),
+  "x" + (.screen_terms // "" | tostring),
+  "x" + (.hints // "" | tostring)
+] | @tsv' 2>/dev/null) && [ -n "$prep_tsv" ]; then
+  IFS=$'\t' read -r why prep_empty has_snip snip_hit NUMBERS_ONLY HEARD prep_hard RAW_FRAMED \
+    PP_TITLE_PAIR APP SCREEN DRAFT SEL_CTX CLIP_CTX PP_SCREEN_TERMS HINTS <<<"$prep_tsv"
+  printf -v why '%b' "${why#x}"
+  prep_empty="${prep_empty#x}"
+  has_snip="${has_snip#x}"
+  printf -v snip_hit '%b' "${snip_hit#x}"
   if [ -n "$why" ]; then
     printf '%s  private  %s: typed as heard, not sent or kept\n' "$(date +%T)" "$why" >> "$PP_LOG"
     date +%s > "$RT/pp_private"
@@ -308,26 +378,25 @@ if [ -n "$PREP_JSON" ]; then
     [ "$MODE" = command ] && emit ""
     emit "$raw"
   fi
-  if [ "$(printf '%s' "$PREP_JSON" | jq -r 'if .empty then 1 else 0 end' 2>/dev/null)" = 1 ]; then
+  if [ "$prep_empty" = 1 ]; then
     emit ""
   fi
-  snip_hit=$(printf '%s' "$PREP_JSON" | jq -r 'if .snippet != null then .snippet else empty end' 2>/dev/null || true)
-  if [ -n "$snip_hit" ] && [ "$(printf '%s' "$PREP_JSON" | jq -r 'if .snippet != null then 1 else 0 end' 2>/dev/null)" = 1 ]; then
+  if [ "$has_snip" = 1 ] && [ -n "$snip_hit" ]; then
     VIA=snippet
     emit "$snip_hit"
   fi
-  NUMBERS_ONLY=$(printf '%s' "$PREP_JSON" | jq -r 'if .numbers_only or .trivial then 1 else 0 end' 2>/dev/null || echo 0)
-  HEARD=$(printf '%s' "$PREP_JSON" | jq -r '.heard // empty' 2>/dev/null || printf '%s' "$raw")
-  raw=$(printf '%s' "$PREP_JSON" | jq -r '.hard // empty' 2>/dev/null || printf '%s' "$HEARD")
-  RAW_FRAMED=$(printf '%s' "$PREP_JSON" | jq -r '.hard_framed // empty' 2>/dev/null || printf '%s' "$raw")
-  PP_TITLE_PAIR=$(printf '%s' "$PREP_JSON" | jq -r '.title_pair // empty' 2>/dev/null || true)
-  APP=$(printf '%s' "$PREP_JSON" | jq -r '.app // empty' 2>/dev/null || true)
-  SCREEN=$(printf '%s' "$PREP_JSON" | jq -r '.screen // empty' 2>/dev/null || true)
-  DRAFT=$(printf '%s' "$PREP_JSON" | jq -r '.draft // empty' 2>/dev/null || true)
-  SEL_CTX=$(printf '%s' "$PREP_JSON" | jq -r '.selection // empty' 2>/dev/null || true)
-  CLIP_CTX=$(printf '%s' "$PREP_JSON" | jq -r '.clipboard // empty' 2>/dev/null || true)
-  PP_SCREEN_TERMS=$(printf '%s' "$PREP_JSON" | jq -r '.screen_terms // empty' 2>/dev/null || true)
-  HINTS=$(printf '%s' "$PREP_JSON" | jq -r '.hints // empty' 2>/dev/null || true)
+  NUMBERS_ONLY="${NUMBERS_ONLY#x}"
+  printf -v HEARD '%b' "${HEARD#x}"
+  printf -v raw '%b' "${prep_hard#x}"
+  printf -v RAW_FRAMED '%b' "${RAW_FRAMED#x}"
+  printf -v PP_TITLE_PAIR '%b' "${PP_TITLE_PAIR#x}"
+  printf -v APP '%b' "${APP#x}"
+  printf -v SCREEN '%b' "${SCREEN#x}"
+  printf -v DRAFT '%b' "${DRAFT#x}"
+  printf -v SEL_CTX '%b' "${SEL_CTX#x}"
+  printf -v CLIP_CTX '%b' "${CLIP_CTX#x}"
+  printf -v PP_SCREEN_TERMS '%b' "${PP_SCREEN_TERMS#x}"
+  printf -v HINTS '%b' "${HINTS#x}"
 else
   NUMBERS_ONLY=0
   HEARD="$raw"
@@ -340,7 +409,7 @@ export PP_TITLE_PAIR PP_SCREEN_TERMS
 # The OSD pill shows this while "Polishing" (the watcher clears it at idle).
 # A streamed take already put what you saw there: keep it, it is what the
 # pill marks the cleanup's changes against.
-[ -s "$RT/live_text" ] || printf '%s\n' "$raw" 2>/dev/null >"$RT/live_text"
+[ "${PP_NO_HISTORY:-0}" = 1 ] || [ -s "$RT/live_text" ] || printf '%s\n' "$raw" 2>/dev/null >"$RT/live_text"
 
 # A single word or a numbers-only take has nothing for an LLM to improve (and raw digits sent to one only risk corruption).
 words=$(wc -w <<< "$raw")
@@ -409,7 +478,7 @@ TAIL='Output only the cleaned text, without the tags.'
 TERMINAL_RULES='Destination: a terminal or code editor, usually a prompt to an AI coding agent (Claude Code, Codex, Cursor chat). Write prose as normal sentences. Keep code identifiers, commands, flags, paths, and git terms (worktrees, rebases, commits) verbatim. Only when the whole dictation is a single shell command, output it lowercase with no trailing period.'
 
 case "$MODE" in
-  terminal)
+  terminal|agent)
     PROMPT="$BASE
 $TERMINAL_RULES
 $TAIL" ;;
