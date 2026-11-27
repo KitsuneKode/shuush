@@ -208,7 +208,7 @@ if [ "$MODE" = default ]; then
   pf="$RT/target_profile"
   if [ -f "$pf" ] && [ $(( $(date +%s) - $(stat -c %Y "$pf" 2>/dev/null || echo 0) )) -le 1200 ]; then
     p_saved=$(cat "$pf" 2>/dev/null || true)
-    case "$p_saved" in terminal|chat|command) MODE="$p_saved" ;; esac
+    case "$p_saved" in terminal|chat|command) MODE="$p_saved" ;; agent) MODE=terminal ;; esac
   fi
   if [ "$MODE" = default ] && [ -n "$cls" ]; then
     case "$(printf '%s' "$cls" | tr '[:upper:]' '[:lower:]')" in

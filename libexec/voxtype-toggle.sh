@@ -115,8 +115,11 @@ start() {  # [profile]
     if [ -z "$profile" ]; then
         class=$(printf '%s' "$win" | jq -r '.class // empty' 2>/dev/null | tr '[:upper:]' '[:lower:]')
         case "$class" in
-            ghostty|kitty|alacritty|foot|wezterm|konsole|xterm|*terminal*|neovide|cursor|code|code-oss|zed|dev.zed*|com.t3tools.t3code|devin-desktop*|jetbrains-*|obsidian)
+            ghostty|kitty|alacritty|foot|wezterm|konsole|xterm|*terminal*|neovide)
                 profile=terminal ;;
+            # Editors and agent apps: a composer that re-renders on every key, so one paste.
+            cursor|code|code-oss|zed|dev.zed*|com.t3tools.t3code|devin-desktop*|jetbrains-*|obsidian)
+                profile=agent ;;
             zapzap|slack|discord|vesktop|webcord|telegram*|whatsapp*|signal*|beeper*|ferdium*|franz*)
                 profile=chat ;;
         esac
