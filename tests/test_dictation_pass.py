@@ -660,9 +660,9 @@ def test_my_clipboard_snippet_expansion_fixtures() -> None:
     multiline_small = lambda: (["text/plain"], b"line one\nline two\nline three")
     assert gate.snippet("my clipboard", table={}, clipboard_reader=multiline_small) == "line one\nline two\nline three"
 
-    # Plain text, single-line >= 2 KB -> allowed (single-line)
+    # Plain text, single-line >= 2 KB -> rejected too: it would be typed out key by key
     big_single = b"a" * 2500
-    assert gate.snippet("my clipboard", table={}, clipboard_reader=lambda: (["text/plain"], big_single)) == big_single.decode()
+    assert gate.snippet("my clipboard", table={}, clipboard_reader=lambda: (["text/plain"], big_single)) is None
 
     # Plain text, multi-line >= 2 KB -> rejected, stays as spoken
     big_multi = (b"line\n" * 500)

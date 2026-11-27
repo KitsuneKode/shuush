@@ -1247,7 +1247,8 @@ _CLIPBOARD_SECRET_MIME = "x-kde-passwordManagerHint"
 
 def validate_clipboard_text(types: list[str], data: bytes) -> str | None:
     """Return plain text for the 'my clipboard' snippet only when the clipboard
-    is plain text, single-line or under 2 KB, and not marked secret."""
+    is plain text under 2 KB and not marked secret (anything longer would be
+    typed out character by character)."""
     clean_types = [t.strip() for t in types if t.strip()]
     if not clean_types or _CLIPBOARD_SECRET_MIME in clean_types:
         return None
@@ -1261,8 +1262,7 @@ def validate_clipboard_text(types: list[str], data: bytes) -> str | None:
         return None
     if not text.strip():
         return None
-    is_single_line = ("\n" not in text and "\r" not in text)
-    if not is_single_line and len(data) >= CLIPBOARD_MAX_BYTES:
+    if len(data) >= CLIPBOARD_MAX_BYTES:
         return None
     return text
 
