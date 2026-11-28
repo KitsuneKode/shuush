@@ -172,19 +172,55 @@ def norm_phrase(s: str) -> str:
     return " ".join(re.sub(r"[^\w'+#]", " ", s.lower()).split())
 
 
-def load_pairs(rewrite: bool = False) -> list[tuple[str, str]]:
+_TERMINAL_CLASS_RE = re.compile(
+    r"^(?:ghostty|kitty|alacritty|foot|wezterm|konsole|xterm|.*terminal.*|neovide|cursor"
+    r"|code|code-oss|zed|dev\.zed.*|com\.t3tools\.t3code|devin-desktop.*|jetbrains-.*|obsidian)$",
+    re.I,
+)
+_CHAT_CLASS_RE = re.compile(
+    r"^(?:zapzap|slack|discord|vesktop|webcord|telegram.*|whatsapp.*|signal.*|beeper.*|ferdium.*|franz.*)$",
+    re.I,
+)
+_BROWSER_CLASS_RE = re.compile(
+    r"^(?:zen|zen-alpha|app\.zen_browser\.zen|firefox.*|chromium.*|google-chrome.*|brave.*|vivaldi.*)$",
+    re.I,
+)
+
+
+def scope_matches(scope: str, mode: str = "", cls: str = "") -> bool:
+    sc = (scope or "").strip().lower()
+    if sc in ("", "global", "all"):
+        return True
+    m = (mode or "").strip().lower()
+    c = (cls or "").strip()
+    if sc in ("terminal", "code", "agent"):
+        return m in ("terminal", "agent") or bool(_TERMINAL_CLASS_RE.match(c))
+    if sc == "chat":
+        return m == "chat" or bool(_CHAT_CLASS_RE.match(c))
+    if sc == "browser":
+        return bool(_BROWSER_CLASS_RE.match(c))
+    target = sc.removeprefix("app:")
+    return bool(target and target in c.lower())
+
+
+def load_pairs(rewrite: bool = False, mode: str | None = None, cls: str | None = None) -> list[tuple[str, str]]:
     """(heard, meant) from corrections.tsv. `rewrite`: only pairs that may be
-    rewritten blindly; a "hint" pair (an English heard word) is left to the
-    model."""
+    rewritten blindly; a "hint" pair (an English heard word or demoted rule)
+    is left to the model. Respects optional 5th-column per-app scope."""
     pairs = []
     if not TSV.exists():
         return pairs
-    for line in TSV.read_text().splitlines():
+    cur_mode = os.environ.get("PP_MODE", "") if mode is None else mode
+    cur_cls = os.environ.get("PP_APP_CLASS", "") if cls is None else cls
+    for line in TSV.read_text(encoding="utf-8", errors="replace").splitlines():
         if not line.strip() or line.startswith("#"):
             continue
         f = line.split("\t")
         if len(f) >= 2 and f[0].strip():
             if rewrite and len(f) >= 3 and f[2].strip() == "hint":
+                continue
+            scope = f[4].strip() if len(f) >= 5 else ""
+            if scope and not scope_matches(scope, mode=cur_mode, cls=cur_cls):
                 continue
             pairs.append((norm_phrase(f[0]), f[1].strip()))
     return pairs
@@ -249,15 +285,21 @@ def _unshield(text: str, kept: list[str]) -> str:
     return re.sub("\ue000(\\d+)\ue001", lambda m: kept[int(m.group(1))], text)
 
 
-def hard_apply(text: str, pairs: list[tuple[str, str]] | None = None, vocab: list[str] | None = None) -> str:
+def hard_apply(
+    text: str,
+    pairs: list[tuple[str, str]] | None = None,
+    vocab: list[str] | None = None,
+    mode: str | None = None,
+    cls: str | None = None,
+) -> str:
     """Rewrite sure names before the model. Ambiguous English stays put.
 
     The one title pair is not applied here. It is a hint: "kite eye" is not
     always "kaitai", and the span gate only keeps the change when the model
     makes it.
     """
-    text, kept = _shield(text, vocab_terms() if vocab is None else vocab)
-    rows = list(load_pairs(rewrite=True) if pairs is None else pairs)
+    text, kept = _shield(text, vocab_terms(mode=mode, cls=cls) if vocab is None else vocab)
+    rows = list(load_pairs(rewrite=True, mode=mode, cls=cls) if pairs is None else pairs)
     rows.sort(key=lambda hm: (-len(hm[0].split()), -len(hm[0])))
     low = text.lower()
     for heard, meant in rows:
@@ -290,7 +332,7 @@ def hint_unsafe(heard: str) -> bool:
     return all(t in HINT_STOP for t in toks)
 
 
-def hint_line(text: str, limit: int = 12) -> str:
+def hint_line(text: str, limit: int = 12, mode: str | None = None, cls: str | None = None) -> str:
     """The <hints> body for text the model is about to see.
 
     Call this after hard_apply. A sure name is already rewritten, so it does
@@ -303,7 +345,7 @@ def hint_line(text: str, limit: int = 12) -> str:
     amb: list[tuple[str, str]] = []
     other: list[tuple[str, str]] = []
     kept: list[str] = []
-    rows = sorted(load_pairs(), key=lambda hm: (-len(hm[0].split()), -len(hm[0])))
+    rows = sorted(load_pairs(mode=mode, cls=cls), key=lambda hm: (-len(hm[0].split()), -len(hm[0])))
     for heard, meant in rows:
         if not heard or not meant or hint_unsafe(heard):
             continue
@@ -1053,22 +1095,58 @@ def _read_stdin() -> str:
 # when no model answered.
 
 VOCAB_FILE = str(CONF / "vocabulary.txt")
+VOCAB_DIR = CONF / "vocabulary.d"
 
 
-def vocab_terms() -> list[str]:
+def _read_vocab_lines(path: Path, min_alnum: int = 3) -> list[str]:
     try:
-        lines = open(VOCAB_FILE, encoding="utf-8").read().splitlines()
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
     out = []
     for line in lines:
         t = line.split("#", 1)[0].strip()
-        if t and len(re.sub(r"[^0-9A-Za-z]", "", t)) >= 3:
+        if t and len(re.sub(r"[^0-9A-Za-z]", "", t)) >= min_alnum:
             out.append(t)
     return out
 
 
+def vocab_terms(mode: str | None = None, cls: str | None = None, min_alnum: int = 3) -> list[str]:
+    """Global vocabulary.txt terms plus matching per-app vocabulary.d/<scope>.txt terms."""
+    cur_mode = os.environ.get("PP_MODE", "") if mode is None else mode
+    cur_cls = os.environ.get("PP_APP_CLASS", "") if cls is None else cls
+    out = _read_vocab_lines(Path(VOCAB_FILE), min_alnum=min_alnum)
+    seen = {t.lower() for t in out}
+    vdir = Path(VOCAB_FILE).parent / "vocabulary.d"
+    if vdir.is_dir():
+        for p in sorted(vdir.glob("*.txt")):
+            if p.is_file() and scope_matches(p.stem, mode=cur_mode, cls=cur_cls):
+                for t in _read_vocab_lines(p, min_alnum=min_alnum):
+                    if t.lower() not in seen:
+                        out.append(t)
+                        seen.add(t.lower())
+    return out
+
+
 _COMMON: set[str] | None = None
+_FALLBACK_COMMON = frozenset(
+    "about after again against all also always another any around back because been before "
+    "being between both build call came change check clean code come could create data day "
+    "different does done down each edit error even every example file files find first fix "
+    "from get give good great group hand have help here high home hooks hosts house how "
+    "idea into just keep know large last left less let life line lines list little live local "
+    "long look made make many may mean might mode more most move much must name need never "
+    "new next night note notes nothing now number off often old once only open order other "
+    "our out over own page part pass path people place plan play point post print project "
+    "pull push put quick quite read real really right room run same save say see seem send "
+    "set setup shell should show side simple since small some something soon sort sound "
+    "start state still stop story study stuff such sure system take talk task tasks tell "
+    "test text than that their them then there these they thing things think this those "
+    "though thought three through time today together told too tool tools top try turn two "
+    "under until update use used user using very want watch way ways week well went were "
+    "what when where which while who why will window with without word words work working "
+    "world would write wrong year years your zero pulse".split()
+)
 
 
 def _common_words() -> set[str]:
@@ -1089,11 +1167,13 @@ def _common_words() -> set[str]:
                     break
             except OSError:
                 continue
+        if not _COMMON:
+            _COMMON = set(_FALLBACK_COMMON)
     return _COMMON
 
 
-def finish(text: str, terms: list[str] | None = None) -> str:
-    terms = vocab_terms() if terms is None else terms
+def finish(text: str, terms: list[str] | None = None, mode: str | None = None, cls: str | None = None) -> str:
+    terms = vocab_terms(mode=mode, cls=cls) if terms is None else terms
     # A term can only match where its letters run in order once spaces and
     # hyphens are gone; skip the rest before compiling a pattern for each.
     squashed = re.sub(r"[\s-]", "", text).lower()
@@ -1398,7 +1478,7 @@ def prepare_payload(req: dict, clipboard_reader=None) -> dict:
             return {"private_why": "", "stripped": stripped, "snippet": snip}
 
     heard = stripped
-    hard = hard_apply(heard)
+    hard = hard_apply(heard, mode=mode, cls=cls)
 
     title_pair = ""
     app_str = ""
@@ -1422,7 +1502,7 @@ def prepare_payload(req: dict, clipboard_reader=None) -> dict:
             if combined:
                 screen_terms = extract_screen_terms(combined)
 
-    hints = hint_line(hard)
+    hints = hint_line(hard, mode=mode, cls=cls)
     return {
         "private_why": "",
         "stripped": stripped,
@@ -1481,6 +1561,10 @@ def main(argv: list[str]) -> int:
         sys.stdout.write(pair + "\x1e" + block)
     elif cmd == "finish":
         sys.stdout.write(expand_inline(finish(_read_stdin())))
+    elif cmd == "vocab":
+        m = argv[2] if len(argv) > 2 else os.environ.get("PP_MODE", "")
+        c = argv[3] if len(argv) > 3 else os.environ.get("PP_APP_CLASS", "")
+        sys.stdout.write(", ".join(vocab_terms(mode=m, cls=c, min_alnum=1)))
     elif cmd == "fallback":
         sys.stdout.write(expand_inline(fallback_clean(_read_stdin())))
     elif cmd == "screen":

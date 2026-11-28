@@ -239,15 +239,29 @@ def main() -> int:
     with locked(hist), hist.open("a", encoding="utf-8") as f:
         f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    # The model's own swaps are not hints. tally() is a no-op kept so this call
-    # stays the one place a future learning rule would hook in. A raw fallback
-    # has no repairs. Hints come from voxtype-learn fix / add.
+    # Record rule applications and feed safe swaps to candidate tracking.
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     try:
         import voxtype_learn
     except Exception:
         voxtype_learn = None
-    if voxtype_learn and via != "passthrough" and swaps:
+    applied_rules: list[list[str]] = []
+    if voxtype_learn and via not in ("passthrough", "private") and swaps:
+        try:
+            active_rules = voxtype_learn.load()
+            seen_applied: set[str] = set()
+            for sw in swaps:
+                if " -> " not in sw:
+                    continue
+                sh, sm = sw.split(" -> ", 1)
+                hk = voxtype_learn.norm(sh)
+                rule = active_rules.get(hk)
+                if rule and voxtype_learn.norm(rule[0]) == voxtype_learn.norm(sm) and hk not in seen_applied:
+                    seen_applied.add(hk)
+                    voxtype_learn.record_applied(hk, rule[0])
+                    applied_rules.append([hk, rule[0]])
+        except Exception:
+            pass
         try:
             voxtype_learn.tally(swaps, screen_terms=e.get("RV_SCREEN_TERMS", ""))
         except Exception:
@@ -255,11 +269,15 @@ def main() -> int:
 
     # Watch the field for the next few minutes: a name you fix by hand there is
     # the strongest mishearing signal there is (voxtype_edit_watch.py).
-    if (disposition in ("delivered", "unknown") and voxtype_learn and e.get("RV_MODE") != "command" and via != "snippet" and len(b) >= 3
+    if (disposition in ("delivered", "unknown") and voxtype_learn and via != "private"
+            and e.get("RV_MODE") != "command" and via != "snippet" and len(b) >= 2
             and voxtype_learn.env_flag("PP_WATCH_EDITS") and voxtype_learn.env_flag("PP_SCREEN_CONTEXT")):
         try:
+            watch_env = dict(os.environ)
+            if applied_rules:
+                watch_env["RV_APPLIED_RULES"] = json.dumps(applied_rules, ensure_ascii=False)
             subprocess.Popen([sys.executable, "-I", str(Path(__file__).resolve().parent / "voxtype_edit_watch.py")],
-                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             env=watch_env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                              start_new_session=True)
         except OSError:
             pass

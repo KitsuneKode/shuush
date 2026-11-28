@@ -44,7 +44,7 @@ for f in "$SRC/libexec/"*; do
   [ -f "$f" ] || continue
   base="$(basename "$f")"
   case "$base" in
-    *.sh|voxtype-studio.py|voxtype_learn.py|voxtype-review.py|voxtype-llm-proxy.py|voxtype_screen_ctx.py|voxtype_pp_gate.py|shuush-caps|shuush_caps.py|shuush_wire.py|shuush_timing.py|shuush_stats.py|shuush_deliver.py)
+    *.sh|voxtype-studio.py|voxtype_learn.py|voxtype-review.py|voxtype-llm-proxy.py|voxtype_screen_ctx.py|voxtype_pp_gate.py|shuush-caps|shuush_caps.py|shuush_wire.py|shuush_timing.py|shuush_stats.py|shuush_deliver.py|shuush_vocab_harvest.py|shuush_learn_replay.py)
       install -m 0755 "$f" "$PREFIX/libexec/$base" ;;
     *)
       install -m 0644 "$f" "$PREFIX/libexec/$base" ;;
