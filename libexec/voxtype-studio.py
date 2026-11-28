@@ -31,6 +31,7 @@ SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 import voxtype_learn as learn  # noqa: E402
 import shuush_caps
+import shuush_vocab_harvest as vocab_harvest  # noqa: E402
 from voxtype_delivery import OUTCOMES
 from voxtype_storage import update_history
 import voxtype_pp_gate as gate  # noqa: E402
@@ -378,6 +379,21 @@ button.seg-btn:checked,
   padding: 2px 3px 2px 4px;
 }
 
+.sugg-pill-active {
+  border-color: rgba(147, 197, 253, 0.60);
+  background: rgba(96, 165, 250, 0.12);
+}
+
+.learned-meta {
+  color: #a1a1aa;
+  font-size: 11.5px;
+}
+
+.filter-pill-active {
+  background: rgba(96, 165, 250, 0.18);
+  color: #e0f2fe;
+}
+
 .editor-card {
   background: #0e1015;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -617,49 +633,114 @@ def suggest_from_history(entries: list[dict], existing: dict[str, list]) -> list
     return [(h, m, n) for (h, m), n in counts.most_common(12)]
 
 
-def read_vocab_entries() -> list[str]:
-    if not VOCAB.exists():
-        return []
-    out = []
-    for line in VOCAB.read_text(errors="replace").splitlines():
-        term = line.split("#", 1)[0].strip()
-        if term:
-            out.append(term)
-    return out
-
-
-def add_vocab_term(term: str) -> bool:
-    t = term.strip()
-    if not t:
-        return False
-    if t.lower() in {x.lower() for x in read_vocab_entries()}:
-        return False
-    VOCAB.parent.mkdir(parents=True, exist_ok=True)
-    text = VOCAB.read_text(errors="replace") if VOCAB.exists() else "# Vocabulary terms\n"
-    if text and not text.endswith("\n"):
-        text += "\n"
-    tmp = VOCAB.with_suffix(".tmp")
-    tmp.write_text(text + t + "\n", encoding="utf-8")
-    tmp.replace(VOCAB)
-    return True
-
-
-def remove_vocab_term(term: str) -> bool:
-    if not VOCAB.exists():
-        return False
-    want = term.strip().lower()
-    lines = VOCAB.read_text(errors="replace").splitlines(keepends=True)
-    kept, removed = [], False
-    for line in lines:
-        if line.split("#", 1)[0].strip().lower() == want and not removed:
-            removed = True
+def build_inbox_items(entries: list[dict], existing: dict[str, list]) -> list[dict]:
+    """Unified plain-language Learning Inbox: pending fixes + harvested vocabulary."""
+    items: list[dict] = []
+    cands = learn.load_candidates()
+    for h, m, n in suggest_from_history(entries, existing):
+        raw_c = cands.get(f"{h}\t{m}")
+        via = raw_c.get("via", "") if isinstance(raw_c, dict) else ""
+        hint = isinstance(raw_c, dict) and bool(raw_c.get("hint"))
+        if via.startswith("edit-watch"):
+            summary = f"You fixed this by hand {via.removeprefix('edit-watch').strip()}"
+        elif hint:
+            summary = "Context hint (only changes when it fits)"
+        else:
+            summary = f"Seen {n}× in your dictations" if n > 1 else "Seen once in your dictations"
+        items.append({
+            "kind": "fix",
+            "heard": h,
+            "meant": m,
+            "count": n,
+            "hint": hint,
+            "label": f"{h} → {m}" + (f" · {n}×" if n > 1 else ""),
+            "summary": summary.strip(),
+        })
+    vcands = learn.load_vocab_candidates()
+    for rec in sorted(vcands.values(), key=lambda x: (-float(x.get("score", 0)), str(x.get("term", ""))))[:12]:
+        term = str(rec.get("term") or "").strip()
+        if not term:
             continue
-        kept.append(line)
-    if removed:
-        tmp = VOCAB.with_suffix(".tmp")
-        tmp.write_text("".join(kept), encoding="utf-8")
-        tmp.replace(VOCAB)
-    return removed
+        scope = learn.normalize_scope(rec.get("scope", ""))
+        sc_txt = f" · {learn.scope_label(scope)}" if scope else ""
+        items.append({
+            "kind": "vocab",
+            "term": term,
+            "scope": scope,
+            "label": f"{term} (word){sc_txt}",
+            "summary": str(rec.get("summary") or "Suggested from your workspace"),
+        })
+    return items
+
+
+def format_learned_row(entry: dict) -> dict:
+    """Plain-language summary for one learned rule in Studio's Learned view."""
+    applied = int(entry.get("applied") or 0)
+    undone = int(entry.get("undone") or 0)
+    demoted = bool(entry.get("demoted"))
+    src = str(entry.get("source") or "user")
+    origin = str(entry.get("origin_source") or src)
+    origin_txt = learn.plain_source_label(origin, demoted=False)
+
+    if applied > 0 and undone > 0:
+        helped_txt = f"Helped {applied}× · changed back {undone}×"
+    elif applied > 0:
+        helped_txt = f"Helped {applied}×"
+    elif undone > 0:
+        helped_txt = f"Changed back {undone}×"
+    else:
+        helped_txt = "Not used yet"
+
+    if demoted:
+        status_note = "Demoted to hint after undos"
+        meta = f"{origin_txt} · {status_note} · {helped_txt}"
+    else:
+        meta = f"{origin_txt} · {helped_txt}"
+
+    is_hint = demoted or src == "hint" or entry.get("heard", "") in gate.AMBIGUOUS
+    scope = learn.normalize_scope(entry.get("scope", ""))
+    scope_txt = f"{learn.scope_label(scope)} only" if scope else ""
+
+    tip_parts = [f"Source: {origin_txt}"]
+    if entry.get("first_seen"):
+        tip_parts.append(f"First seen: {entry['first_seen'][:16].replace('T', ' ')}")
+    if entry.get("last_applied"):
+        tip_parts.append(f"Last helped: {entry['last_applied'][:16].replace('T', ' ')}")
+    elif entry.get("last_seen"):
+        tip_parts.append(f"Last seen: {entry['last_seen'][:16].replace('T', ' ')}")
+    if entry.get("last_undone"):
+        tip_parts.append(f"Last changed back: {entry['last_undone'][:16].replace('T', ' ')}")
+
+    return {
+        "title": f"{entry['heard']} → {entry['meant']}",
+        "origin": origin_txt,
+        "health": helped_txt,
+        "meta": meta,
+        "scope": scope_txt,
+        "mode_badge": "Context hint" if is_hint else "Auto-fix",
+        "mode_variant": "review" if is_hint else "clean",
+        "tooltip": "\n".join(tip_parts),
+    }
+
+
+def read_vocab_entries(scope: str = "") -> list[str]:
+    if not scope and VOCAB != learn.VOCAB_FILE:
+        if not VOCAB.exists():
+            return []
+        return [l.split("#", 1)[0].strip() for l in VOCAB.read_text(errors="replace").splitlines() if l.split("#", 1)[0].strip()]
+    return learn.read_vocab(scope)
+
+
+def add_vocab_term(term: str, scope: str = "") -> bool:
+    if not scope and VOCAB != learn.VOCAB_FILE:
+        learn.VOCAB_FILE = VOCAB
+    return learn.add_vocab_term(term, scope=scope, sync_parakeet=True)
+
+
+def remove_vocab_term(term: str, scope: str = "") -> bool:
+    if not scope and VOCAB != learn.VOCAB_FILE:
+        learn.VOCAB_FILE = VOCAB
+    return learn.remove_vocab_term(term, scope=scope, sync_parakeet=True)
 
 
 def read_snippets_raw() -> list[tuple[str, str]]:
@@ -972,17 +1053,25 @@ def learn_from_pair(raw: str, clean: str, edited: str, undo=None) -> list[tuple[
     cw = learn.words(learn.norm(clean))
     nw = learn.words(learn.norm(edited))
     cased = edited.split()
+    existing = learn._load_rows()
     learned: list[tuple[str, str]] = []
     for op, j1, j2, k1, k2 in difflib.SequenceMatcher(a=cw, b=nw, autojunk=False).get_opcodes():
         if op != "replace" or j2 - j1 > learn.MAX_SPAN or k2 - k1 > learn.MAX_SPAN:
             continue
         heard = " ".join(learn.heard_for(rw, cw, j1, j2))
+        clean_span = " ".join(cw[j1:j2])
         meant = " ".join(cased[k1:k2]) if len(cased) == len(nw) else " ".join(nw[k1:k2])
         meant = meant.strip(".,;:!?")
-        if learn.norm(heard) != learn.norm(meant):
+        hk = learn.norm(heard)
+        rule = existing.get(hk)
+        if rule and learn.norm(rule[0]) == learn.norm(clean_span) and learn.norm(meant) != learn.norm(clean_span):
+            learn.record_undo(hk, rule[0])
+            if learn.norm(meant) == hk:
+                continue
+        if hk != learn.norm(meant):
             why = learn.remember(heard, meant, "user", undo)
             if not why:
-                learned.append((learn.norm(heard), meant))
+                learned.append((hk, meant))
                 if any(ch.isupper() for ch in meant) or "." in meant or "-" in meant:
                     add_vocab_term(meant)
     return learned
@@ -1523,8 +1612,9 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             keys = ["history", "insights", "corrections", "vocab", "snippets", "settings"]
             self.select_tab(keys[keyval - Gdk.KEY_1], instant=True)
             return True
-        if not ctrl and not alt and not self._is_text_focused() and self.tab_stack.get_visible_child_name() == "history":
-            if keyval in (Gdk.KEY_j, Gdk.KEY_k):
+        if not ctrl and not alt and not self._is_text_focused():
+            cur_tab = self.tab_stack.get_visible_child_name()
+            if cur_tab == "history" and keyval in (Gdk.KEY_j, Gdk.KEY_k):
                 row = self.hist_list.get_selected_row()
                 idx = row.get_index() if row else -1
                 nxt = idx + 1 if keyval == Gdk.KEY_j else max(0, idx - 1)
@@ -1532,6 +1622,21 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
                 if target_row is not None:
                     self.hist_list.select_row(target_row)
                     target_row.grab_focus()
+                    return True
+            if cur_tab == "corrections" and getattr(self, "_inbox_items", None):
+                if keyval in (Gdk.KEY_a, Gdk.KEY_A, Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                    self._accept_selected_inbox()
+                    return True
+                if keyval in (Gdk.KEY_d, Gdk.KEY_D):
+                    self._dismiss_selected_inbox()
+                    return True
+                if keyval in (Gdk.KEY_j, Gdk.KEY_Down):
+                    self._inbox_idx = min(len(self._inbox_items) - 1, getattr(self, "_inbox_idx", 0) + 1)
+                    self._render_corrections()
+                    return True
+                if keyval in (Gdk.KEY_k, Gdk.KEY_Up):
+                    self._inbox_idx = max(0, getattr(self, "_inbox_idx", 0) - 1)
+                    self._render_corrections()
                     return True
         return False
 
@@ -2239,38 +2344,71 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         else:
             self.show_toast(f"'{sel}' is already in vocabulary")
 
-    # ── Tab 2: Learning & Corrections ────────────────────────────────────
+    # ── Tab 2: Learning & Corrections (Inbox + Plain-language Learned view) ──
     def _build_corrections_page(self) -> Gtk.Widget:
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self._inbox_items: list[dict] = []
+        self._inbox_idx: int = 0
+        self._learned_filter: str = "all"
 
-        # Quick add + Sync bar
+        # Plain-language summary bar
+        summary_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.learned_summary_lbl = Gtk.Label(label="", xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
+        self.learned_summary_lbl.add_css_class("learned-meta")
+        scan_btn = Gtk.Button(label="Scan for terms", tooltip_text="Find new words from ~/Projects, kitty tabs, window titles, and your history")
+        scan_btn.add_css_class("btn-secondary")
+        scan_btn.connect("clicked", self._on_harvest_vocab)
+        sync_btn = Gtk.Button(label="Sync to daemon", tooltip_text="Sync sure-name fixes and Parakeet rescoring vocabulary")
+        sync_btn.add_css_class("btn-secondary")
+        sync_btn.connect("clicked", self._on_sync_toml)
+        summary_bar.append(self.learned_summary_lbl)
+        summary_bar.append(scan_btn)
+        summary_bar.append(sync_btn)
+        box.append(summary_bar)
+
+        # Quick add bar with optional per-app scope
         top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
         self.corr_heard = Gtk.Entry(placeholder_text="Heard (e.g. webar)", hexpand=True)
         self.corr_heard.add_css_class("input-field")
         self.corr_meant = Gtk.Entry(placeholder_text="Meant (e.g. Waybar)", hexpand=True)
         self.corr_meant.add_css_class("input-field")
         self.corr_meant.connect("activate", self._on_add_correction)
-        add_btn = Gtk.Button(label="Add correction")
+        self.corr_scope = Gtk.DropDown.new_from_strings(["All apps", "Code & terminal", "Chat"])
+        self.corr_scope.set_tooltip_text("Where this fix should apply")
+        add_btn = Gtk.Button(label="Add fix")
         add_btn.add_css_class("btn-primary")
         add_btn.connect("clicked", self._on_add_correction)
-        sync_btn = Gtk.Button(label="Sync to daemon", tooltip_text="Copy sure-name rules into config.toml [text] replacements")
-        sync_btn.add_css_class("btn-secondary")
-        sync_btn.connect("clicked", self._on_sync_toml)
         top.append(self.corr_heard)
         top.append(Gtk.Label(label="→"))
         top.append(self.corr_meant)
+        top.append(self.corr_scope)
         top.append(add_btn)
-        top.append(sync_btn)
         box.append(top)
 
         self.sugg_card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.sugg_card.add_css_class("kpi-card")
         box.append(self.sugg_card)
 
-        self.corr_search = Gtk.SearchEntry(placeholder_text="Filter learned corrections…")
+        # Search + plain-language filter bar for the Learned view
+        filter_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.corr_search = Gtk.SearchEntry(placeholder_text="Search what Shuush learned…", hexpand=True)
         self.corr_search.add_css_class("input-field")
         self.corr_search.connect("search-changed", lambda *_: self._render_corrections())
-        box.append(self.corr_search)
+        filter_row.append(self.corr_search)
+        self._learned_filter_btns: dict[str, Gtk.Button] = {}
+        for fkey, flbl in [
+            ("all", "All"),
+            ("active", "Auto-fix"),
+            ("hints", "Hints & demoted"),
+            ("edits", "From your edits"),
+            ("scoped", "App-only"),
+        ]:
+            fb = Gtk.Button(label=flbl)
+            fb.add_css_class("btn-ghost")
+            fb.connect("clicked", self._on_learned_filter, fkey)
+            self._learned_filter_btns[fkey] = fb
+            filter_row.append(fb)
+        box.append(filter_row)
 
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
         card.add_css_class("surface-card")
@@ -2287,17 +2425,48 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         box.append(card)
         return box
 
+    def _selected_scope_key(self, dropdown: Gtk.DropDown) -> str:
+        idx = dropdown.get_selected()
+        return {0: "", 1: "terminal", 2: "chat"}.get(int(idx), "")
+
+    def _on_learned_filter(self, _btn, fkey: str) -> None:
+        self._learned_filter = fkey
+        self._render_corrections()
+
+    def _on_harvest_vocab(self, _btn) -> None:
+        self.show_toast("Scanning workspace for new terms…")
+
+        def worker() -> None:
+            try:
+                found = vocab_harvest.harvest_all(save=True)
+                msg = f"Found {len(found)} term suggestion(s) in your inbox" if found else "No new vocabulary terms found"
+            except Exception as exc:
+                msg = f"Scan failed: {exc}"
+            GLib.idle_add(self._finish_harvest, msg)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_harvest(self, msg: str) -> bool:
+        self._render_corrections()
+        self._refresh_kpis()
+        self.show_toast(msg)
+        return False
+
     def _on_sync_toml(self, _btn) -> None:
         n = learn.sync_replacements()
-        self.show_toast(f"Synced {n} new sure-name rule(s) into config.toml (restart daemon to apply)")
+        pk = learn.sync_parakeet_vocab()
+        self.show_toast(f"Synced {n} replacement(s) & {pk['count']}/{pk['limit']} Parakeet terms")
+        self._render_corrections()
+        self._render_vocab()
 
     def _on_add_correction(self, *_args) -> None:
         h = self.corr_heard.get_text().strip()
         m = self.corr_meant.get_text().strip()
+        scope = self._selected_scope_key(self.corr_scope)
         if not h or not m:
             return
         undo = {}
-        why = learn.remember(h, m, "user", undo)
+        why = learn.remember(h, m, "user", undo, scope=scope)
         if why:
             self.show_toast(f"Refused: {why}")
             return
@@ -2305,16 +2474,60 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         self.corr_meant.set_text("")
         self._render_corrections()
         self._refresh_kpis()
-        self.show_toast(f"Learned: {learn.norm(h)} → {m}", undo_cb=lambda: learn.undo_corrections(undo))
+        sc = f" ({learn.scope_label(scope)})" if scope else ""
+        self.show_toast(f"Learned: {learn.norm(h)} → {m}{sc}", undo_cb=lambda: learn.undo_corrections(undo))
+
+    def _accept_selected_inbox(self) -> None:
+        if not self._inbox_items:
+            return
+        idx = max(0, min(self._inbox_idx, len(self._inbox_items) - 1))
+        item = self._inbox_items[idx]
+        if item["kind"] == "fix":
+            self._on_accept_sugg(None, item["heard"], item["meant"])
+        else:
+            self._on_accept_vocab_sugg(None, item["term"], item.get("scope", ""))
+
+    def _dismiss_selected_inbox(self) -> None:
+        if not self._inbox_items:
+            return
+        idx = max(0, min(self._inbox_idx, len(self._inbox_items) - 1))
+        item = self._inbox_items[idx]
+        if item["kind"] == "fix":
+            self._on_reject_sugg(None, item["heard"], item["meant"])
+        else:
+            self._on_reject_vocab_sugg(None, item["term"])
 
     def _render_corrections(self) -> None:
         pairs = learn.load()
+        entries = learn.load_entries(include_removed=False)
+        st = learn.stats()
+        pk = st["vocab"]["parakeet"]
+        demoted_n = st["by_status"].get("demoted", 0)
+        removed_n = st["by_status"].get("removed", 0)
+        parts = [f"{len(entries)} learned", f"helped {st['total_applied']}×"]
+        if demoted_n:
+            parts.append(f"{demoted_n} demoted to hints")
+        if removed_n:
+            parts.append(f"{removed_n} removed after undos")
+        parts.append(f"Parakeet rescoring: {pk['count']}/{pk['limit']}")
+        self.learned_summary_lbl.set_text(" · ".join(parts))
+
+        for fk, fb in self._learned_filter_btns.items():
+            if fk == self._learned_filter:
+                fb.add_css_class("filter-pill-active")
+            else:
+                fb.remove_css_class("filter-pill-active")
+
         while (ch := self.sugg_card.get_first_child()) is not None:
             self.sugg_card.remove(ch)
-        suggs = suggest_from_history(self.history, pairs)
-        self.sugg_card.set_visible(bool(suggs))
-        if suggs:
-            hdr = Gtk.Label(label="SELF-LEARNING INBOX (CLICK TO TEACH)", xalign=0)
+        self._inbox_items = build_inbox_items(self.history, pairs)
+        if self._inbox_items:
+            self._inbox_idx = max(0, min(self._inbox_idx, len(self._inbox_items) - 1))
+        else:
+            self._inbox_idx = 0
+        self.sugg_card.set_visible(bool(self._inbox_items))
+        if self._inbox_items:
+            hdr = Gtk.Label(label="LEARNING INBOX — PRESS A TO ACCEPT · D TO DISMISS · J/K TO MOVE", xalign=0, ellipsize=Pango.EllipsizeMode.END)
             hdr.add_css_class("section-kicker")
             self.sugg_card.append(hdr)
             flow = Gtk.FlowBox(
@@ -2322,54 +2535,140 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
                 row_spacing=6,
                 column_spacing=6,
                 min_children_per_line=1,
-                max_children_per_line=3,
+                max_children_per_line=2,
             )
-            for h, m, n in suggs[:10]:
-                grp = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+            for idx, item in enumerate(self._inbox_items[:12]):
+                grp = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
                 grp.add_css_class("sugg-pill-group")
-                btn = Gtk.Button(label=f"+ {h} → {m}" + (f" · {n}×" if n > 1 else ""), hexpand=True, tooltip_text="Teach this fix & sync to daemon")
-                btn.add_css_class("btn-ghost")
-                btn.connect("clicked", self._on_accept_sugg, h, m)
-                dis = Gtk.Button(icon_name="window-close-symbolic", tooltip_text="Dismiss forever (won't suggest again)")
-                dis.add_css_class("btn-ghost")
-                dis.connect("clicked", self._on_reject_sugg, h, m)
-                grp.append(btn)
-                grp.append(dis)
+                if idx == self._inbox_idx:
+                    grp.add_css_class("sugg-pill-active")
+                if item["kind"] == "fix":
+                    h, m = item["heard"], item["meant"]
+                    btn = Gtk.Button(
+                        label=f"+ {item['label']}",
+                        hexpand=True,
+                        tooltip_text=f"{item['summary']} — click or press A to teach",
+                    )
+                    btn.add_css_class("btn-ghost")
+                    btn.connect("clicked", self._on_accept_sugg, h, m)
+                    dis = Gtk.Button(icon_name="window-close-symbolic", tooltip_text="Dismiss forever (D)")
+                    dis.add_css_class("btn-ghost")
+                    dis.connect("clicked", self._on_reject_sugg, h, m)
+                    grp.append(btn)
+                    grp.append(dis)
+                else:
+                    term = item["term"]
+                    scope = item.get("scope", "")
+                    btn = Gtk.Button(
+                        label=f"+ {item['label']}",
+                        hexpand=True,
+                        tooltip_text=f"{item['summary']} — click or press A to add to vocabulary & Parakeet",
+                    )
+                    btn.add_css_class("btn-ghost")
+                    btn.connect("clicked", self._on_accept_vocab_sugg, term, scope)
+                    dis = Gtk.Button(icon_name="window-close-symbolic", tooltip_text="Dismiss forever (D)")
+                    dis.add_css_class("btn-ghost")
+                    dis.connect("clicked", self._on_reject_vocab_sugg, term)
+                    grp.append(btn)
+                    grp.append(dis)
                 flow.append(grp)
             self.sugg_card.append(flow)
 
         while (row := self.corr_list.get_first_child()) is not None:
             self.corr_list.remove(row)
         q = self.corr_search.get_text().strip().lower()
-        for h, (m, src, n) in sorted(pairs.items()):
-            if q and q not in f"{h} {m}".lower():
+        for entry in sorted(entries, key=lambda e: (-e["applied"], e["heard"])):
+            h, m = entry["heard"], entry["meant"]
+            fmt = format_learned_row(entry)
+            if q and q not in f"{h} {m} {fmt['meta']} {fmt['scope']}".lower():
                 continue
+            if self._learned_filter == "active" and fmt["mode_badge"] != "Auto-fix":
+                continue
+            if self._learned_filter == "hints" and fmt["mode_badge"] != "Context hint":
+                continue
+            if self._learned_filter == "edits" and entry["origin_source"] not in ("edit-watch", "user"):
+                continue
+            if self._learned_filter == "scoped" and not entry.get("scope"):
+                continue
+
             r = Gtk.ListBoxRow()
             line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             line.set_margin_top(8)
             line.set_margin_bottom(8)
             line.set_margin_start(10)
             line.set_margin_end(10)
+            line.set_tooltip_text(fmt["tooltip"])
 
+            text_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
+            top_line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
             hlbl = Gtk.Label(label=h, xalign=0, ellipsize=Pango.EllipsizeMode.END)
             hlbl.add_css_class("mono-num")
-            hlbl.set_size_request(150, -1)
             arrow = Gtk.Label(label="→")
             arrow.add_css_class("app-subtitle")
             mlbl = Gtk.Label(label=m, xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
-            badge = Gtk.Label(label="context hint" if h in gate.AMBIGUOUS else "instant rewrite")
-            badge.add_css_class("pill")
-            badge.add_css_class("pill-review" if h in gate.AMBIGUOUS else "pill-clean")
-            srclbl = Gtk.Label(label=f"{src} · {n}×")
-            srclbl.add_css_class("mono-num")
-            del_btn = Gtk.Button(icon_name="user-trash-symbolic")
+            top_line.append(hlbl)
+            top_line.append(arrow)
+            top_line.append(mlbl)
+            meta_lbl = Gtk.Label(label=fmt["meta"], xalign=0, ellipsize=Pango.EllipsizeMode.END)
+            meta_lbl.add_css_class("learned-meta")
+            text_col.append(top_line)
+            text_col.append(meta_lbl)
+            line.append(text_col)
+
+            if fmt["scope"]:
+                sc_pill = make_pill(fmt["scope"], "neutral")
+                line.append(sc_pill)
+
+            badge = make_pill(fmt["mode_badge"], fmt["mode_variant"])
+            line.append(badge)
+
+            if entry["demoted"] or entry["source"] == "hint":
+                if h not in gate.AMBIGUOUS:
+                    act_btn = Gtk.Button(label="Restore", tooltip_text="Promote back to instant auto-fix")
+                    act_btn.add_css_class("btn-ghost")
+                    act_btn.connect("clicked", self._on_promote_correction, h)
+                    line.append(act_btn)
+            else:
+                act_btn = Gtk.Button(label="Make hint", tooltip_text="Stop auto-replacing blindly; use only when context fits")
+                act_btn.add_css_class("btn-ghost")
+                act_btn.connect("clicked", self._on_demote_correction, h)
+                line.append(act_btn)
+
+            del_btn = Gtk.Button(label="Forget", tooltip_text="Forget this learned fix")
             del_btn.add_css_class("btn-ghost")
             del_btn.connect("clicked", self._on_del_correction, h)
+            line.append(del_btn)
 
-            for w in (hlbl, arrow, mlbl, badge, srclbl, del_btn):
-                line.append(w)
             r.set_child(line)
             self.corr_list.append(r)
+
+    def _on_accept_vocab_sugg(self, _btn, term: str, scope: str = "") -> None:
+        cands_before = learn.load_vocab_candidates()
+        if learn.accept_vocab_candidate(term, scope=scope):
+            self.reload_all()
+
+            def undo() -> None:
+                learn.remove_vocab_term(term, scope=scope, sync_parakeet=True)
+                learn.save_vocab_candidates(cands_before)
+                self.reload_all()
+
+            sc = f" ({learn.scope_label(scope)})" if scope else ""
+            self.show_toast(f"Added word: {term}{sc}", undo_cb=undo)
+
+    def _on_reject_vocab_sugg(self, _btn, term: str) -> None:
+        key = learn.reject_vocab_candidate(term)
+        self.reload_all()
+        self.show_toast(f"Dismissed word: {term}", undo_cb=lambda k=key: learn.unreject_vocab_candidate(k))
+
+    def _on_demote_correction(self, _btn, h: str) -> None:
+        if learn.demote_rule(h):
+            self._render_corrections()
+            self.show_toast(f"Made '{h}' a context hint", undo_cb=lambda x=h: learn.promote_rule(x))
+
+    def _on_promote_correction(self, _btn, h: str) -> None:
+        if learn.promote_rule(h):
+            self._render_corrections()
+            self.show_toast(f"Restored '{h}' as an auto-fix", undo_cb=lambda x=h: learn.demote_rule(x))
 
     def _on_accept_sugg(self, _btn, h: str, m: str) -> None:
         edits, cands_before = {}, learn.load_candidates()
@@ -2401,7 +2700,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             learn.remove_replacement(h)
             self._render_corrections()
             self._refresh_kpis()
-            self.show_toast(f"Removed '{h}'", undo_cb=lambda: (learn.undo_corrections(undo), learn.sync_replacements()))
+            self.show_toast(f"Forgot '{h}'", undo_cb=lambda: (learn.undo_corrections(undo), learn.sync_replacements()))
 
     # ── Tab 3: Vocabulary ────────────────────────────────────────────────
     def _build_vocab_page(self) -> Gtk.Widget:
@@ -2410,17 +2709,25 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         self.vocab_entry = Gtk.Entry(placeholder_text="Exact spelling (e.g. Hyprland, Waybar, Next.js, Kubernetes)", hexpand=True)
         self.vocab_entry.add_css_class("input-field")
         self.vocab_entry.connect("activate", self._on_add_vocab)
+        self.vocab_scope = Gtk.DropDown.new_from_strings(["All apps", "Code & terminal", "Chat"])
+        self.vocab_scope.set_tooltip_text("All apps, or only code/terminal or chat apps")
         add_btn = Gtk.Button(label="Add term")
         add_btn.add_css_class("btn-primary")
         add_btn.connect("clicked", self._on_add_vocab)
         top.append(self.vocab_entry)
+        top.append(self.vocab_scope)
         top.append(add_btn)
         box.append(top)
 
-        self.vocab_search = Gtk.SearchEntry(placeholder_text="Filter vocabulary…")
+        meta_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.vocab_search = Gtk.SearchEntry(placeholder_text="Filter vocabulary…", hexpand=True)
         self.vocab_search.add_css_class("input-field")
         self.vocab_search.connect("search-changed", lambda *_: self._render_vocab())
-        box.append(self.vocab_search)
+        self.vocab_budget_lbl = Gtk.Label(label="", xalign=1)
+        self.vocab_budget_lbl.add_css_class("learned-meta")
+        meta_row.append(self.vocab_search)
+        meta_row.append(self.vocab_budget_lbl)
+        box.append(meta_row)
 
         card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, vexpand=True)
         card.add_css_class("surface-card")
@@ -2439,22 +2746,30 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
 
     def _on_add_vocab(self, *_args) -> None:
         term = self.vocab_entry.get_text().strip()
+        scope = self._selected_scope_key(self.vocab_scope)
         if not term:
             return
-        if add_vocab_term(term):
+        if add_vocab_term(term, scope=scope):
             self.vocab_entry.set_text("")
             self._render_vocab()
             self._refresh_kpis()
-            self.show_toast(f"Added '{term}'", undo_cb=lambda t=term: remove_vocab_term(t))
+            sc = f" ({learn.scope_label(scope)})" if scope else ""
+            self.show_toast(f"Added '{term}'{sc}", undo_cb=lambda t=term, s=scope: remove_vocab_term(t, scope=s))
         else:
             self.show_toast(f"'{term}' is already in vocabulary")
 
     def _render_vocab(self) -> None:
         while (row := self.vocab_list.get_first_child()) is not None:
             self.vocab_list.remove(row)
+        pk = learn.parakeet_vocab_status()
+        self.vocab_budget_lbl.set_text(f"Parakeet rescoring: {pk['count']}/{pk['limit']}")
         q = self.vocab_search.get_text().strip().lower()
-        for term in sorted(read_vocab_entries(), key=str.lower):
-            if q and q not in term.lower():
+        items: list[tuple[str, str]] = [(t, "") for t in read_vocab_entries("")]
+        for sc in learn.list_vocab_scopes():
+            items.extend((t, sc) for t in read_vocab_entries(sc))
+        for term, scope in sorted(items, key=lambda x: (x[1], x[0].lower())):
+            sc_lbl = learn.scope_label(scope) if scope else ""
+            if q and q not in f"{term} {sc_lbl}".lower():
                 continue
             r = Gtk.ListBoxRow()
             line = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -2463,19 +2778,21 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             line.set_margin_start(10)
             line.set_margin_end(10)
             lbl = Gtk.Label(label=term, xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END)
-            del_btn = Gtk.Button(icon_name="user-trash-symbolic")
-            del_btn.add_css_class("btn-ghost")
-            del_btn.connect("clicked", self._on_del_vocab, term)
             line.append(lbl)
+            if scope:
+                line.append(make_pill(f"{sc_lbl} only", "neutral"))
+            del_btn = Gtk.Button(icon_name="user-trash-symbolic", tooltip_text="Remove word")
+            del_btn.add_css_class("btn-ghost")
+            del_btn.connect("clicked", self._on_del_vocab, term, scope)
             line.append(del_btn)
             r.set_child(line)
             self.vocab_list.append(r)
 
-    def _on_del_vocab(self, _btn, term: str) -> None:
-        if remove_vocab_term(term):
+    def _on_del_vocab(self, _btn, term: str, scope: str = "") -> None:
+        if remove_vocab_term(term, scope=scope):
             self._render_vocab()
             self._refresh_kpis()
-            self.show_toast(f"Removed '{term}'", undo_cb=lambda t=term: add_vocab_term(t))
+            self.show_toast(f"Removed '{term}'", undo_cb=lambda t=term, s=scope: add_vocab_term(t, scope=s))
 
     # ── Tab 4: Snippets ──────────────────────────────────────────────────
     def _build_snippets_page(self) -> Gtk.Widget:

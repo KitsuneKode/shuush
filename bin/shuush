@@ -50,7 +50,7 @@ Usage:
   shuush cancel [now]
   shuush skip              Skip cleanup on the active take and deliver raw text (PP_DELIVERY=shuush)
   shuush postprocess [default|terminal|chat|command]
-  shuush learn [list|pending|add HEARD MEANT|accept HEARD|reject HEARD|forget HEARD|fix|sync-toml]
+  shuush learn [list|stats|pending|harvest|replay|add HEARD MEANT [--scope SCOPE]|accept HEARD|reject HEARD|accept-vocab TERM|reject-vocab TERM|forget HEARD|fix|sync-toml|sync-parakeet]
   shuush stats latency [--json] [--history PATH]
                            Print p50/p90/p95 latency by delivery method, length band and app family
   shuush bench [prompts|record|import|models|run]
