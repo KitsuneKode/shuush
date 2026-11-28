@@ -79,6 +79,8 @@ def _sandbox_env(tmp_path: Path, fake_bin: Path, extra: dict[str, str] | None = 
         "XDG_STATE_HOME": str(tmp_path / "state"),
         "XDG_RUNTIME_DIR": str(tmp_path / "rt"),
         "LC_ALL": "C.UTF-8",
+        # Capability probes go to the fake (stock 1.3.1 unless a test says otherwise), never the real voxtype.
+        "SHUUSH_VOXTYPE_BIN": str(ROOT / "tests/fixtures/fake-voxtype"),
     }
     for sub in ("home", "config/voxtype", "state/voxtype", "rt/voxtype"):
         (tmp_path / sub).mkdir(parents=True, exist_ok=True)
@@ -118,12 +120,15 @@ def test_toggle_hold_transcribing_blocked_without_queue_capability(tmp_path: Pat
     assert (rt / "hold_ignore_release").exists()
 
 
+FORK_SCHEMA = str(ROOT / "tests/fixtures/schema-fork.json")
+
+
 def test_toggle_hold_transcribing_starts_when_queue_pid_live(tmp_path: Path) -> None:
     fake_bin = tmp_path / "bin"
     fake_bin.mkdir()
     log = tmp_path / "voxtype.log"
     _setup_toggle_shims(fake_bin, log)
-    env = _sandbox_env(tmp_path, fake_bin)
+    env = _sandbox_env(tmp_path, fake_bin, {"FAKE_SCHEMA": FORK_SCHEMA})
     rt = tmp_path / "rt/voxtype"
     (rt / "state").write_text("transcribing\n", encoding="utf-8")
     pid = str(os.getpid())
@@ -159,7 +164,7 @@ def test_toggle_hold_transcribing_respects_voxtype_queue_flag(tmp_path: Path) ->
     fake_bin.mkdir()
     log = tmp_path / "voxtype.log"
     _setup_toggle_shims(fake_bin, log)
-    env = _sandbox_env(tmp_path, fake_bin, {"VOXTYPE_QUEUE": "1"})
+    env = _sandbox_env(tmp_path, fake_bin, {"VOXTYPE_QUEUE": "1", "FAKE_SCHEMA": FORK_SCHEMA})
     rt = tmp_path / "rt/voxtype"
     (rt / "state").write_text("transcribing\n", encoding="utf-8")
 

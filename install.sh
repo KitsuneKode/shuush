@@ -18,13 +18,16 @@ for arg in "$@"; do
     --uninstall)   UNINSTALL=1 ;;
     -h|--help)
       echo "Usage: ./install.sh [--wire-config] [--uninstall]"
-      echo "  --wire-config  Wire [output.post_process] & profiles into ~/.config/voxtype/config.toml (with backup)"
+      echo "  --wire-config  Wire [output.post_process], profiles & OSD into ~/.config/voxtype/config.toml with `voxtype config set` (backed up; `shuush unwire` restores)"
       echo "  --uninstall    Remove installed shuush binaries, units, and desktop entry (keeps user data)"
       exit 0 ;;
   esac
 done
 
 if [ "$UNINSTALL" = 1 ]; then
+  if [ -s "${XDG_CONFIG_HOME:-$HOME/.config}/shuush/wired.json" ]; then
+    echo "Note: config.toml still has the keys 'shuush wire' set; 'shuush unwire' puts them back (run it first next time)."
+  fi
   rm -f "$BIN_DIR/shuush" "$BIN_DIR/shuush-studio" "$APP_DIR/shuush-studio.desktop" \
         "$UNIT_DIR/shuush-llm-proxy.service" "$UNIT_DIR/shuush-live-osd.service"
   rm -rf "$PREFIX"
@@ -40,7 +43,7 @@ for f in "$SRC/libexec/"*; do
   [ -f "$f" ] || continue
   base="$(basename "$f")"
   case "$base" in
-    *.sh|voxtype-studio.py|voxtype_learn.py|voxtype-review.py|voxtype-llm-proxy.py|voxtype_screen_ctx.py|voxtype_pp_gate.py)
+    *.sh|voxtype-studio.py|voxtype_learn.py|voxtype-review.py|voxtype-llm-proxy.py|voxtype_screen_ctx.py|voxtype_pp_gate.py|shuush-caps|shuush_caps.py|shuush_wire.py)
       install -m 0755 "$f" "$PREFIX/libexec/$base" ;;
     *)
       install -m 0644 "$f" "$PREFIX/libexec/$base" ;;

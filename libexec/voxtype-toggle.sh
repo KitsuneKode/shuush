@@ -24,11 +24,17 @@ mkdir -p "$rt"
 state=$(cat "$rt/state" 2>/dev/null || echo idle)
 now_ms() { date +%s%3N; }
 
-# Queued dictation (voxtype-fork feat/warm-mic-queue): allow a new hold take
-# while the previous one is still transcribing. Guarded so stock voxtype keeps
-# its existing behavior unless the running daemon advertises queue_pid or the
-# user explicitly opts in via VOXTYPE_QUEUE=1.
+# What the running voxtype can do (shuush-caps: asked of the daemon's own
+# binary, cached until it changes). Anything off falls back to what stock
+# voxtype does.
+cap() { python3 -I "$SCRIPT_DIR/shuush_caps.py" has "$1" 2>/dev/null; }
+
+# Queued dictation (voxtype-fork, [audio] queue_dictations): allow a new hold
+# take while the previous one is still transcribing. Only on a daemon that has
+# the feature; there the running queue (queue_pid) decides, unless the user
+# opts in or out via VOXTYPE_QUEUE=1 or 0.
 daemon_supports_queue() {
+    cap queue_dictations || return 1
     local flag="${VOXTYPE_QUEUE:-}"
     if [ -z "$flag" ] && [ -f "$CONF/postprocess.env" ]; then
         flag=$(sed -n 's/^VOXTYPE_QUEUE=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
@@ -51,8 +57,11 @@ daemon_supports_queue() {
 
 # Pressed while "Polishing": skip the cleanup script and type the raw
 # transcript now. (A plain toggle here would queue a NEW recording that
-# starts the moment the text lands.)
+# starts the moment the text lands.) Stock voxtype has no way to skip a cleanup
+# that is running (`record stop --no-post-process` is the fork's): the press is
+# ignored and the text lands when the cleanup finishes.
 polishing_now() {
+    cap skip_post_process || exit 0
     # This path skips the cleanup script, so the script will not clear the border.
     "$SCRIPT_DIR/voxtype-outline.sh" off >/dev/null 2>&1 || true
     exec voxtype record stop --no-post-process
@@ -238,11 +247,17 @@ case "$verb" in
             exit 0
         fi
         # Short release tail so the last syllable isn't clipped when lifting off F9.
-        # Skipped when voxtype-fork's native adaptive tail is configured, in its
-        # config file or through its environment variable (VOXTYPE_RELEASE_TAIL_MS
-        # is the daemon's; this script's own length is PP_RELEASE_TAIL_MS).
+        # Skipped when the daemon has its own adaptive tail (voxtype-fork's
+        # release_tail_ms) and it is configured, in its config file or through
+        # its environment variable (VOXTYPE_RELEASE_TAIL_MS is the daemon's; this
+        # script's own length is PP_RELEASE_TAIL_MS). A daemon without the
+        # feature ignores both, so this script's tail applies.
         CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
-        if [ -z "${VOXTYPE_RELEASE_TAIL_MS:-}" ] && ! grep -qE '^\s*release_tail_ms\s*=' "$CONF/config.toml" 2>/dev/null; then
+        native_tail=0
+        if [ -n "${VOXTYPE_RELEASE_TAIL_MS:-}" ] || grep -qE '^\s*release_tail_ms\s*=' "$CONF/config.toml" 2>/dev/null; then
+            cap release_tail_ms && native_tail=1
+        fi
+        if [ "$native_tail" = 0 ]; then
             tail_ms=$(sed -n 's/^PP_RELEASE_TAIL_MS=\([0-9]*\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
             tail_ms="${tail_ms:-200}"
             if [ "$tail_ms" -gt 0 ] 2>/dev/null; then

@@ -3,7 +3,8 @@
 #
 # Owns four things, driven by the daemon's one-word state file:
 #   - prewarm         loads the local cleanup LLM when recording starts
-#   - session_start   epoch ms of recording start (OSD clock + Waybar tooltip)
+#   - session_start   epoch ms of recording start (OSD clock + Waybar tooltip);
+#                     the fallback for voxtype's own recording.json
 #   - live_text       cleared at session start and at idle; the text itself is
 #                     written by voxtype-postprocess.sh (it receives the raw
 #                     transcript on stdin) — no journal scraping anymore

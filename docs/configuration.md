@@ -45,13 +45,13 @@ See [models.md](models.md) for which provider to pick.
 |---|---|---|
 | `PP_SMART_JOIN` | `1` | A dictation right after text in the same field gets a leading space, and continues an unfinished sentence in lowercase. Needs `trim = false` under `[output.post_process]` in `config.toml`. |
 | `PP_KEEP_ON_CLIPBOARD` | `1` | Also put each dictation on the clipboard, so it is never lost. `0` leaves your clipboard alone. |
-| `PP_RELEASE_TAIL_MS` | `200` | Keep recording this long after you release push-to-talk, so the last syllable is not clipped. Skipped when voxtype-fork's adaptive `release_tail_ms` is set (in `[audio]` or as `VOXTYPE_RELEASE_TAIL_MS`), which does this natively. |
+| `PP_RELEASE_TAIL_MS` | `200` | Keep recording this long after you release push-to-talk, so the last syllable is not clipped. Skipped when the daemon has voxtype-fork's adaptive `release_tail_ms` (`shuush caps has release_tail_ms`) and it is set (in `[audio]` or as `VOXTYPE_RELEASE_TAIL_MS`), which does this natively. A daemon without it ignores both, so the tail applies. |
 
 To press Enter after a dictation, end it with the word "submit" and set `smart_auto_submit = true` under `[text]` in `config.toml` (a voxtype feature).
 
 ## In `config.toml`
 
-`shuush wire-config` (or `./install.sh --wire-config`) sets these up, after a timestamped backup:
+`shuush wire` (or `./install.sh --wire-config`) sets these up, after a timestamped backup. The keys are written with `voxtype config set` (validated, comments kept) and `shuush wire --dry-run` prints what it would set without writing anything. Shuush records the value each key had before, and the one it set, in `~/.config/shuush/wired.json`; `shuush unwire` puts every key back the way it was (a key you changed since stays yours unless you pass `--force`), and `shuush wire --status` and `shuush doctor` report one that changed. The profile lines are the one exception to `voxtype config set`, because voxtype has no settable key for a profile: they are edited in `config.toml` directly, as exact line changes the record can undo.
 
 ```toml
 [output.post_process]

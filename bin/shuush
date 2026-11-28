@@ -50,8 +50,15 @@ Usage:
   shuush cancel [now]
   shuush postprocess [default|terminal|chat|command]
   shuush learn [list|pending|add HEARD MEANT|accept HEARD|reject HEARD|forget HEARD|fix|sync-toml]
-  shuush doctor [--json]   Check voxtype, GPU, compositor, Wayland, AT-SPI, services & secrets
-  shuush wire-config       Wire [output.post_process], profiles & OSD into ~/.config/voxtype/config.toml
+  shuush doctor [--json]   Check voxtype, GPU, compositor, Wayland, AT-SPI, services, secrets & what the daemon can do
+  shuush caps [list|has CAP...|--refresh]
+                           What the running voxtype supports (stock or fork), as JSON
+  shuush wire [--dry-run]  Set [output.post_process], profiles & OSD in config.toml (voxtype config set) and record the old values
+  shuush wire --status     Which wired keys are still as Shuush set them
+  shuush unwire [--dry-run]  Put every wired key back as it was before
+  shuush recover           Bring back the last cancelled take (needs a voxtype with `record recover`)
+  shuush build-wtype [--check|--dry-run]  Build the patched wtype (fast, exact typing) into ~/.local/bin
+  shuush wire-config       Same as wire (kept for the installer and old scripts)
 EOF
 }
 
@@ -133,139 +140,66 @@ doctor() {
   check "atspi"        'python3 -c "import gi; gi.require_version(\"Atspi\",\"2.0\"); from gi.repository import Atspi"' "AT-SPI screen & focused draft context (Atspi 2.0)" "pacman -S at-spi2-core python-gobject"
   check "a11y_flag"    '[ "$(gsettings get org.gnome.desktop.interface toolkit-accessibility 2>/dev/null)" = "true" ]' "AT-SPI toolkit-accessibility enabled" "gsettings set org.gnome.desktop.interface toolkit-accessibility true"
   check "config_toml"  '[ -f "$CONF/config.toml" ]' "voxtype config.toml exists" "run: voxtype setup"
-  check "post_process" 'grep -q "postprocess" "$CONF/config.toml" 2>/dev/null' "post_process wired in config.toml" "run: shuush wire-config"
+  check "post_process" 'grep -q "postprocess" "$CONF/config.toml" 2>/dev/null' "post_process wired in config.toml" "run: shuush wire"
+  check "wired_keys"   '[ "$(python3 -I "$LIBEXEC/shuush_wire.py" status --json 2>/dev/null | jq -r ".changed | length")" = 0 ]' "wired config keys are still as Shuush set them" "a key was changed since wiring: shuush wire --status (shuush wire --force re-applies)"
   check "osd_hud"      '[ -f "$CONF/osd/kitsune-hud/KitsuneHud.qml" ]' "KitsuneHud Quickshell pill installed" "re-run: ./install.sh"
   check "secrets_perm" '[ ! -f "$CONF/secrets.env" ] || [ "$(stat -c %a "$CONF/secrets.env")" = "600" ]' "secrets.env permissions secure (0600)" "chmod 600 $CONF/secrets.env"
   check "no_dup_proxy" '! (systemctl --user is-active --quiet voxtype-llm-proxy.service && systemctl --user is-active --quiet shuush-llm-proxy.service)' "No duplicate LLM proxy service on port 11435" "systemctl --user disable --now voxtype-llm-proxy.service"
   check "llm_ready"    '[ -f "$CONF/secrets.env" ] || curl -fsS --max-time 1 http://127.0.0.1:11434/api/tags' "LLM provider configured (secrets.env or local Ollama)" "open shuush studio -> Settings -> API keys or enable Offline mode"
 
+  local caps_json
+  caps_json="$(python3 -I "$LIBEXEC/shuush_caps.py" 2>/dev/null || echo '{}')"
+
   if [ "$json" = 1 ]; then
-    printf '{"libexec":%s,"voxtype":%s,"gpu":%s,"compositor":%s,"ok":%d,"warnings":%d,"checks":[%s]}\n' \
+    printf '{"libexec":%s,"voxtype":%s,"capabilities":%s,"gpu":%s,"compositor":%s,"ok":%d,"warnings":%d,"checks":[%s]}\n' \
       "$(jq -Rn --arg s "$LIBEXEC" '$s')" \
       "$(jq -Rn --arg s "$vver" '$s')" \
+      "$(jq -c . <<<"$caps_json" 2>/dev/null || echo '{}')" \
       "$(jq -Rn --arg s "$gpu" '$s')" \
       "$(jq -Rn --arg s "$comp" '$s')" \
       "$ok" "$warn" "$(IFS=,; echo "${items[*]}")"
   else
     printf 'Summary: %d ok, %d warning(s)\n' "$ok" "$warn"
+    printf '\n%sThe daemon%s %s(%s, %s)%s\n' "$b" "$r" "$d" \
+      "$(jq -r '.binary // "voxtype not found"' <<<"$caps_json" 2>/dev/null)" \
+      "$(jq -r '(.version // "unknown") + (if .fork then ", fork" else ", stock" end)' <<<"$caps_json" 2>/dev/null)" "$r"
+    python3 -I "$LIBEXEC/shuush_caps.py" list 2>/dev/null | sed 's/^/  /'
+    printf '%s  off = Shuush works around it; see docs/voxtype-fork.md%s\n' "$d" "$r"
   fi
 }
 
 wire_config() {
-  local cfg="$CONF/config.toml"
-  local pp_cmd="$LIBEXEC/voxtype-postprocess.sh"
-  mkdir -p "$CONF/osd/kitsune-hud"
-  # Seed KitsuneHud & starter files if missing (supports AUR /usr installs too)
-  if [ -n "$SHARE_DIR" ]; then
-    [ -f "$CONF/osd/kitsune-hud/KitsuneHud.qml" ] || install -m 0644 "$SHARE_DIR/osd/kitsune-hud/KitsuneHud.qml" "$CONF/osd/kitsune-hud/KitsuneHud.qml"
-    [ -f "$CONF/osd/kitsune-hud/voxtype-osd.toml" ] || install -m 0644 "$SHARE_DIR/osd/kitsune-hud/voxtype-osd.toml" "$CONF/osd/kitsune-hud/voxtype-osd.toml"
-    [ -f "$CONF/postprocess.env" ] || install -m 0644 "$SHARE_DIR/config/postprocess.env.example" "$CONF/postprocess.env"
+  local a dry=0 action=wire
+  for a in "$@"; do
+    case "$a" in --dry-run) dry=1 ;; --status) action=status ;; esac
+  done
+  local args=() 
+  for a in "$@"; do [ "$a" = --status ] || args+=("$a"); done
+  if [ "$dry" = 0 ] && [ "$action" = wire ]; then
+    mkdir -p "$CONF/osd/kitsune-hud"
+    # Seed KitsuneHud & starter files if missing (supports AUR /usr installs too)
+    if [ -n "$SHARE_DIR" ]; then
+      [ -f "$CONF/osd/kitsune-hud/KitsuneHud.qml" ] || install -m 0644 "$SHARE_DIR/osd/kitsune-hud/KitsuneHud.qml" "$CONF/osd/kitsune-hud/KitsuneHud.qml"
+      [ -f "$CONF/osd/kitsune-hud/voxtype-osd.toml" ] || install -m 0644 "$SHARE_DIR/osd/kitsune-hud/voxtype-osd.toml" "$CONF/osd/kitsune-hud/voxtype-osd.toml"
+      [ -f "$CONF/postprocess.env" ] || install -m 0644 "$SHARE_DIR/config/postprocess.env.example" "$CONF/postprocess.env"
+    fi
+    [ -f "$CONF/vocabulary.txt" ] || printf '# Exact spellings for technical terms & proper nouns (one per line)\n' > "$CONF/vocabulary.txt"
+    [ -f "$CONF/snippets" ] || printf '# Voice snippets: trigger -> expansion text\n' > "$CONF/snippets"
   fi
-  [ -f "$CONF/vocabulary.txt" ] || printf '# Exact spellings for technical terms & proper nouns (one per line)\n' > "$CONF/vocabulary.txt"
-  [ -f "$CONF/snippets" ] || printf '# Voice snippets: trigger -> expansion text\n' > "$CONF/snippets"
-  if [ ! -f "$cfg" ]; then
-    echo "No $cfg found — run 'voxtype setup' first, then re-run 'shuush wire-config'." >&2
-    exit 1
+  exec python3 -I "$LIBEXEC/shuush_wire.py" "$action" --command "$LIBEXEC/voxtype-postprocess.sh" "${args[@]}"
+}
+
+unwire_config() {
+  exec python3 -I "$LIBEXEC/shuush_wire.py" unwire "$@"
+}
+
+# The daemon's own binary, so `record recover` talks to the build that can answer it.
+recover() {
+  if ! python3 -I "$LIBEXEC/shuush_caps.py" has record_recover; then
+    echo "This voxtype has no 'record recover' (the companion fork does); nothing to bring back." >&2
+    exit 3
   fi
-  cp -a "$cfg" "$cfg.bak.$(date +%Y%m%d-%H%M%S)"
-  python3 - "$cfg" "$pp_cmd" <<'PY'
-import re, sys, tomllib
-from pathlib import Path
-
-cfg = Path(sys.argv[1])
-pp = sys.argv[2]
-lines = cfg.read_text(encoding="utf-8").splitlines(keepends=True)
-if lines and not lines[-1].endswith("\n"):
-    lines[-1] += "\n"
-
-HEADER_RE = re.compile(r"^\s*\[([^\]]+)\]\s*(?:#.*)?$")
-
-
-def set_section_keys(lines: list[str], section: str, updates: list[tuple[str, str]]) -> list[str]:
-    """Set or update key = value lines inside an exact uncommented [section], preserving comments."""
-    start = end = None
-    for i, line in enumerate(lines):
-        m = HEADER_RE.match(line)
-        if m:
-            name = m.group(1).strip()
-            if start is not None:
-                end = i
-                break
-            if name == section:
-                start = i
-    if start is None:
-        if lines and lines[-1].strip():
-            lines.append("\n")
-        lines.append(f"[{section}]\n")
-        for k, v in updates:
-            lines.append(f"{k} = {v}\n")
-        return lines
-    if end is None:
-        end = len(lines)
-
-    body = lines[start + 1 : end]
-    remaining = dict(updates)
-    new_body: list[str] = []
-    for line in body:
-        replaced = False
-        for k in list(remaining):
-            if re.match(rf"^\s*{re.escape(k)}\s*=", line):
-                new_body.append(f"{k} = {remaining.pop(k)}\n")
-                replaced = True
-                break
-        if not replaced:
-            new_body.append(line)
-    if remaining:
-        insert_at = len(new_body)
-        while insert_at > 0 and not new_body[insert_at - 1].strip():
-            insert_at -= 1
-        additions = [f"{k} = {v}\n" for k, v in remaining.items()]
-        new_body[insert_at:insert_at] = additions
-    return lines[: start + 1] + new_body + lines[end:]
-
-
-def has_section_key(lines: list[str], section: str, key: str) -> bool:
-    in_sec = False
-    for line in lines:
-        m = HEADER_RE.match(line)
-        if m:
-            in_sec = m.group(1).strip() == section
-            continue
-        if in_sec and re.match(rf"^\s*{re.escape(key)}\s*=", line):
-            return True
-    return False
-
-
-qpp = pp.replace("\\", "\\\\").replace('"', '\\"')
-lines = set_section_keys(lines, "output.post_process", [
-    ("command", f'"{qpp}"'),
-    ("timeout_ms", "20000"),
-    # Keep the leading space smart join adds (Shuush trims the model's own).
-    ("trim", "false"),
-])
-for prof in ("terminal", "chat", "command"):
-    lines = set_section_keys(lines, f"profiles.{prof}", [
-        ("post_process_command", f'"{qpp} {prof}"'),
-    ])
-
-osd_updates: list[tuple[str, str]] = [("style", '"kitsune-hud"')]
-if not has_section_key(lines, "osd", "frontend"):
-    osd_updates.insert(0, ("frontend", '"auto"'))
-if not has_section_key(lines, "osd", "position"):
-    osd_updates.append(("position", '"bottom-center"'))
-if not has_section_key(lines, "osd", "margin_px"):
-    osd_updates.append(("margin_px", "20"))
-lines = set_section_keys(lines, "osd", osd_updates)
-
-updated = "".join(lines)
-# Validate TOML syntax before replacing user's live config.toml
-tomllib.loads(updated)
-
-tmp = cfg.with_suffix(".tmp")
-tmp.write_text(updated, encoding="utf-8")
-tmp.replace(cfg)
-print(f"Wired post_process, profiles, and kitsune-hud OSD in {cfg}")
-PY
+  exec "$(python3 -I "$LIBEXEC/shuush_caps.py" bin)" record recover
 }
 
 cmd="${1:-help}"
@@ -280,7 +214,11 @@ case "$cmd" in
   last)        exec "$LIBEXEC/voxtype-last.sh" "$@" ;;
   replay)      exec "$LIBEXEC/voxtype-last-audio.sh" "$@" ;;
   doctor)      doctor "$@" ;;
-  wire-config) wire_config ;;
+  wire|wire-config) wire_config "$@" ;;
+  unwire)      unwire_config "$@" ;;
+  caps)        exec python3 -I "$LIBEXEC/shuush_caps.py" "$@" ;;
+  recover)     recover ;;
+  build-wtype) exec "$LIBEXEC/shuush-build-wtype.sh" "$@" ;;
   -h|--help|help) usage ;;
   *) echo "Unknown command: $cmd" >&2; usage >&2; exit 2 ;;
 esac

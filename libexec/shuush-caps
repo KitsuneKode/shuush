@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# shuush-caps — what the running voxtype can do, as JSON (see shuush_caps.py).
+exec python3 -I "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/shuush_caps.py" "$@"

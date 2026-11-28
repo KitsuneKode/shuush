@@ -5,6 +5,12 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PASS=0
+# Nothing here runs the real voxtype: every probe and `config set` goes to the fake
+# (tests/fixtures/fake-voxtype), and its answers are cached in a throwaway runtime dir.
+export SHUUSH_VOXTYPE_BIN="$ROOT/tests/fixtures/fake-voxtype"
+RTD="$(mktemp -d)"
+export XDG_RUNTIME_DIR="$RTD"
+trap 'rm -rf "$RTD"' EXIT
 ok() { printf '  [PASS] %s\n' "$1"; PASS=$((PASS + 1)); }
 
 echo "=== 1. Syntax & Bytecode Checks ==="
@@ -41,7 +47,7 @@ ok "smart_join spaces and continues back-to-back takes (input-method field text 
 
 echo "=== 3. Sandbox Install: Stock voxtype (Whisper / AMD-Intel Vulkan) ==="
 TMP1="$(mktemp -d)"
-trap 'rm -rf "$TMP1" "${TMP2:-}" "${TMP3:-}" "${TMP4:-}" "${TMP5:-}"' EXIT
+trap 'rm -rf "$RTD" "$TMP1" "${TMP2:-}" "${TMP3:-}" "${TMP4:-}" "${TMP5:-}" "${TMP6:-}" "${TMP7:-}" "${TMP8:-}"' EXIT
 mkdir -p "$TMP1/.config/voxtype"
 cat > "$TMP1/.config/voxtype/config.toml" <<'TOML'
 engine = "whisper"
@@ -234,11 +240,52 @@ PY
 ! grep -q "Manash" "$ROOT/libexec/voxtype-postprocess.sh"
 ok "Stock voxtype v1.3.1 wiring, replacements sync (inline + sub-table), proxy no-secrets & neutral prompt verified"
 
+echo "=== 7b. Capability probe, wire --dry-run, unwire restores the config exactly ==="
+TMP7="$(mktemp -d)"
+mkdir -p "$TMP7/home" "$TMP7/config/voxtype"
+cat > "$TMP7/config/voxtype/config.toml" <<'TOML'
+# kept as is
+engine = "whisper"
+
+[output.post_process]
+timeout_ms = 30000
+
+[osd]
+style = "default"
+TOML
+cp "$TMP7/config/voxtype/config.toml" "$TMP7/original.toml"
+W7() { HOME="$TMP7/home" XDG_CONFIG_HOME="$TMP7/config" XDG_RUNTIME_DIR="$TMP7/rt" "$ROOT/bin/shuush" "$@"; }
+mkdir -p "$TMP7/rt"
+# stock daemon: the fork-only features are off, the stock ones on
+[ "$(W7 caps | jq -r '.caps.preedit, .caps.queue_dictations, .caps.record_recover, .caps.handoff, .caps.config_set' | tr '\n' ' ')" = "false false false true true " ]
+W7 caps has handoff
+! W7 caps has preedit
+FAKE_SCHEMA="$ROOT/tests/fixtures/schema-fork.json" W7 caps --refresh | jq -e '.caps.preedit and .caps.queue_dictations' >/dev/null
+W7 wire --dry-run | grep -q 'nothing is written'
+cmp "$TMP7/original.toml" "$TMP7/config/voxtype/config.toml"
+test ! -e "$TMP7/config/shuush/wired.json"
+W7 wire >/dev/null
+grep -q 'style = "kitsune-hud"' "$TMP7/config/voxtype/config.toml"
+jq -e '.keys["osd.style"].old == "default" and .keys["output.post_process.timeout_ms"].old == 30000' "$TMP7/config/shuush/wired.json" >/dev/null
+W7 unwire >/dev/null
+cmp "$TMP7/original.toml" "$TMP7/config/voxtype/config.toml"
+test ! -e "$TMP7/config/shuush/wired.json"
+ok "shuush caps tells stock from fork; wire --dry-run writes nothing; unwire gives config.toml back byte for byte"
+
+echo "=== 7c. The patched wtype build: check and dry run (no network) ==="
+printf '\177ELF WTYPE_KEY_GAP_US' > "$RTD/patched-wtype"; printf '\177ELF usleep' > "$RTD/stock-wtype"
+chmod +x "$RTD/patched-wtype" "$RTD/stock-wtype"
+"$ROOT/libexec/shuush-build-wtype.sh" --check --bin "$RTD/patched-wtype" >/dev/null
+! "$ROOT/libexec/shuush-build-wtype.sh" --check --bin "$RTD/stock-wtype" >/dev/null
+git apply --numstat "$ROOT/libexec/wtype-key-gap.patch" | grep -q 'main\.c'
+ok "build-wtype --check tells the patched wtype from stock; the key-gap patch parses"
+
 echo "=== 8. System / AUR Package Layout (/usr/bin + /usr/lib/shuush + /usr/share/shuush) ==="
 TMP5="$(mktemp -d)"
 mkdir -p "$TMP5/root/usr/bin" "$TMP5/root/usr/lib/shuush/libexec" "$TMP5/root/usr/share/shuush/osd/kitsune-hud" "$TMP5/root/usr/share/shuush/config" "$TMP5/home/.config/voxtype"
 install -m 0755 "$ROOT/bin/shuush" "$TMP5/root/usr/bin/shuush"
 install -m 0755 "$ROOT/libexec/voxtype-postprocess.sh" "$TMP5/root/usr/lib/shuush/libexec/voxtype-postprocess.sh"
+install -m 0644 "$ROOT/libexec/shuush_wire.py" "$ROOT/libexec/shuush_caps.py" "$TMP5/root/usr/lib/shuush/libexec/"
 install -m 0644 "$ROOT/osd/kitsune-hud/KitsuneHud.qml" "$TMP5/root/usr/share/shuush/osd/kitsune-hud/KitsuneHud.qml"
 install -m 0644 "$ROOT/osd/kitsune-hud/voxtype-osd.toml" "$TMP5/root/usr/share/shuush/osd/kitsune-hud/voxtype-osd.toml"
 install -m 0644 "$ROOT/config/postprocess.env.example" "$TMP5/root/usr/share/shuush/config/postprocess.env.example"
@@ -252,35 +299,49 @@ grep -q 'style = "kitsune-hud"' "$TMP5/home/.config/voxtype/config.toml"
 bash -n "$ROOT/packaging/aur/shuush-git/PKGBUILD" "$ROOT/packaging/aur/shuush-git/shuush-git.install"
 ok "AUR /usr layout resolves libexec/share cleanly, seeds KitsuneHud + postprocess.env, and PKGBUILD syntax passes"
 
-echo "=== 9. F9 release tail defers to voxtype-fork's native release_tail_ms ==="
+echo "=== 9. F9 release tail defers to the daemon's native release_tail_ms, only on a daemon that has it ==="
 TMP6="$(mktemp -d)"
-mkdir -p "$TMP6/bin" "$TMP6/run/voxtype" "$TMP6/conf/voxtype"
+mkdir -p "$TMP6/bin" "$TMP6/run/voxtype" "$TMP6/conf/voxtype" "$TMP6/with" "$TMP6/without"
 printf '#!/bin/sh\necho "voxtype $*" >> "%s/calls"\n' "$TMP6" > "$TMP6/bin/voxtype"
 printf '#!/bin/sh\necho "sleep $*" >> "%s/calls"\n' "$TMP6" > "$TMP6/bin/sleep"
 chmod +x "$TMP6/bin/voxtype" "$TMP6/bin/sleep"
-release_calls() {
+# Two daemons that differ in one key: the fork-style one lists audio.release_tail_ms in its schema.
+jq '.keys += [{"key":"audio.release_tail_ms","type":"int","compiled":true}]' "$ROOT/tests/fixtures/schema-stock.json" > "$TMP6/with/schema.json"
+cp "$ROOT/tests/fixtures/schema-stock.json" "$TMP6/without/schema.json"
+for d in with without; do cp "$ROOT/tests/fixtures/fake-voxtype" "$TMP6/$d/voxtype-daemon"; done
+release_calls() {  # with|without, then the env to run under
+  local daemon="$1"; shift
   rm -f "$TMP6/calls" "$TMP6/run/voxtype/hold_ignore_release"
   echo recording > "$TMP6/run/voxtype/state"
   echo $(( $(date +%s%3N) - 2000 )) > "$TMP6/run/voxtype/hold_start"
-  env PATH="$TMP6/bin:$PATH" XDG_RUNTIME_DIR="$TMP6/run" XDG_CONFIG_HOME="$TMP6/conf" "$@" \
+  env PATH="$TMP6/bin:$PATH" XDG_RUNTIME_DIR="$TMP6/run" XDG_CONFIG_HOME="$TMP6/conf" \
+    SHUUSH_VOXTYPE_BIN="$TMP6/$daemon/voxtype-daemon" FAKE_SCHEMA="$TMP6/$daemon/schema.json" "$@" \
     bash "$ROOT/libexec/voxtype-toggle.sh" release
   tr '\n' ';' < "$TMP6/calls"
 }
-[ "$(release_calls env -u VOXTYPE_RELEASE_TAIL_MS)" = "sleep 0.200;voxtype record stop;" ]
+for d in with without; do
+  [ "$(release_calls $d env -u VOXTYPE_RELEASE_TAIL_MS)" = "sleep 0.200;voxtype record stop;" ]
+done
 echo 'PP_RELEASE_TAIL_MS=350' > "$TMP6/conf/voxtype/postprocess.env"
-[ "$(release_calls env -u VOXTYPE_RELEASE_TAIL_MS)" = "sleep 0.350;voxtype record stop;" ]
-[ "$(release_calls env VOXTYPE_RELEASE_TAIL_MS=400)" = "voxtype record stop;" ]
+for d in with without; do
+  [ "$(release_calls $d env -u VOXTYPE_RELEASE_TAIL_MS)" = "sleep 0.350;voxtype record stop;" ]
+done
+[ "$(release_calls with env VOXTYPE_RELEASE_TAIL_MS=400)" = "voxtype record stop;" ]
+[ "$(release_calls without env VOXTYPE_RELEASE_TAIL_MS=400)" = "sleep 0.350;voxtype record stop;" ]
 printf '[audio]\nrelease_tail_ms = 400\n' > "$TMP6/conf/voxtype/config.toml"
-[ "$(release_calls env -u VOXTYPE_RELEASE_TAIL_MS)" = "voxtype record stop;" ]
+[ "$(release_calls with env -u VOXTYPE_RELEASE_TAIL_MS)" = "voxtype record stop;" ]
+[ "$(release_calls without env -u VOXTYPE_RELEASE_TAIL_MS)" = "sleep 0.350;voxtype record stop;" ]
 printf '[audio]\n# release_tail_ms = 400\n' > "$TMP6/conf/voxtype/config.toml"
 echo 'PP_RELEASE_TAIL_MS=0' > "$TMP6/conf/voxtype/postprocess.env"
-[ "$(release_calls env -u VOXTYPE_RELEASE_TAIL_MS)" = "voxtype record stop;" ]
-ok "F9 release sleeps PP_RELEASE_TAIL_MS (default 200) only while the daemon's release_tail_ms is unset in config and environment"
+for d in with without; do
+  [ "$(release_calls $d env -u VOXTYPE_RELEASE_TAIL_MS)" = "voxtype record stop;" ]
+done
+ok "F9 release sleeps PP_RELEASE_TAIL_MS (default 200) unless a daemon that has release_tail_ms is told to use it (config or environment); a daemon without it ignores both"
 
 if python3 -m pytest --version >/dev/null 2>&1; then
   echo "=== 10. Pytest Suite (Queue, Single-jq, WPM, Re-clean, Clipboard Snippet, Inotify OSD) ==="
-  python3 -m pytest -q -p no:cacheprovider "$ROOT/tests/test_dictation_pass.py"
-  ok "Pytest dictation-pass suite passed"
+  python3 -m pytest -q -p no:cacheprovider "$ROOT/tests/test_dictation_pass.py" "$ROOT/tests/test_layer_groundwork.py"
+  ok "Pytest dictation-pass and layer-groundwork suites passed"
 fi
 
 echo ""

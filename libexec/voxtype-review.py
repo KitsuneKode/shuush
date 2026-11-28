@@ -82,18 +82,28 @@ def wav_duration_ms(path: Path) -> int | None:
     return None
 
 
+def take_start_ms(rt_dir: Path) -> int | None:
+    """When the take started: voxtype's recording.json, else Shuush's session_start."""
+    try:
+        v = json.loads((rt_dir / "recording.json").read_text(encoding="utf-8")).get("started_at_ms")
+        if isinstance(v, (int, float)) and v > 0:
+            return int(v)
+    except (OSError, ValueError, AttributeError):
+        pass
+    try:
+        raw_start = (rt_dir / "session_start").read_text(encoding="utf-8").strip()
+        if raw_start:
+            return int(raw_start)
+    except (OSError, ValueError):
+        pass
+    return None
+
+
 def compute_audio_ms(rt_dir: Path, now_ms: int | None = None) -> int:
-    """Return take audio duration in ms from last_take.wav, falling back to now - session_start."""
+    """Return take audio duration in ms from last_take.wav, falling back to now - the take's start."""
     if now_ms is None:
         now_ms = int(time.time() * 1000)
-    start_ms: int | None = None
-    start_file = rt_dir / "session_start"
-    try:
-        raw_start = start_file.read_text(encoding="utf-8").strip()
-        if raw_start:
-            start_ms = int(raw_start)
-    except (OSError, ValueError):
-        start_ms = None
+    start_ms = take_start_ms(rt_dir)
 
     wav = rt_dir / "last_take.wav"
     if wav.is_file():

@@ -1,0 +1,2480 @@
+{
+"_note": "keys of 'voxtype config schema --json' from a build of 1.3.1+g828874e2 run against an empty config; descriptions dropped, file_value cleared",
+"daemon_version": "1.3.1+g828874e2",
+"keys": [
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.device",
+"type": "dynamic_enum",
+"value": "default"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.duck_media",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.duck_media_fade_ms",
+"max": 5000,
+"min": 0,
+"type": "int",
+"value": 150
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.duck_media_volume_percent",
+"max": 150,
+"min": 0,
+"type": "int",
+"value": 34
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.external_trigger_silence_timeout_secs",
+"max": 600.0,
+"min": 0.0,
+"type": "float",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.external_trigger_speech_threshold_dbfs",
+"max": 0.0,
+"min": -100.0,
+"type": "float",
+"value": -20.0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.external_trigger_stop_command",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.feedback.enabled",
+"type": "bool",
+"value": false
+},
+{
+"choices": [
+"default",
+"subtle",
+"mechanical"
+],
+"compiled": true,
+"file_value": null,
+"key": "audio.feedback.theme",
+"type": "enum",
+"value": "default"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.feedback.volume",
+"max": 1.0,
+"min": 0.0,
+"type": "float",
+"value": 0.7
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.keep_failed_recordings",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.max_duration_secs",
+"max": 3600,
+"min": 5,
+"type": "int",
+"value": 60
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.pause_media",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.pre_roll_ms",
+"max": 2000,
+"min": 0,
+"type": "int",
+"value": 250
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.queue_dictations",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.sample_rate",
+"max": 48000,
+"min": 8000,
+"type": "int",
+"value": 16000
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "audio.warm_mic_secs",
+"max": 120,
+"min": 0,
+"type": "int",
+"value": 0
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "cohere.boundary_search_secs",
+"max": 5.0,
+"min": 0.0,
+"type": "float",
+"value": 2.5
+},
+{
+"choices": [
+"auto",
+"cpu",
+"cpu_accel",
+"vulkan",
+"metal",
+"cuda",
+"rocm"
+],
+"compiled": false,
+"file_value": null,
+"key": "cohere.gguf_backend",
+"type": "enum",
+"value": "auto"
+},
+{
+"choices": [
+"ar",
+"de",
+"en",
+"es",
+"fr",
+"hi",
+"it",
+"ja",
+"ko",
+"nl",
+"pt",
+"ru",
+"tr",
+"zh"
+],
+"compiled": false,
+"file_value": null,
+"key": "cohere.language",
+"type": "enum",
+"value": "en"
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "cohere.max_chunk_secs",
+"max": 35,
+"min": 5,
+"type": "int",
+"value": 35
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "cohere.model",
+"type": "dynamic_enum",
+"value": "cohere-transcribe-q4f16"
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "cohere.on_demand_loading",
+"type": "bool",
+"value": false
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "cohere.threads",
+"max": 256,
+"min": 1,
+"type": "int",
+"value": null
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "dolphin.model",
+"type": "dynamic_enum",
+"value": "dolphin-base"
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "dolphin.on_demand_loading",
+"type": "bool",
+"value": false
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "dolphin.threads",
+"max": 256,
+"min": 1,
+"type": "int",
+"value": null
+},
+{
+"choices": [
+"whisper",
+"parakeet",
+"moonshine",
+"sensevoice",
+"paraformer",
+"dolphin",
+"omnilingual",
+"cohere",
+"gguf",
+"openvino"
+],
+"compiled": true,
+"file_value": null,
+"key": "engine",
+"type": "enum",
+"value": "whisper"
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "gguf.architecture",
+"type": "string",
+"value": ""
+},
+{
+"choices": [
+"auto",
+"cpu",
+"cpu_accel",
+"vulkan",
+"metal",
+"cuda",
+"rocm"
+],
+"compiled": false,
+"file_value": null,
+"key": "gguf.gguf_backend",
+"type": "enum",
+"value": "auto"
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "gguf.language",
+"type": "string",
+"value": "auto"
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "gguf.model",
+"type": "dynamic_enum",
+"value": ""
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "gguf.on_demand_loading",
+"type": "bool",
+"value": false
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "gguf.streaming",
+"type": "bool",
+"value": false
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "gguf.threads",
+"max": 256,
+"min": 1,
+"type": "int",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "history.enabled",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "history.exclude_apps",
+"type": "string",
+"value": "KeePassXC,Bitwarden,1Password,Proton Pass"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "history.paused",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "history.record_app",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "history.record_window_title",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "history.retention_days",
+"max": 36500,
+"min": 0,
+"type": "int",
+"value": 30
+},
+{
+"choices": [
+"ESC",
+"BACKSPACE",
+"F12",
+"DELETE",
+"END"
+],
+"compiled": true,
+"file_value": null,
+"key": "hotkey.cancel_key",
+"type": "enum",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "hotkey.enabled",
+"type": "bool",
+"value": false
+},
+{
+"choices": [
+"HOME",
+"PAUSE",
+"SCROLLLOCK",
+"INSERT",
+"MENU",
+"F13",
+"F14",
+"F15",
+"F16",
+"RIGHTCTRL",
+"RIGHTALT",
+"RIGHTMETA",
+"CAPSLOCK"
+],
+"compiled": true,
+"file_value": null,
+"key": "hotkey.key",
+"type": "enum",
+"value": "SCROLLLOCK"
+},
+{
+"choices": [
+"push_to_talk",
+"toggle"
+],
+"compiled": true,
+"file_value": null,
+"key": "hotkey.mode",
+"type": "enum",
+"value": "push_to_talk"
+},
+{
+"choices": [
+"LEFTSHIFT",
+"RIGHTSHIFT",
+"LEFTCTRL",
+"LEFTALT",
+"LEFTMETA"
+],
+"compiled": true,
+"file_value": null,
+"key": "hotkey.model_modifier",
+"type": "enum",
+"value": null
+},
+{
+"choices": [
+"CTRL+ALT+V",
+"F9",
+"F10",
+"SUPER+ALT+V"
+],
+"compiled": true,
+"file_value": null,
+"key": "hotkey.paste_last_key",
+"type": "enum",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.actions.remind_in_mins",
+"max": 10080,
+"min": 1,
+"type": "int",
+"value": 60
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.actions.todoist_project_id",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.actions.todoist_token_file",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.announce_recording",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.announcement_file",
+"type": "string",
+"value": null
+},
+{
+"choices": [
+"kokoro",
+"jessica"
+],
+"compiled": true,
+"file_value": null,
+"key": "meeting.announcement_voice",
+"type": "enum",
+"value": "kokoro"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.announcement_volume",
+"max": 1.0,
+"min": 0.0,
+"type": "float",
+"value": 0.5
+},
+{
+"choices": [
+"claude",
+"codex",
+"pi"
+],
+"compiled": true,
+"file_value": null,
+"key": "meeting.assistant.agent",
+"type": "enum",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.assistant.local_only",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.assistant.max_transcript_chars",
+"max": 2000000,
+"min": 2000,
+"type": "int",
+"value": 100000
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.assistant.open_command",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.assistant.timeout_secs",
+"max": 3600,
+"min": 5,
+"type": "int",
+"value": 180
+},
+{
+"choices": [
+"auto",
+"webrtc",
+"gtcrn",
+"disabled"
+],
+"compiled": true,
+"file_value": null,
+"key": "meeting.audio.echo_cancel",
+"type": "enum",
+"value": "auto"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.audio.echo_fuzzy_max_words",
+"max": 12,
+"min": 1,
+"type": "int",
+"value": 4
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.audio.echo_guard",
+"type": "bool",
+"value": true
+},
+{
+"choices": [
+"auto",
+"disabled"
+],
+"compiled": true,
+"file_value": null,
+"key": "meeting.audio.loopback_device",
+"type": "enum",
+"value": "auto"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.audio.mic_device",
+"type": "string",
+"value": "default"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.audio.vad_threshold",
+"max": 1.0,
+"min": 0.0,
+"type": "float",
+"value": 0.009999999776482582
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.auto_label_from_title",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.calendar.command",
+"type": "string",
+"value": ""
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.calendar.timeout_secs",
+"max": 60,
+"min": 1,
+"type": "int",
+"value": 3
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.calendar.window_mins",
+"max": 120,
+"min": 0,
+"type": "int",
+"value": 10
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.chunk_duration_secs",
+"max": 600,
+"min": 5,
+"type": "int",
+"value": 30
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.detect.auto_record_apps",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.detect.debounce_secs",
+"max": 120,
+"min": 0,
+"type": "int",
+"value": 5
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.detect.enabled",
+"type": "bool",
+"value": false
+},
+{
+"choices": [
+"stop",
+"ask",
+"keep"
+],
+"compiled": true,
+"file_value": null,
+"key": "meeting.detect.on_call_end",
+"type": "enum",
+"value": "stop"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.detect.stop_grace_secs",
+"max": 600,
+"min": 0,
+"type": "int",
+"value": 20
+},
+{
+"choices": [
+"simple",
+"ml",
+"hybrid"
+],
+"compiled": true,
+"file_value": null,
+"key": "meeting.diarization.backend",
+"type": "enum",
+"value": "simple"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.diarization.enabled",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.diarization.max_speakers",
+"max": 32,
+"min": 1,
+"type": "int",
+"value": 10
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.diarization.min_segment_ms",
+"max": 60000,
+"min": 0,
+"type": "int",
+"value": 500
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.diarization.model_path",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.diarization.similarity_threshold",
+"max": 1.0,
+"min": 0.0,
+"type": "float",
+"value": 0.25
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.diarization.vad_hop_secs",
+"max": 30.0,
+"min": 0.05,
+"type": "float",
+"value": 2.0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.diarization.vad_rms_floor",
+"max": 1.0,
+"min": 0.0,
+"type": "float",
+"value": 0.004999999888241291
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.diarization.vad_window_secs",
+"max": 30.0,
+"min": 0.1,
+"type": "float",
+"value": 4.0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.enabled",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.max_duration_mins",
+"max": 1440,
+"min": 0,
+"type": "int",
+"value": 180
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.my_name",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.offer_enable",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.post_meeting_command",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.post_meeting_timeout_secs",
+"max": 86400,
+"min": 1,
+"type": "int",
+"value": 300
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.retain_audio",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.share.command",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.share.folder",
+"type": "string",
+"value": "auto"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.share.timeout_secs",
+"max": 3600,
+"min": 1,
+"type": "int",
+"value": 60
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.show_view_on_start",
+"type": "bool",
+"value": true
+},
+{
+"choices": [
+"auto",
+"always",
+"never"
+],
+"compiled": true,
+"file_value": null,
+"key": "meeting.status_notifications",
+"type": "enum",
+"value": "auto"
+},
+{
+"choices": [
+"auto"
+],
+"compiled": true,
+"file_value": null,
+"key": "meeting.storage_path",
+"type": "enum",
+"value": "auto"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.summary.auto",
+"type": "bool",
+"value": null
+},
+{
+"choices": [
+"agent",
+"local",
+"remote",
+"disabled"
+],
+"compiled": true,
+"file_value": null,
+"key": "meeting.summary.backend",
+"type": "enum",
+"value": "disabled"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.summary.ollama_model",
+"type": "string",
+"value": "llama3.2"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.summary.ollama_url",
+"type": "string",
+"value": "http://localhost:11434"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.summary.remote_api_key",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.summary.remote_endpoint",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.summary.timeout_secs",
+"max": 3600,
+"min": 1,
+"type": "int",
+"value": 120
+},
+{
+"choices": [
+"auto",
+"quickshell",
+"gtk4",
+"terminal",
+"none"
+],
+"compiled": true,
+"file_value": null,
+"key": "meeting.view",
+"type": "enum",
+"value": "auto"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "meeting.view_opacity",
+"max": 1.0,
+"min": 0.3,
+"type": "float",
+"value": 0.8
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "moonshine.model",
+"type": "dynamic_enum",
+"value": "base"
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "moonshine.on_demand_loading",
+"type": "bool",
+"value": false
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "moonshine.quantized",
+"type": "bool",
+"value": true
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "moonshine.threads",
+"max": 256,
+"min": 1,
+"type": "int",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "omarchy.link_settings_plugin",
+"type": "bool",
+"value": true
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "omnilingual.model",
+"type": "dynamic_enum",
+"value": "omnilingual-large"
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "omnilingual.on_demand_loading",
+"type": "bool",
+"value": false
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "omnilingual.threads",
+"max": 256,
+"min": 1,
+"type": "int",
+"value": null
+},
+{
+"choices": [
+"NPU",
+"GPU",
+"CPU",
+"AUTO"
+],
+"compiled": false,
+"file_value": null,
+"key": "openvino.device",
+"type": "enum",
+"value": "NPU"
+},
+{
+"choices": [
+"auto",
+"en",
+"fr",
+"de",
+"it",
+"es",
+"pt",
+"nl",
+"pl",
+"zh",
+"ja",
+"ko",
+"ru",
+"ar"
+],
+"compiled": false,
+"file_value": null,
+"key": "openvino.language",
+"type": "enum",
+"value": "en"
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "openvino.model",
+"type": "dynamic_enum",
+"value": "base.en"
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "openvino.on_demand_loading",
+"type": "bool",
+"value": false
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "openvino.openvino_dir",
+"type": "string",
+"value": null
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "openvino.quantized",
+"type": "bool",
+"value": true
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "openvino.streaming",
+"type": "bool",
+"value": false
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "openvino.threads",
+"max": 256,
+"min": 1,
+"type": "int",
+"value": null
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "openvino.translate",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.enabled",
+"type": "bool",
+"value": true
+},
+{
+"choices": [
+"background",
+"none"
+],
+"compiled": true,
+"file_value": null,
+"key": "osd.frame.background",
+"type": "enum",
+"value": "background"
+},
+{
+"choices": [
+"state",
+"accent",
+"aura",
+"none"
+],
+"compiled": true,
+"file_value": null,
+"key": "osd.frame.border",
+"type": "enum",
+"value": "state"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.frame.glow",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.frame.halo",
+"type": "bool",
+"value": true
+},
+{
+"choices": [
+"auto",
+"gtk4",
+"native",
+"quickshell"
+],
+"compiled": true,
+"file_value": null,
+"key": "osd.frontend",
+"type": "enum",
+"value": "auto"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.height_px",
+"max": 2048,
+"min": 16,
+"type": "int",
+"value": 48
+},
+{
+"choices": [
+"compact",
+"wide",
+"minimal",
+"pill",
+"shell",
+"tile",
+"orb",
+"custom"
+],
+"compiled": true,
+"file_value": null,
+"key": "osd.layout",
+"type": "enum",
+"value": "compact"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.margin_px",
+"max": 512,
+"min": 0,
+"type": "int",
+"value": 24
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.offset_x",
+"max": 4096,
+"min": -4096,
+"type": "int",
+"value": 0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.offset_y",
+"max": 4096,
+"min": -4096,
+"type": "int",
+"value": 0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.opacity",
+"max": 1.0,
+"min": 0.0,
+"type": "float",
+"value": 0.95
+},
+{
+"choices": [
+"omarchy",
+"fallback",
+"package",
+"custom"
+],
+"compiled": true,
+"file_value": null,
+"key": "osd.palette",
+"type": "enum",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.peak_decay_db_per_sec",
+"max": 100.0,
+"min": 0.0,
+"type": "float",
+"value": 6.0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.plugin_path",
+"type": "string",
+"value": null
+},
+{
+"choices": [
+"bottom-center",
+"top-center",
+"bottom-left",
+"bottom-right",
+"top-left",
+"top-right"
+],
+"compiled": true,
+"file_value": null,
+"key": "osd.position",
+"type": "enum",
+"value": "bottom-center"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.style",
+"type": "dynamic_enum",
+"value": "default"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.top_margin",
+"max": 1.0,
+"min": 0.0,
+"type": "float",
+"value": 0.85
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.waveform_gain",
+"max": 50.0,
+"min": 0.1,
+"type": "float",
+"value": 10.0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.waveform_window_secs",
+"max": 30.0,
+"min": 0.5,
+"type": "float",
+"value": 3.0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "osd.width_px",
+"max": 4096,
+"min": 80,
+"type": "int",
+"value": 400
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.append_text",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.auto_submit",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.dotool_xkb_layout",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.dotool_xkb_variant",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.eitype_xkb_layout",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.eitype_xkb_variant",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.fallback_to_clipboard",
+"type": "bool",
+"value": true
+},
+{
+"choices": [
+"overwrite",
+"append"
+],
+"compiled": true,
+"file_value": null,
+"key": "output.file_mode",
+"type": "enum",
+"value": "overwrite"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.file_path",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.keep_undelivered_text",
+"type": "bool",
+"value": true
+},
+{
+"choices": [
+"type",
+"clipboard",
+"paste",
+"file"
+],
+"compiled": true,
+"file_value": null,
+"key": "output.mode",
+"type": "enum",
+"value": "type"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.modifier_release_timeout_ms",
+"max": 60000,
+"min": 0,
+"type": "int",
+"value": 750
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.notification.on_no_speech",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.notification.on_recording_start",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.notification.on_recording_stop",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.notification.on_transcription",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.notification.show_edits",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.notification.show_engine_icon",
+"type": "bool",
+"value": false
+},
+{
+"choices": [
+"low",
+"normal",
+"critical"
+],
+"compiled": true,
+"file_value": null,
+"key": "output.notification.urgency",
+"type": "enum",
+"value": "normal"
+},
+{
+"choices": [
+"auto",
+"shift+insert",
+"ctrl+v",
+"ctrl+shift+v",
+"super+v"
+],
+"compiled": true,
+"file_value": null,
+"key": "output.paste_keys",
+"type": "enum",
+"value": "shift+insert"
+},
+{
+"choices": [
+"auto",
+"shift+insert",
+"ctrl+v",
+"ctrl+shift+v",
+"super+v"
+],
+"compiled": true,
+"file_value": null,
+"key": "output.paste_keys_terminal",
+"type": "enum",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.paste_over_chars",
+"max": 1000000,
+"min": 0,
+"type": "int",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.post_output_command",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.post_process.command",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.post_process.edit_list",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.post_process.fallback_on_empty",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.post_process.streaming",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.post_process.timeout_ms",
+"max": 600000,
+"min": 100,
+"type": "int",
+"value": 30000
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.post_process.trim",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.post_process_enabled",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.pre_output_command",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.pre_recording_command",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.pre_type_delay_ms",
+"max": 5000,
+"min": 0,
+"type": "int",
+"value": 0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.preedit",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.read_field",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.restore_clipboard",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.restore_clipboard_delay_ms",
+"max": 10000,
+"min": 0,
+"type": "int",
+"value": 200
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.shift_enter_newlines",
+"type": "bool",
+"value": false
+},
+{
+"choices": [
+"live",
+"on_stop"
+],
+"compiled": true,
+"file_value": null,
+"key": "output.streaming_commit",
+"type": "enum",
+"value": "live"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.streaming_preview_file",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.type_delay_ms",
+"max": 1000,
+"min": 0,
+"type": "int",
+"value": 0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.wait_for_modifier_release",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "output.wtype_shift_prefix",
+"type": "bool",
+"value": false
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "paraformer.model",
+"type": "dynamic_enum",
+"value": "paraformer-zh"
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "paraformer.on_demand_loading",
+"type": "bool",
+"value": false
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "paraformer.threads",
+"max": 256,
+"min": 1,
+"type": "int",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.corrections_file",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.cpu.streaming_chunk_secs",
+"max": 60.0,
+"min": 0.0,
+"type": "float",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.cpu.streaming_left_context_secs",
+"max": 60.0,
+"min": 0.0,
+"type": "float",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.cpu.streaming_right_context_secs",
+"max": 60.0,
+"min": 0.0,
+"type": "float",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.cpu.threads",
+"max": 256,
+"min": 1,
+"type": "int",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.final_pass_segment_secs",
+"max": 3600.0,
+"min": 0.0,
+"type": "float",
+"value": 45.0
+},
+{
+"choices": [
+"auto",
+"cpu",
+"cpu_accel",
+"vulkan",
+"metal",
+"cuda",
+"rocm"
+],
+"compiled": true,
+"file_value": null,
+"key": "parakeet.gguf_backend",
+"type": "enum",
+"value": "auto"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.idle_unload_secs",
+"max": 86400,
+"min": 0,
+"type": "int",
+"value": 0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.max_window_secs",
+"max": 3600.0,
+"min": 0.0,
+"type": "float",
+"value": 240.0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.model",
+"type": "dynamic_enum",
+"value": "parakeet-tdt-0.6b-v3"
+},
+{
+"choices": [
+"tdt",
+"ctc"
+],
+"compiled": true,
+"file_value": null,
+"key": "parakeet.model_type",
+"type": "enum",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.on_demand_loading",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.pad_secs",
+"max": 10.0,
+"min": 0.0,
+"type": "float",
+"value": 0.5
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.streaming",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.streaming_chunk_secs",
+"max": 60.0,
+"min": 0.0,
+"type": "float",
+"value": 0.3199999928474426
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.streaming_final_pass",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.streaming_final_pass_max_secs",
+"max": 3600.0,
+"min": 1.0,
+"type": "float",
+"value": 180.0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.streaming_final_pass_skip_when_clean",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.streaming_left_context_secs",
+"max": 60.0,
+"min": 0.0,
+"type": "float",
+"value": 5.599999904632568
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.streaming_max_pause_secs",
+"max": 60.0,
+"min": 0.0,
+"type": "float",
+"value": 2.5
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.streaming_right_context_secs",
+"max": 60.0,
+"min": 0.0,
+"type": "float",
+"value": 0.3199999928474426
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.threads",
+"max": 256,
+"min": 1,
+"type": "int",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.vocabulary_boost",
+"max": 20.0,
+"min": 0.0,
+"type": "float",
+"value": 2.5
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.vocabulary_file",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "parakeet.window_overlap_secs",
+"max": 60.0,
+"min": 0.0,
+"type": "float",
+"value": 5.0
+},
+{
+"choices": [
+"auto",
+"zh",
+"en",
+"ja",
+"ko",
+"yue"
+],
+"compiled": false,
+"file_value": null,
+"key": "sensevoice.language",
+"type": "enum",
+"value": "auto"
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "sensevoice.model",
+"type": "dynamic_enum",
+"value": "sensevoice-small"
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "sensevoice.on_demand_loading",
+"type": "bool",
+"value": false
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "sensevoice.threads",
+"max": 256,
+"min": 1,
+"type": "int",
+"value": null
+},
+{
+"compiled": false,
+"file_value": null,
+"key": "sensevoice.use_itn",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "soniox.api_key",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "soniox.async_api",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "soniox.async_max_wait_secs",
+"max": 3600,
+"min": 1,
+"type": "int",
+"value": 120
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "soniox.context",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "soniox.language_hints_strict",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "soniox.model",
+"type": "string",
+"value": "stt-rt-v6"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "soniox.streaming",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "soniox.terms_file",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "soniox.type_partials",
+"type": "bool",
+"value": true
+},
+{
+"choices": [
+"auto",
+"disabled"
+],
+"compiled": true,
+"file_value": null,
+"key": "state_file",
+"type": "enum",
+"value": "auto"
+},
+{
+"choices": [
+"emoji",
+"nerd-font",
+"material",
+"phosphor",
+"codicons",
+"omarchy",
+"minimal",
+"dots",
+"arrows",
+"text"
+],
+"compiled": true,
+"file_value": null,
+"key": "status.icon_theme",
+"type": "enum",
+"value": "emoji"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "status.icons.idle",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "status.icons.recording",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "status.icons.stopped",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "status.icons.streaming",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "status.icons.transcribing",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "streaming.interval_secs",
+"max": 30.0,
+"min": 0.1,
+"type": "float",
+"value": 0.800000011920929
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "streaming.max_buffer_secs",
+"max": 120.0,
+"min": 1.0,
+"type": "float",
+"value": 29.0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "streaming.min_audio_secs",
+"max": 30.0,
+"min": 0.0,
+"type": "float",
+"value": 1.0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "streaming.min_speech_rms",
+"max": 1.0,
+"min": 0.0,
+"type": "float",
+"value": 0.004999999888241291
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "streaming.partial_min_words",
+"max": 100,
+"min": 1,
+"type": "int",
+"value": 1
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "streaming.revision_mode",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "streaming.type_partials",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "text.collapse_restarts",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "text.filter_filler_words",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "text.format_numbers",
+"type": "bool",
+"value": true
+},
+{
+"choices": [
+"auto",
+"en",
+"fr",
+"de",
+"it",
+"es",
+"pt",
+"nl",
+"pl",
+"zh",
+"ja",
+"ko",
+"ru",
+"ar"
+],
+"compiled": true,
+"file_value": null,
+"key": "text.language",
+"type": "enum",
+"value": "auto"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "text.lard_disfluency",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "text.lard_model_path",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "text.punctuation_casing",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "text.repair_sentence_breaks",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "text.smart_auto_submit",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "text.spoken_punctuation",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "tray.enabled",
+"type": "bool",
+"value": true
+},
+{
+"choices": [
+"auto",
+"energy",
+"whisper"
+],
+"compiled": true,
+"file_value": null,
+"key": "vad.backend",
+"type": "enum",
+"value": "energy"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "vad.enabled",
+"type": "bool",
+"value": true
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "vad.min_speech_duration_ms",
+"max": 10000,
+"min": 0,
+"type": "int",
+"value": 100
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "vad.model",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "vad.threshold",
+"max": 1.0,
+"min": 0.0,
+"type": "float",
+"value": 0.5
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.cold_model_timeout_secs",
+"max": 86400,
+"min": 0,
+"type": "int",
+"value": 300
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.context_window_optimization",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.eager_chunk_secs",
+"max": 60.0,
+"min": 1.0,
+"type": "float",
+"value": 5.0
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.eager_processing",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.flash_attention",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.gpu_device",
+"max": 15,
+"min": 0,
+"type": "int",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.gpu_isolation",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.gpu_wait_secs",
+"max": 120,
+"min": 0,
+"type": "int",
+"value": 5
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.initial_prompt",
+"type": "string",
+"value": null
+},
+{
+"choices": [
+"auto",
+"en",
+"fr",
+"de",
+"it",
+"es",
+"pt",
+"nl",
+"pl",
+"zh",
+"ja",
+"ko",
+"ru",
+"ar"
+],
+"compiled": true,
+"file_value": null,
+"key": "whisper.language",
+"type": "enum",
+"value": "en"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.max_loaded_models",
+"max": 16,
+"min": 1,
+"type": "int",
+"value": 2
+},
+{
+"choices": [
+"local",
+"remote",
+"cli"
+],
+"compiled": true,
+"file_value": null,
+"key": "whisper.mode",
+"type": "enum",
+"value": "local"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.model",
+"type": "dynamic_enum",
+"value": "base.en"
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.on_demand_loading",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.remote_api_key",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.remote_endpoint",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.remote_model",
+"type": "string",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.remote_send_auto_language",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.remote_timeout_secs",
+"max": 3600,
+"min": 1,
+"type": "int",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.secondary_model",
+"type": "dynamic_enum",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.streaming",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.threads",
+"max": 256,
+"min": 1,
+"type": "int",
+"value": null
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.translate",
+"type": "bool",
+"value": false
+},
+{
+"compiled": true,
+"file_value": null,
+"key": "whisper.whisper_cli_path",
+"type": "string",
+"value": null
+}
+],
+"schema_version": 1
+}

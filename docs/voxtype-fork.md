@@ -1,6 +1,21 @@
 # Stock voxtype or the companion fork
 
-Shuush runs on stock [voxtype](https://github.com/peteonrails/voxtype) (1.3 or newer): install `voxtype-bin`, run `shuush wire-config`, and everything in the left column works. A few features need changes inside voxtype itself; they live in the [`kitsune/live`](https://github.com/KitsuneKode/voxtype/tree/kitsune/live) branch of a fork that tracks upstream, and are being offered upstream (see below). Shuush detects what it is running on: without the fork's extras it falls back on its own, and nothing breaks.
+Shuush runs on stock [voxtype](https://github.com/peteonrails/voxtype) (1.3 or newer): install `voxtype-bin`, run `shuush wire`, and everything in the left column works. A few features need changes inside voxtype itself; they live in the [`kitsune/live`](https://github.com/KitsuneKode/voxtype/tree/kitsune/live) branch of a fork that tracks upstream, and are being offered upstream (see below). Shuush detects what it is running on: without the fork's extras it falls back on its own, and nothing breaks.
+
+## What the daemon can do: `shuush caps`
+
+`shuush caps` asks the daemon's own binary (found from its pid file, then `voxtype.service`'s `ExecStart`, then `PATH`; the `voxtype` on `PATH` can be another build) what it supports, from `voxtype config schema --json` (every key it can set), a few `--help` probes and the strings in the binary for files no schema lists. The answer is cached in `$XDG_RUNTIME_DIR/shuush/caps.json` by binary path, size and mtime, so it is asked again only when the binary changes. The probe runs with an empty throwaway config directory: it reads none of yours and writes nothing.
+
+```sh
+shuush caps                       # everything, as JSON
+shuush caps list                  # one line per capability, on/off
+shuush caps has queue_dictations  # exit 0 when on (what the scripts use)
+shuush doctor                     # prints the same table for the running daemon
+```
+
+Every place that leans on a fork-only feature checks it and does what stock voxtype does when it is off: queued dictation (`queue_dictations`), the native release tail (`release_tail_ms`), skipping a cleanup that is running (`skip_post_process`: on stock the press is ignored), cleanup streaming (`post_process_streaming`), the input method's field marker (`read_field` / `preedit`), replay (`last_take`) and `shuush recover` (`record_recover`). The HUD reads voxtype's own `recording.json` and `outcome.json` and keeps the fork's `session_start` and `output_done` as a fallback.
+
+The patched wtype (fast, exact typing) is built by Shuush now, not by the fork: `shuush build-wtype`, check it with `shuush build-wtype --check`.
 
 | Works on stock voxtype | Needs the companion fork |
 |---|---|

@@ -5,7 +5,7 @@
 #   - elapsed time in the hover tooltip while recording (the OSD pill owns
 #     the visible clock)
 #   - a tooltip with the last dictation and the click controls
-# Elapsed time comes from $XDG_RUNTIME_DIR/voxtype/session_start, written by
+# Elapsed time comes from voxtype's recording.json, else $XDG_RUNTIME_DIR/voxtype/session_start, written by
 # voxtype-live-osd.sh, so the bar and the OSD pill always agree.
 
 set -u
@@ -31,7 +31,9 @@ emit() {
       # The watcher writes session_start up to ~150ms after the state flips,
       # so a stale file from the last session can be read first. Trust it only
       # when it lands within 3s of when we saw recording begin.
-      file=$(cat "$RT/session_start" 2>/dev/null || echo 0)
+      # voxtype's own recording.json first, the watcher's session_start as fallback.
+      file=$(jq -r '.started_at_ms // empty' "$RT/recording.json" 2>/dev/null)
+      [[ "$file" =~ ^[0-9]+$ ]] || file=$(cat "$RT/session_start" 2>/dev/null || echo 0)
       start=$LOCAL_START
       (( file > 0 && file - LOCAL_START < 3000 && LOCAL_START - file < 3000 )) && start=$file
       secs=$(( (now - start) / 1000 ))

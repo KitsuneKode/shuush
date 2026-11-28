@@ -10,6 +10,10 @@
 //                   voxtype-live-osd watcher (journal → file transport)
 //   - liveInField   $XDG_RUNTIME_DIR/voxtype/live_in_field, present while the
 //                   voxtype fork shows the words in the field (preedit)
+//   - recording.json / outcome.json   voxtype's own state files (stock 1.3.1
+//                   has them): when the take started and how it ended. The
+//                   fork's output_done marker and Shuush's session_start are
+//                   the fallback for a daemon or a moment without them.
 //
 // With the voxtype fork's streaming preview, live words arrive while
 // "streaming" (~3 updates/s); the cleanup script shows the raw text while
@@ -209,6 +213,7 @@ Item {
         }
     }
 
+    // The fork's marker, written only on success. Fallback for outcome.json.
     FileView {
         path: root._runtimeDir.length > 0 ? root._runtimeDir + "/voxtype/output_done" : ""
         watchChanges: true
@@ -217,6 +222,25 @@ Item {
         onLoaded: {
             const ms = Number((text() || "").trim().split(" ")[0]);
             if (ms > 0) root.outputDoneAt = ms;
+        }
+    }
+
+    // voxtype's own result of the take: {"outcome": "ok" | "empty" | "cancelled"
+    // | "no_speech" | "too_short" | "output_failed", "at_ms": ...}. Only "ok"
+    // counts as delivered, as with output_done; "cancelled" feeds the cancel fold.
+    property double outcomeOkAt: 0
+    FileView {
+        path: root._runtimeDir.length > 0 ? root._runtimeDir + "/voxtype/outcome.json" : ""
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: {
+            let o = null;
+            try { o = JSON.parse(text() || "null"); } catch (e) { o = null; }
+            const at = o ? Number(o.at_ms) : 0;
+            if (!(at > 0)) return;
+            if (o.outcome === "ok") root.outcomeOkAt = at;
+            else if (o.outcome === "cancelled") root.cancelledAt = Math.max(root.cancelledAt, at);
         }
     }
 
@@ -412,7 +436,12 @@ Item {
     // fileStart:  watcher's timestamp (≤150ms late). Prefer fileStart when it
     // belongs to this session, i.e. lands within 3s of localStart.
     property double localStart: 0
-    property double fileStart: 0
+    // voxtype's recording.json (started_at_ms) when it belongs to this take,
+    // else the watcher's session_start; both are checked against localStart.
+    property double recordingStart: 0
+    property double watcherStart: 0
+    readonly property double fileStart:
+        (recordingStart > 0 && Math.abs(localStart - recordingStart) < 3000) ? recordingStart : watcherStart
     readonly property double startedAt:
         (fileStart > 0 && Math.abs(localStart - fileStart) < 3000) ? fileStart : localStart
     property int elapsed: 0
@@ -433,7 +462,21 @@ Item {
         onFileChanged: reload()
         onLoaded: {
             const ms = Number((text() || "").trim());
-            if (ms > 0) root.fileStart = ms;
+            if (ms > 0) root.watcherStart = ms;
+        }
+    }
+
+    // voxtype's own start of the take: {"started_at_ms": ..., "mode", "engine", "model"}.
+    FileView {
+        path: root._runtimeDir.length > 0 ? root._runtimeDir + "/voxtype/recording.json" : ""
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: {
+            let o = null;
+            try { o = JSON.parse(text() || "null"); } catch (e) { o = null; }
+            const ms = o ? Number(o.started_at_ms) : 0;
+            if (ms > 0) root.recordingStart = ms;
         }
     }
 
@@ -519,7 +562,7 @@ Item {
         id: exitGrace
         interval: 80
         onTriggered: {
-            const doneAt = Math.max(root.outputDoneAt, root.ppResultAt);
+            const doneAt = Math.max(root.outcomeOkAt, root.outputDoneAt, root.ppResultAt);
             const fresh = Date.now() - doneAt < 2500;
             const delivered = fresh && doneAt >= root.localStart - 100;
             // Before `confirmed`: the check paints its colour as it starts drawing.

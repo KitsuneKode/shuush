@@ -3,7 +3,12 @@
 set -u
 f="${XDG_RUNTIME_DIR:-/run/user/$UID}/voxtype/last_take.wav"
 if [ ! -f "$f" ]; then
-  echo "no last take at $f" >&2
+  # Only a daemon that keeps the last recording (voxtype-fork's last_take.wav) has one to play.
+  if ! python3 -I "$(dirname "$(readlink -f "$0")")/shuush_caps.py" has last_take 2>/dev/null; then
+    echo "replay needs a voxtype that keeps the last recording (the companion fork does; see docs/voxtype-fork.md)" >&2
+  else
+    echo "no last take at $f" >&2
+  fi
   exit 1
 fi
 if command -v pw-play >/dev/null 2>&1; then

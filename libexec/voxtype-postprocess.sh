@@ -32,6 +32,10 @@ RAW_ORIG="$raw"
 # cleaned sentence once it has checked it against the transcript. STREAMED=1
 # means text is already on stdout: nothing below may print it again.
 STREAM="${VOXTYPE_STREAM_OUTPUT:-0}"
+# What the running voxtype can do (shuush-caps, cached): the daemon only sets
+# VOXTYPE_STREAM_OUTPUT when it has the feature, and a stock one does not.
+cap() { python3 -I "$SCRIPT_DIR/shuush_caps.py" has "$1" 2>/dev/null; }
+[ "$STREAM" = 1 ] && ! cap post_process_streaming && STREAM=0
 # 2026-11-17: a short dictation is typed in one piece, after the cleanup
 # (sentence-by-sentence bursts felt jumpy, and undo took it back in pieces).
 # Streaming stays for long ones, where waiting for the whole cleanup would be
@@ -161,10 +165,11 @@ emit() {
   [ -z "${text//[[:space:]]/}" ] && exit 0
   # A private take is typed and forgotten: not on the clipboard, not in history.
   # The fork's input method reads the field after a take (field_text.json):
-  # never for a private one. field_text.off tells it to stop for a while.
+  # never for a private one. field_text.off tells it to stop for a while (a
+  # daemon without read_field/preedit has no such reader).
   if [ "$VIA" = private ]; then
     rm -f "$RT/field_text.json" "$RT/take_selection" "$RT/take_screen_ctx.json" "$RT/take_clip_start" "$RT/take_clip"
-    : > "$RT/field_text.off"
+    if cap read_field || cap preedit; then : > "$RT/field_text.off"; fi
     exit 0
   fi
   rm -f "$RT/pp_private" "$RT/field_text.off"

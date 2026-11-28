@@ -5,9 +5,12 @@
 Shuush is an MIT-licensed Linux/Wayland intelligence, context, safety, and UI layer built on top of `voxtype` (and optionally enhanced by the companion `~/Projects/voxtype-fork` build).
 
 ### Repository Layout
-- `bin/shuush` — User CLI (`studio`, `doctor`, `wire-config`, `toggle`, `learn`, `services`, `uninstall`)
+- `bin/shuush` — User CLI (`studio`, `doctor`, `caps`, `wire` / `unwire`, `recover`, `build-wtype`, `toggle`, `learn`, `services`, `uninstall`)
 - `install.sh` — Zero-sudo installer & live-sync script (`~/.local/share/shuush`, `~/.local/bin/shuush`, systemd user services, KitsuneHud OSD)
 - `libexec/`
+  - `shuush_caps.py` / `shuush-caps` — Capability probe: what the daemon's own voxtype binary supports (`config schema --json`, `--help` probes), cached per binary path + mtime in `$XDG_RUNTIME_DIR/shuush/caps.json`. Every use of a fork-only feature asks it (`shuush-caps has CAP`) and degrades on stock
+  - `shuush_wire.py` — `shuush wire` / `unwire` / `wire --status`: writes Shuush's keys with `voxtype config set`, records old and new values in `~/.config/shuush/wired.json`, restores them exactly. Never hand-edit config.toml (profiles are the one exception: voxtype has no settable profile key)
+  - `shuush-build-wtype.sh` + `wtype-key-gap.patch` — build/check the patched wtype
   - `voxtype-toggle.sh` — Push-to-talk / tap-for-handsfree / command-mode launcher; captures target window, primary selection, clipboard baseline, and background AT-SPI/kitty screen+draft context at record start
   - `voxtype-postprocess.sh` — Cleanup pipeline (`[output.post_process]`), DATA-framed prompt, failover chain (`local`, `groq`, `groq2`, `cerebras`, `opencode`, `openrouter`), budget control, streaming support, clipboard leak guard, and history/review dispatch
   - `voxtype_pp_gate.py` — Single-call deterministic `prepare` batch (privacy guard, hallucination strip, snippets, sure-name `hard_apply`, secret redaction, XML tag neutralization, screen terms, hints), anti-paraphrase span gate (`constrain` / `constrain-check` with negation, digit, numeric-value, and first-person invariants), vocabulary `finish`, and `fallback_clean`
@@ -32,4 +35,6 @@ Branch `kitsune/pill-preview` adds the live pill preview (`streaming_commit = "o
 Run the full isolated test suite before committing:
 ```bash
 bash tests/test_sandbox.sh
+python3 -m pytest -q tests
 ```
+Nothing in the tests runs the real voxtype: `tests/fixtures/fake-voxtype` answers from the real stock and fork `config schema --json` keys (`tests/fixtures/schema-*.json`), and the scripts reach it through `SHUUSH_VOXTYPE_BIN`.
