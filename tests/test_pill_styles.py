@@ -71,3 +71,10 @@ def test_the_ticker_draws_words_as_plain_text():
 
 def test_no_host_no_wait_for_one():
     assert 'if (pillStyle === "ticker" && hostSeen && !onTarget) entranceHold.restart();' in SRC
+
+
+def test_the_pill_reads_the_target_window_again_when_a_take_starts():
+    # voxtype-toggle.sh swaps target_window (a link moved into place), so a
+    # watch on the old file goes stale and the pill named the previous app.
+    assert 'onVstateChanged: if (vstate === "recording" || vstate === "streaming") targetWindowFile.reload()' in SRC
+    assert "id: targetWindowFile" in SRC

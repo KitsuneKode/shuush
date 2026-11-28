@@ -459,7 +459,9 @@ Item {
     // voxtype-toggle.sh when recording starts. The pill says so, because
     // "Listening" alone does not say where the text is going.
     property string destClass: ""
+    onVstateChanged: if (vstate === "recording" || vstate === "streaming") targetWindowFile.reload()
     FileView {
+        id: targetWindowFile
         path: root._runtimeDir.length > 0 ? root._runtimeDir + "/voxtype/target_window" : ""
         watchChanges: true
         printErrors: false
