@@ -588,7 +588,9 @@ else
   emit_private
 fi
 [ -z "${raw//[[:space:]]/}" ] && emit "$raw"
-export PP_TITLE_PAIR PP_SCREEN_TERMS
+PP_MODE="$MODE"
+PP_APP_CLASS="${cls:-}"
+export PP_TITLE_PAIR PP_SCREEN_TERMS PP_MODE PP_APP_CLASS
 
 if private_marker; then emit_private; fi
 # The OSD pill shows this while "Polishing" (the watcher clears it at idle).
@@ -650,9 +652,9 @@ Always:
 14. Punctuation the speaker would type: periods, commas and question marks. Never add an em dash, a semicolon, or a word the speaker did not say ("Additionally", "Furthermore", "utilize", "ensure").
 PROMPT
 )
-# Names and terms live in vocabulary.txt (one per line, # comments) so they
-# can be edited without touching this script.
-VOCAB=$(sed 's/#.*//; s/^[[:space:]]*//; s/[[:space:]]*$//; /^$/d' "$CONF/vocabulary.txt" 2>/dev/null | paste -sd, - | sed 's/,/, /g')
+# Names and terms live in vocabulary.txt (+ optional vocabulary.d/<scope>.txt)
+# so they can be edited without touching this script.
+VOCAB=$(python3 -I "$GATE" vocab "$MODE" "${cls:-}" 2>/dev/null || sed 's/#.*//; s/^[[:space:]]*//; s/[[:space:]]*$//; /^$/d' "$CONF/vocabulary.txt" 2>/dev/null | paste -sd, - | sed 's/,/, /g')
 BASE=${BASE//@SPEAKER_BIO@/$SPEAKER_BIO}
 if [ -n "$VOCAB" ]; then
   BASE=${BASE//@VOCAB_LINE@/5. Spell these exactly: $VOCAB.}
