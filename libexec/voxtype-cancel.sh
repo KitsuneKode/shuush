@@ -9,14 +9,22 @@
 # .../cancelled (epoch ms) for the pill.
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 RT="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/voxtype"
-case "$(cat "$RT/state" 2>/dev/null)" in
-  recording|streaming|transcribing) ;;
-  *)
+state="$(cat "$RT/state" 2>/dev/null)"
+deliver_active=0
+if [ "$state" != "recording" ] && [ "$state" != "streaming" ] && [ "$state" != "transcribing" ]; then
+  if status_json="$(python3 -I "$SCRIPT_DIR/shuush_deliver.py" status 2>/dev/null)"; then
+    case "$status_json" in
+      *'"active": null'*|*'"active":null'*) ;;
+      *'"active":'*) deliver_active=1 ;;
+    esac
+  fi
+  if [ "$deliver_active" = 0 ]; then
     # Idle: nothing to cancel. (Escape only reaches this script while
     # dictating — kuwai's auto-consuming Escape bind hands it to the app
     # otherwise, see ~/Projects/rice/hypr/kuwai/voxtype.lua.)
-    exit 0 ;;
-esac
+    exit 0
+  fi
+fi
 now=$(date +%s%3N)
 if [ "${1:-}" != now ]; then
   last=$(cat "$RT/cancel_armed" 2>/dev/null || echo 0)
@@ -28,4 +36,8 @@ fi
 rm -f "$RT/cancel_armed" "$RT/handsfree" "$RT/command_selection"
 echo "$now" > "$RT/cancelled"
 "$SCRIPT_DIR/voxtype-outline.sh" off >/dev/null 2>&1 || true
+python3 -I "$SCRIPT_DIR/shuush_deliver.py" cancel >/dev/null 2>&1 || true
+if [ "$deliver_active" = 1 ]; then
+  exit 0
+fi
 exec voxtype record cancel

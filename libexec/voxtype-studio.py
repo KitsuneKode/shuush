@@ -547,12 +547,14 @@ def load_history(limit: int = 2000) -> list[dict]:
     # Such a take has a recovery file even when there is no cleanup history row.
     indexed = {row["take_id"]: row for row in out if row.get("take_id")}
     recovery_files = list((RT / "takes").glob("*/recovered.txt"))
+    allow_daemon_recovery = False
     if recovery_files:
         caps = shuush_caps.capabilities()["caps"]
-        if not (caps.get("take_identity") and caps.get("take_recovery")):
-            return out
+        allow_daemon_recovery = bool(caps.get("take_identity") and caps.get("take_recovery"))
     for path in recovery_files:
         take = path.parent.name
+        if not allow_daemon_recovery and not (path.parent / "shuush_delivery").exists():
+            continue
         try:
             if not take.isdecimal() or (path.parent / "pp_private").exists():
                 continue

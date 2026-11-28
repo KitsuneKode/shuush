@@ -12,6 +12,12 @@ raw=$(cat)
 RT="${XDG_RUNTIME_DIR:-/run/user/$UID}/voxtype"
 mkdir -p "$RT" 2>/dev/null || true
 chmod 700 "$RT" 2>/dev/null || true
+MONO_T0="${PP_MONO_T0:-}"
+if [ -z "$MONO_T0" ] && [ "${PP_NO_HISTORY:-0}" != 1 ]; then
+  MONO_T0=$(python3 -I "$SCRIPT_DIR/shuush_timing.py" now 2>/dev/null || echo "")
+fi
+CLEANUP_FIRST_MS=""
+CLEANUP_LAST_MS=""
 PP_LOG="$RT/pp.log"
 # A run killed on timeout skips its EXIT trap: clear what such runs left, and
 # keep the log (in RAM) from growing without bound. In the background, off
@@ -35,8 +41,10 @@ RAW_ORIG="$raw"
 STREAM="${VOXTYPE_STREAM_OUTPUT:-0}"
 # What the running voxtype can do (shuush-caps, cached): the daemon only sets
 # VOXTYPE_STREAM_OUTPUT when it has the feature, and a stock one does not.
+# In PP_DELIVERY=shuush worker mode (PP_ALLOW_STREAM_WITH_TAKE=1), Shuush itself
+# streams and types each chunk so streaming works on stock voxtype too.
 cap() { python3 -I "$SCRIPT_DIR/shuush_caps.py" has "$1" 2>/dev/null; }
-[ "$STREAM" = 1 ] && ! cap post_process_streaming && STREAM=0
+[ "$STREAM" = 1 ] && [ "${PP_ALLOW_STREAM_WITH_TAKE:-0}" != 1 ] && ! cap post_process_streaming && STREAM=0
 # 2026-11-17: a short dictation is typed in one piece, after the cleanup
 # (sentence-by-sentence bursts felt jumpy, and undo took it back in pieces).
 # Streaming stays for long ones, where waiting for the whole cleanup would be
@@ -58,7 +66,15 @@ trap '[ -n "$SDIR" ] && rm -rf "$SDIR"' EXIT
 TAKE=""
 CAPTURE="$RT"
 BAD_ID=0
-if [ "${PP_NO_HISTORY:-0}" != 1 ]; then
+if [ "${PP_WORKER_CLEANUP:-0}" = 1 ]; then
+  TAKE="${PP_TAKE_ID_OVERRIDE:-}"
+  if [ -n "${PP_TAKE_DIR_OVERRIDE:-}" ] && [ -d "${PP_TAKE_DIR_OVERRIDE}" ]; then
+    CAPTURE="$PP_TAKE_DIR_OVERRIDE"
+  elif [ -n "$TAKE" ] && [[ "$TAKE" =~ ^[0-9]+$ ]] && [ -d "$RT/takes/$TAKE" ]; then
+    CAPTURE="$RT/takes/$TAKE"
+  fi
+  [ "${PP_FORCE_BAD_ID:-0}" = 1 ] && BAD_ID=1
+elif [ "${PP_NO_HISTORY:-0}" != 1 ]; then
   if [ -n "${VOXTYPE_TAKE_ID:-}" ]; then
     TAKE="$VOXTYPE_TAKE_ID"
     cap take_identity || BAD_ID=1
@@ -81,7 +97,40 @@ if [ "${PP_NO_HISTORY:-0}" != 1 ]; then
 fi
 TARGET="$CAPTURE/target_window"
 # Do not send unchecked sentence fragments to the daemon before emit().
-if [ -n "$TAKE" ] || [ -f "$TARGET" ]; then STREAM=0; fi
+if [ "${PP_ALLOW_STREAM_WITH_TAKE:-0}" != 1 ] && { [ -n "$TAKE" ] || [ -f "$TARGET" ]; }; then STREAM=0; fi
+
+# Record monotonic transcript_ready into the take directory (Step 0 timing).
+if [ "${PP_WORKER_CLEANUP:-0}" != 1 ] && [ "${PP_NO_HISTORY:-0}" != 1 ] && [ -n "$TAKE" ] && [ "$CAPTURE" != "$RT" ] && [ -d "$CAPTURE" ] && [ -n "$MONO_T0" ]; then
+  python3 -I "$SCRIPT_DIR/shuush_timing.py" mark "$CAPTURE" transcript_ready --ts "$MONO_T0" --take-id "$TAKE" >/dev/null 2>&1 || true
+fi
+
+# Step 2: PP_DELIVERY=shuush handoff (default: daemon).
+# Hands the raw transcript + take metadata to shuush_deliver.py and exits 0
+# with empty stdout so voxtype (fallback_on_empty = false) goes idle right
+# after recognition. Any handoff failure falls through seamlessly to inline
+# daemon delivery so words are never lost.
+if [ "${PP_WORKER_CLEANUP:-0}" != 1 ] && [ "${PP_NO_HISTORY:-0}" != 1 ]; then
+  _pp_deliv="${PP_DELIVERY:-}"
+  [ -z "$_pp_deliv" ] && _pp_deliv=$(sed -n 's/^PP_DELIVERY="\?\([a-zA-Z0-9_-]*\)"\?.*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
+  if [ "$_pp_deliv" = "shuush" ]; then
+    if cap handoff; then
+      _sid=$(jq -r '.started_at_ms // empty' "$RT/recording.json" 2>/dev/null || true)
+      _prof=$(cat "$CAPTURE/target_profile" 2>/dev/null || true)
+      _hargs=(enqueue --take-id "$TAKE" --mode "$MODE" --profile "$_prof" --session-id "$_sid")
+      [ "$CAPTURE" != "$RT" ] && [ -d "$CAPTURE" ] && _hargs+=(--capture-dir "$CAPTURE")
+      [ -n "$MONO_T0" ] && _hargs+=(--transcript-ready-ms "$MONO_T0")
+      [ "$BAD_ID" = 1 ] && _hargs+=(--bad-id)
+      [ -n "${VOXTYPE_TAKE_ID:-}" ] && _hargs+=(--tagged)
+      if printf '%s' "$raw" | python3 -I "$SCRIPT_DIR/shuush_deliver.py" "${_hargs[@]}" 2>>"$PP_LOG"; then
+        printf '%s  handoff  take=%s  mode=%s\n' "$(date +%T)" "${TAKE:-none}" "$MODE" >> "$PP_LOG"
+        exit 0
+      fi
+      printf '%s  handoff  failed -> inline daemon fallback\n' "$(date +%T)" >> "$PP_LOG"
+    else
+      printf '%s  handoff  daemon lacks fallback_on_empty -> inline daemon fallback\n' "$(date +%T)" >> "$PP_LOG"
+    fi
+  fi
+fi
 
 current_take() {
   [ -z "$TAKE" ] || [ "$TAKE" = "$(cat "$RT/current_capture" 2>/dev/null)" ]
@@ -167,11 +216,47 @@ emit() {
     elif [ "$VIA" != snippet ] && [ "$MODE" != command ] && [ "$FINISHED" != 1 ]; then
       text=$(printf '%s' "$text" | python3 -I "$GATE" finish 2>/dev/null || printf '%s' "$text")
     fi
-    [ "${PP_NO_HISTORY:-0}" = 1 ] || smart_join
+    [ "${PP_NO_HISTORY:-0}" = 1 ] || [ "${PP_WORKER_CLEANUP:-0}" = 1 ] || smart_join
   fi
   # Dry-run / Studio Re-clean: print cleaned text only, without touching live
   # OSD state, window focus, clipboard, or dictation history.
   if [ "${PP_NO_HISTORY:-0}" = 1 ]; then
+    [ "$STREAMED" = 1 ] || printf '%s' "$text"
+    exit 0
+  fi
+  if [ "$VIA" != private ] && [ -z "$CLEANUP_LAST_MS" ]; then
+    CLEANUP_LAST_MS=$(python3 -I "$SCRIPT_DIR/shuush_timing.py" now 2>/dev/null || echo "")
+    [ -n "$CLEANUP_FIRST_MS" ] || CLEANUP_FIRST_MS="$CLEANUP_LAST_MS"
+    if [ -n "$TAKE" ] && [ "$CAPTURE" != "$RT" ] && [ -d "$CAPTURE" ] && [ -n "$CLEANUP_LAST_MS" ]; then
+      if [ "$CLEANUP_FIRST_MS" = "$CLEANUP_LAST_MS" ]; then
+        python3 -I "$SCRIPT_DIR/shuush_timing.py" mark "$CAPTURE" cleanup_first_byte cleanup_last_byte --ts "$CLEANUP_LAST_MS" --take-id "$TAKE" >/dev/null 2>&1 || true
+      else
+        python3 -I "$SCRIPT_DIR/shuush_timing.py" mark "$CAPTURE" cleanup_last_byte --ts "$CLEANUP_LAST_MS" --take-id "$TAKE" >/dev/null 2>&1 || true
+      fi
+    fi
+  fi
+  # Worker-cleanup mode (invoked by shuush_deliver.py): write cleanup metadata
+  # BEFORE printing whole text so the worker knows whether output was streamed,
+  # and leave focus checking, smart_join, clipboard, and history to the worker.
+  if [ "${PP_WORKER_CLEANUP:-0}" = 1 ]; then
+    if [ -n "${PP_META_OUT:-}" ]; then
+      _pp_ms=$(( $(date +%s%3N) - T0 ))
+      jq -nc \
+        --arg via "$VIA" \
+        --arg mode "$MODE" \
+        --arg app_class "${cls:-}" \
+        --arg screen_terms "${PP_SCREEN_TERMS:-}" \
+        --argjson priv "$([ "$VIA" = private ] && echo true || echo false)" \
+        --argjson streamed "$([ "$STREAMED" = 1 ] && echo true || echo false)" \
+        --argjson pp_ms "${_pp_ms:-0}" \
+        --argjson llm_ms "${LLM_MS:-0}" \
+        --argjson c_first "${CLEANUP_FIRST_MS:-0}" \
+        --argjson c_last "${CLEANUP_LAST_MS:-0}" \
+        '{via:$via, mode:$mode, app_class:$app_class, screen_terms:$screen_terms,
+          private:$priv, streamed:$streamed, pp_ms:$pp_ms, llm_ms:$llm_ms,
+          cleanup_first_byte_ms:$c_first, cleanup_last_byte_ms:$c_last}' \
+        > "${PP_META_OUT}.tmp.$$" && mv -f "${PP_META_OUT}.tmp.$$" "$PP_META_OUT"
+    fi
     [ "$STREAMED" = 1 ] || printf '%s' "$text"
     exit 0
   fi
@@ -193,6 +278,9 @@ emit() {
     [ -z "$TAKE" ] || [ "$CAPTURE" = "$RT" ] || printf '%s\n' "$disposition" > "$CAPTURE/disposition"
     if [ -n "$message" ] && { [ -z "${VOXTYPE_TAKE_ID:-}" ] || ! current_take; }; then notify-send -a Voxtype "$message" </dev/null >/dev/null 2>&1 & fi
   else
+    if [ "$VIA" != private ] && [ -n "$TAKE" ] && [ "$CAPTURE" != "$RT" ] && [ -d "$CAPTURE" ]; then
+      python3 -I "$SCRIPT_DIR/shuush_timing.py" mark "$CAPTURE" delivery_start --take-id "$TAKE" >/dev/null 2>&1 || true
+    fi
     [ "$STREAMED" = 1 ] || printf '%s' "$text"
   fi
   if current_take; then
@@ -230,17 +318,20 @@ emit() {
   RV_TAKE_ID="$TAKE" RV_TAGGED="${VOXTYPE_TAKE_ID:+1}" RV_DISPOSITION="$disposition" RV_TARGET="$TARGET" RV_SESSION_ID="$SESSION_ID" \
   RV_TS="$(date -Is)" RV_MODE="$MODE" RV_VIA="$VIA" RV_RAW="$RAW_ORIG" RV_CLEAN="$text" \
   RV_PP="$(( $(date +%s%3N) - T0 ))" RV_LLM="$LLM_MS" RV_T0="$T0" RV_SCREEN_TERMS="${PP_SCREEN_TERMS:-}" \
+  RV_APP_CLASS="${cls:-}" RV_DELIVERY_MODE="daemon" RV_DELIVERY_METHOD="${disposition:-daemon}" \
     python3 "$SCRIPT_DIR/voxtype-review.py" </dev/null >/dev/null 2>&1 &
   exit 0
 }
 emit_private() {
   VIA=private
-  if [ "${PP_NO_HISTORY:-0}" != 1 ]; then
+  if [ "${PP_NO_HISTORY:-0}" != 1 ] && [ "${PP_WORKER_CLEANUP:-0}" != 1 ]; then
     # The legacy fork watches mtime after postprocess starts.
     date +%s > "$RT/pp_private"
     if [ -n "$TAKE" ] && [ "$CAPTURE" != "$RT" ]; then : > "$CAPTURE/pp_private"; fi
     if cap read_field || cap preedit; then : > "$RT/field_text.off"; fi
     rm -f "$RT/field_text.json" "$RT/last_take.wav"
+  elif [ "${PP_WORKER_CLEANUP:-0}" = 1 ] && [ -n "$TAKE" ] && [ "$CAPTURE" != "$RT" ] && [ -d "$CAPTURE" ]; then
+    : > "$CAPTURE/pp_private"
   fi
   if [ "$MODE" = command ] || [ "$(cat "$CAPTURE/target_profile" 2>/dev/null)" = command ] || [ "$BAD_ID" = 1 ]; then emit ""; fi
   emit "$RAW_ORIG"
@@ -733,10 +824,19 @@ stream_call() {  # url key body
     [ -z "$SDIR" ] && SDIR=$(mktemp -d "${RT:-/tmp}/pp-stream.XXXXXX")
     printf '%s' "$3" > "$SDIR/body"
     printf '%s' "$raw" > "$SDIR/raw"
-    rm -f "$SDIR/final" "$SDIR/final.printed"
-    PP_KEY="$2" python3 -I "$SCRIPT_DIR/voxtype_pp_stream.py" "$1" "$SDIR/body" "$SDIR/raw" "$SDIR/final" \
+    rm -f "$SDIR/final" "$SDIR/final.printed" "$SDIR/stream_timing.json"
+    local tdir=""
+    if [ "${PP_NO_HISTORY:-0}" != 1 ] && [ -n "$TAKE" ] && [ "$CAPTURE" != "$RT" ] && [ -d "$CAPTURE" ]; then
+        tdir="$CAPTURE"
+    fi
+    PP_KEY="$2" PP_TIMING_DIR="$tdir" PP_STREAM_TIMING_OUT="$SDIR/stream_timing.json" \
+        python3 -I "$SCRIPT_DIR/voxtype_pp_stream.py" "$1" "$SDIR/body" "$SDIR/raw" "$SDIR/final" \
         2>>"$PP_LOG"
     STREAM_RC=$?
+    if [ -f "$SDIR/stream_timing.json" ]; then
+        CLEANUP_FIRST_MS=$(jq -r '.cleanup_first_byte // empty' "$SDIR/stream_timing.json" 2>/dev/null || true)
+        CLEANUP_LAST_MS=$(jq -r '.cleanup_last_byte // empty' "$SDIR/stream_timing.json" 2>/dev/null || true)
+    fi
     if [ -e "$SDIR/final.printed" ]; then
         STREAMED=1
         out=$(cat "$SDIR/final" 2>/dev/null)

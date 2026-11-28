@@ -29,7 +29,8 @@ if [ "$UNINSTALL" = 1 ]; then
     echo "Note: config.toml still has the keys 'shuush wire' set; 'shuush unwire' puts them back (run it first next time)."
   fi
   rm -f "$BIN_DIR/shuush" "$BIN_DIR/shuush-studio" "$APP_DIR/shuush-studio.desktop" \
-        "$UNIT_DIR/shuush-llm-proxy.service" "$UNIT_DIR/shuush-live-osd.service"
+        "$UNIT_DIR/shuush-llm-proxy.service" "$UNIT_DIR/shuush-live-osd.service" \
+        "$UNIT_DIR/shuush-deliver.service"
   rm -rf "$PREFIX"
   echo "Uninstalled shuush from $PREFIX (user config & history in $CONF_DIR preserved)."
   exit 0
@@ -43,7 +44,7 @@ for f in "$SRC/libexec/"*; do
   [ -f "$f" ] || continue
   base="$(basename "$f")"
   case "$base" in
-    *.sh|voxtype-studio.py|voxtype_learn.py|voxtype-review.py|voxtype-llm-proxy.py|voxtype_screen_ctx.py|voxtype_pp_gate.py|shuush-caps|shuush_caps.py|shuush_wire.py)
+    *.sh|voxtype-studio.py|voxtype_learn.py|voxtype-review.py|voxtype-llm-proxy.py|voxtype_screen_ctx.py|voxtype_pp_gate.py|shuush-caps|shuush_caps.py|shuush_wire.py|shuush_timing.py|shuush_stats.py|shuush_deliver.py)
       install -m 0755 "$f" "$PREFIX/libexec/$base" ;;
     *)
       install -m 0644 "$f" "$PREFIX/libexec/$base" ;;
@@ -70,6 +71,7 @@ install -m 0644 "$SRC/osd/kitsune-hud/voxtype-osd.toml" "$CONF_DIR/osd/kitsune-h
 sed "s|@BIN_DIR@|$BIN_DIR|g" "$SRC/config/shuush-studio.desktop" > "$APP_DIR/shuush-studio.desktop"
 sed "s|@LIBEXEC@|$PREFIX/libexec|g" "$SRC/config/shuush-llm-proxy.service" > "$UNIT_DIR/shuush-llm-proxy.service"
 sed "s|@LIBEXEC@|$PREFIX/libexec|g" "$SRC/config/shuush-live-osd.service" > "$UNIT_DIR/shuush-live-osd.service"
+sed "s|@LIBEXEC@|$PREFIX/libexec|g" "$SRC/config/shuush-deliver.service" > "$UNIT_DIR/shuush-deliver.service"
 if command -v systemctl >/dev/null 2>&1; then
   systemctl --user daemon-reload >/dev/null 2>&1 || true
 fi

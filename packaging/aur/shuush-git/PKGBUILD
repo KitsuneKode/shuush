@@ -51,7 +51,7 @@ EOF
     [ -f "$f" ] || continue
     base="$(basename "$f")"
     case "$base" in
-      *.sh|voxtype-studio.py|voxtype_learn.py|voxtype-review.py|voxtype-llm-proxy.py|voxtype_screen_ctx.py|voxtype_pp_gate.py|shuush-caps|shuush_caps.py|shuush_wire.py)
+      *.sh|voxtype-studio.py|voxtype_learn.py|voxtype-review.py|voxtype-llm-proxy.py|voxtype_screen_ctx.py|voxtype_pp_gate.py|shuush-caps|shuush_caps.py|shuush_wire.py|shuush_timing.py|shuush_stats.py|shuush_deliver.py)
         install -m755 "$f" "$pkgdir/usr/lib/shuush/libexec/$base" ;;
       *)
         install -m644 "$f" "$pkgdir/usr/lib/shuush/libexec/$base" ;;
@@ -73,8 +73,10 @@ EOF
 
   sed "s|@LIBEXEC@|/usr/lib/shuush/libexec|g" config/shuush-llm-proxy.service > "$srcdir/shuush-llm-proxy.service"
   sed "s|@LIBEXEC@|/usr/lib/shuush/libexec|g" config/shuush-live-osd.service > "$srcdir/shuush-live-osd.service"
+  sed "s|@LIBEXEC@|/usr/lib/shuush/libexec|g" config/shuush-deliver.service > "$srcdir/shuush-deliver.service"
   install -Dm644 "$srcdir/shuush-llm-proxy.service" "$pkgdir/usr/lib/systemd/user/shuush-llm-proxy.service"
   install -Dm644 "$srcdir/shuush-live-osd.service" "$pkgdir/usr/lib/systemd/user/shuush-live-osd.service"
+  install -Dm644 "$srcdir/shuush-deliver.service" "$pkgdir/usr/lib/systemd/user/shuush-deliver.service"
 
   install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
 }

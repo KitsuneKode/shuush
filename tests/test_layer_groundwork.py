@@ -651,7 +651,10 @@ def test_wtype_builds_from_a_checkout_into_a_prefix(tmp_path: Path) -> None:
 def test_installers_ship_the_new_files() -> None:
     for f in ("install.sh", "packaging/aur/shuush-git/PKGBUILD"):
         text = (ROOT / f).read_text()
-        for name in ("shuush-caps", "shuush_caps.py", "shuush_wire.py"):
+        for name in ("shuush-caps", "shuush_caps.py", "shuush_wire.py", "shuush_timing.py", "shuush_stats.py", "shuush_deliver.py", "shuush-deliver.service"):
             assert name in text, f"{f} does not mention {name}"
     assert (LIBEXEC / "shuush-caps").stat().st_mode & 0o111
+    assert (LIBEXEC / "shuush_deliver.py").stat().st_mode & 0o111
+    assert (LIBEXEC / "shuush_timing.py").stat().st_mode & 0o111
+    assert (LIBEXEC / "shuush_stats.py").stat().st_mode & 0o111
     assert (BUILD).stat().st_mode & 0o111

@@ -203,6 +203,10 @@ try:
     import voxtype_pp_gate as _gate
 except Exception:
     _gate = None                        # then nothing is released ungated (see release)
+try:
+    import shuush_timing as _timing
+except Exception:
+    _timing = None
 _TERMS: list = []
 if _gate is not None:
     try:                                # the spelling pass; never the reason a dictation fails
@@ -329,12 +333,48 @@ def run(url: str, body: dict, raw: str, key: str, marker: str | None = None) -> 
     held = None           # set once a sentence fails: the rest is judged at the end
     carry = ""            # whitespace between sentences (a list's line breaks)
     lag = None            # the newest sentence, released when the next one arrives
+    first_byte_mono: int | None = None
+    last_byte_mono: int | None = None
+    timing_dir = os.environ.get("PP_TIMING_DIR", "").strip()
+    timing_out = os.environ.get("PP_STREAM_TIMING_OUT", "").strip()
+
+    def _now_mono() -> int:
+        if _timing is not None:
+            return _timing.mono_ms()
+        return time.clock_gettime_ns(time.CLOCK_MONOTONIC) // 1_000_000
+
+    def _flush_timing() -> None:
+        if last_byte_mono is not None and timing_dir and _timing is not None:
+            try:
+                _timing.record_events(timing_dir, ["cleanup_last_byte"], ts_ms=last_byte_mono)
+            except Exception:
+                pass
+        if timing_out:
+            try:
+                payload = {}
+                if first_byte_mono is not None:
+                    payload["cleanup_first_byte"] = first_byte_mono
+                if last_byte_mono is not None:
+                    payload["cleanup_last_byte"] = last_byte_mono
+                with open(timing_out, "w", encoding="utf-8") as tf:
+                    json.dump(payload, tf)
+            except OSError:
+                pass
 
     try:
         for delta, fin in stream_deltas(url, body, key, first_byte_s, idle_s, total_s):
             finish = fin or finish
             if not delta:
                 continue
+            now_m = _now_mono()
+            if first_byte_mono is None:
+                first_byte_mono = now_m
+                if timing_dir and _timing is not None:
+                    try:
+                        _timing.record_events(timing_dir, ["cleanup_first_byte"], ts_ms=first_byte_mono)
+                    except Exception:
+                        pass
+            last_byte_mono = now_m
             pending += delta
             # Reasoning blocks never reach the screen.
             if in_think or "<think>" in pending:
@@ -367,10 +407,12 @@ def run(url: str, body: dict, raw: str, key: str, marker: str | None = None) -> 
                     held, lag = prev + lag, None
     except Exception as e:  # noqa: BLE001 - any failure: fall back, never crash mid-text
         print(f"voxtype_pp_stream: {type(e).__name__}: {e}", file=sys.stderr)
+        _flush_timing()
         if not out.started:
             return EXIT_TRANSPORT, ""
         return fall_back()
 
+    _flush_timing()
     tail = ((lag or "") + carry + TAGS.sub("", pending)).rstrip()
     if held is not None:
         block = (held + tail).rstrip()
