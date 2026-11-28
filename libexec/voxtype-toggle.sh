@@ -31,6 +31,23 @@ now_ms() { date +%s%3N; }
 # voxtype does.
 cap() { python3 -I "$SCRIPT_DIR/shuush_caps.py" has "$@" 2>/dev/null; }
 
+delivery_mode() {
+    local d="${PP_DELIVERY:-}"
+    if [ -z "$d" ] && [ -f "$CONF/postprocess.env" ]; then
+        d=$(sed -n 's/^PP_DELIVERY="\?\([a-zA-Z0-9_-]*\)"\?.*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
+    fi
+    printf '%s' "${d:-daemon}"
+}
+
+mark_timing() {  # event [event ...]
+    local cur dir
+    cur=$(cat "$rt/current_capture" 2>/dev/null || true)
+    [[ "$cur" =~ ^[0-9]+$ ]] || return 0
+    dir="$rt/takes/$cur"
+    [ -d "$dir" ] || return 0
+    python3 -I "$SCRIPT_DIR/shuush_timing.py" mark "$dir" "$@" --take-id "$cur" >/dev/null 2>&1 || true
+}
+
 # Queued dictation (voxtype-fork, [audio] queue_dictations): allow a new hold
 # take while the previous one is still transcribing. Only on a daemon that has
 # the feature and an active queue_pid. VOXTYPE_QUEUE=0 opts out.
@@ -61,6 +78,9 @@ daemon_supports_queue() {
 # that is running (`record stop --no-post-process` is the fork's): the press is
 # ignored and the text lands when the cleanup finishes.
 polishing_now() {
+    if [ "$(delivery_mode)" = shuush ]; then
+        python3 -I "$SCRIPT_DIR/shuush_deliver.py" skip >/dev/null 2>&1 && exit 0
+    fi
     cap skip_post_process || exit 0
     # Only the identified daemon can check a captured target on the raw bypass.
     [ ! -e "$rt/current_capture" ] || cap take_identity || exit 0
@@ -201,6 +221,13 @@ start() {  # [profile]
     fi
     # Keep stopped/cancelled captures out of the runtime directory long term.
     find "$rt/takes" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*' -mmin +1440 -exec rm -rf -- {} + 9>&- </dev/null >/dev/null 2>&1 &
+    # In PP_DELIVERY=shuush mode, avoid --profile so stock voxtype uses
+    # [output.post_process] (where fallback_on_empty = false and trim = false
+    # apply; stock profiles hardcode fallback_on_empty = true). The profile is
+    # already recorded in target_profile for voxtype-postprocess.sh.
+    if [ "$(delivery_mode)" = shuush ] && cap handoff; then
+        exec voxtype record start
+    fi
     if [ -n "$profile" ]; then
         exec voxtype record start --profile "$profile"
     fi
@@ -212,7 +239,10 @@ case "$verb" in
         case "$state" in
             transcribing) polishing_now ;;
             idle|"") start ;;
-            *) rm -f "$rt/handsfree"; exec voxtype record toggle ;;
+            *)
+                rm -f "$rt/handsfree"
+                mark_timing key_release daemon_stop
+                exec voxtype record toggle ;;
         esac ;;
 
     hold)
@@ -235,6 +265,7 @@ case "$verb" in
                 # its release must not count as a tap.
                 : > "$rt/hold_ignore_release"
                 rm -f "$rt/handsfree"
+                mark_timing key_release daemon_stop
                 exec voxtype record stop ;;
             *)
                 : > "$rt/hold_ignore_release"
@@ -268,11 +299,17 @@ case "$verb" in
             tail_ms=$(sed -n 's/^PP_RELEASE_TAIL_MS=\([0-9]*\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
             tail_ms="${tail_ms:-200}"
             if [ "$tail_ms" -gt 0 ] 2>/dev/null; then
+                mark_timing key_release
                 let_go=$(now_ms)
                 sleep "$(awk -v m="$tail_ms" 'BEGIN{printf "%.3f", m/1000}')"
                 # Cancelled while the tail ran: that take is gone, and a new one isn't ours to stop.
                 [ "$(cat "$rt/cancelled" 2>/dev/null || echo 0)" -ge "$let_go" ] 2>/dev/null && exit 0
+                mark_timing daemon_stop
+            else
+                mark_timing key_release daemon_stop
             fi
+        else
+            mark_timing key_release daemon_stop
         fi
         exec voxtype record stop ;;
 
@@ -280,7 +317,9 @@ case "$verb" in
         case "$state" in
             transcribing) polishing_now ;;
             idle|"") ;;
-            *) exec voxtype record stop ;;
+            *)
+                mark_timing key_release daemon_stop
+                exec voxtype record stop ;;
         esac
         start command ;;
 

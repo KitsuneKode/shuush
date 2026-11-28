@@ -48,12 +48,18 @@ Usage:
   shuush studio [--tab history|insights|corrections|vocab|snippets|settings]
   shuush toggle | hold | release | command
   shuush cancel [now]
+  shuush skip              Skip cleanup on the active take and deliver raw text (PP_DELIVERY=shuush)
   shuush postprocess [default|terminal|chat|command]
   shuush learn [list|pending|add HEARD MEANT|accept HEARD|reject HEARD|forget HEARD|fix|sync-toml]
-  shuush doctor [--json]   Check voxtype, GPU, compositor, Wayland, AT-SPI, services, secrets & what the daemon can do
+  shuush stats latency [--json] [--history PATH]
+                           Print p50/p90/p95 latency by delivery method, length band and app family
+  shuush deliver [serve|status|ping]
+                           Manage the Shuush delivery queue worker (PP_DELIVERY=shuush)
+  shuush doctor [--json]   Check voxtype, GPU, compositor, Wayland, AT-SPI, services, delivery mode & daemon caps
   shuush caps [list|has CAP...|--refresh]
                            What the running voxtype supports (stock or fork), as JSON
-  shuush wire [--dry-run]  Set [output.post_process], profiles & OSD in config.toml (voxtype config set) and record the old values
+  shuush wire [--dry-run] [--delivery daemon|shuush]
+                           Set [output.post_process], profiles & OSD in config.toml (voxtype config set) and record the old values
   shuush wire --status     Which wired keys are still as Shuush set them
   shuush unwire [--dry-run]  Put every wired key back as it was before
   shuush recover           Copy the latest recovered text, or bring back a cancelled take
@@ -147,19 +153,45 @@ doctor() {
   check "no_dup_proxy" '! (systemctl --user is-active --quiet voxtype-llm-proxy.service && systemctl --user is-active --quiet shuush-llm-proxy.service)' "No duplicate LLM proxy service on port 11435" "systemctl --user disable --now voxtype-llm-proxy.service"
   check "llm_ready"    '[ -f "$CONF/secrets.env" ] || curl -fsS --max-time 1 http://127.0.0.1:11434/api/tags' "LLM provider configured (secrets.env or local Ollama)" "open shuush studio -> Settings -> API keys or enable Offline mode"
 
+  local deliv_json d_mode d_eff d_worker d_handoff d_foe d_esafe
+  deliv_json="$(python3 -I "$LIBEXEC/shuush_deliver.py" doctor-info 2>/dev/null || echo '{"mode":"daemon","effective":"daemon","worker_active":false,"handoff_capable":false,"fallback_on_empty":null,"empty_safe":true}')"
+  d_mode="$(jq -r '.mode // "daemon"' <<<"$deliv_json" 2>/dev/null)"
+  d_eff="$(jq -r '.effective // "daemon"' <<<"$deliv_json" 2>/dev/null)"
+  d_worker="$(jq -r '.worker_active // false' <<<"$deliv_json" 2>/dev/null)"
+  d_handoff="$(jq -r '.handoff_capable // false' <<<"$deliv_json" 2>/dev/null)"
+  d_foe="$(jq -r '.fallback_on_empty' <<<"$deliv_json" 2>/dev/null)"
+  d_esafe="$(jq -r '.empty_safe // true' <<<"$deliv_json" 2>/dev/null)"
+
+  if [ "$d_mode" = "shuush" ]; then
+    check "delivery_handoff" '[ "$d_handoff" = true ] && [ "$d_foe" = false ]' \
+      "Shuush delivery handoff ready (fallback_on_empty=false)" \
+      "run: shuush wire --delivery shuush (requires voxtype 1.3.1+)"
+    check "delivery_empty_safe" '[ "$d_esafe" = true ]' \
+      "Empty-string safety keys off in config.toml (auto_submit, smart_auto_submit, append_text)" \
+      "run: shuush wire --delivery shuush so voxtype does not act on empty output"
+    check "delivery_worker" '[ "$d_worker" = true ]' \
+      "Shuush delivery queue worker active (PP_DELIVERY=shuush -> effective: $d_eff)" \
+      "systemctl --user enable --now shuush-deliver.service (degrades to daemon delivery while off)"
+  else
+    check "delivery_mode" 'true' \
+      "Delivery mode: daemon (voxtype delivers; set PP_DELIVERY=shuush to switch)"
+  fi
+
   local caps_json
   caps_json="$(python3 -I "$LIBEXEC/shuush_caps.py" 2>/dev/null || echo '{}')"
 
   if [ "$json" = 1 ]; then
-    printf '{"libexec":%s,"voxtype":%s,"capabilities":%s,"gpu":%s,"compositor":%s,"ok":%d,"warnings":%d,"checks":[%s]}\n' \
+    printf '{"libexec":%s,"voxtype":%s,"delivery":%s,"capabilities":%s,"gpu":%s,"compositor":%s,"ok":%d,"warnings":%d,"checks":[%s]}\n' \
       "$(jq -Rn --arg s "$LIBEXEC" '$s')" \
       "$(jq -Rn --arg s "$vver" '$s')" \
+      "$(jq -c . <<<"$deliv_json" 2>/dev/null || echo '{}')" \
       "$(jq -c . <<<"$caps_json" 2>/dev/null || echo '{}')" \
       "$(jq -Rn --arg s "$gpu" '$s')" \
       "$(jq -Rn --arg s "$comp" '$s')" \
       "$ok" "$warn" "$(IFS=,; echo "${items[*]}")"
   else
     printf 'Summary: %d ok, %d warning(s)\n' "$ok" "$warn"
+    printf 'Delivery: configured=%s, active=%s (worker=%s)\n' "$d_mode" "$d_eff" "$d_worker"
     printf '\n%sThe daemon%s %s(%s, %s)%s\n' "$b" "$r" "$d" \
       "$(jq -r '.binary // "voxtype not found"' <<<"$caps_json" 2>/dev/null)" \
       "$(jq -r '(.version // "unknown") + (if .fork then ", fork" else ", stock" end)' <<<"$caps_json" 2>/dev/null)" "$r"
@@ -197,13 +229,15 @@ unwire_config() {
 recover() {
   local rt take dir
   rt="${XDG_RUNTIME_DIR:-/run/user/$UID}/voxtype"
-  take=$(cat "$rt/take_id" 2>/dev/null || true)
-  if [[ "$take" =~ ^[0-9]+$ ]] && python3 -I "$LIBEXEC/shuush_caps.py" has take_identity take_recovery; then
+  take=$(cat "$rt/take_id" 2>/dev/null || cat "$rt/current_capture" 2>/dev/null || true)
+  if [[ "$take" =~ ^[0-9]+$ ]]; then
     dir="$rt/takes/$take"
-    if [ ! -e "$dir/pp_private" ] && [ "$(cat "$dir/disposition" 2>/dev/null)" = recovered ] && [ -s "$dir/recovered.txt" ]; then
-      wl-copy < "$dir/recovered.txt" || exit 1
-      notify-send -a Voxtype "Recovered dictation copied" >/dev/null 2>&1 || true
-      exit 0
+    if [ -e "$dir/shuush_delivery" ] || python3 -I "$LIBEXEC/shuush_caps.py" has take_identity take_recovery; then
+      if [ ! -e "$dir/pp_private" ] && [ "$(cat "$dir/disposition" 2>/dev/null)" = recovered ] && [ -s "$dir/recovered.txt" ]; then
+        wl-copy < "$dir/recovered.txt" || exit 1
+        notify-send -a Voxtype "Recovered dictation copied" >/dev/null 2>&1 || true
+        exit 0
+      fi
     fi
   fi
   if ! python3 -I "$LIBEXEC/shuush_caps.py" has record_recover; then
@@ -219,8 +253,11 @@ case "$cmd" in
   studio)      exec python3 "$LIBEXEC/voxtype-studio.py" "$@" ;;
   toggle|hold|release|command) exec "$LIBEXEC/voxtype-toggle.sh" "$cmd" "$@" ;;
   cancel)      exec "$LIBEXEC/voxtype-cancel.sh" "$@" ;;
+  skip)        exec python3 -I "$LIBEXEC/shuush_deliver.py" skip "$@" ;;
+  deliver)     exec python3 -I "$LIBEXEC/shuush_deliver.py" "$@" ;;
   postprocess) exec "$LIBEXEC/voxtype-postprocess.sh" "$@" ;;
   learn)       exec python3 "$LIBEXEC/voxtype_learn.py" "$@" ;;
+  stats)       exec python3 -I "$LIBEXEC/shuush_stats.py" "$@" ;;
   waybar)      exec "$LIBEXEC/voxtype-waybar.sh" "$@" ;;
   last)        exec "$LIBEXEC/voxtype-last.sh" "$@" ;;
   replay)      exec "$LIBEXEC/voxtype-last-audio.sh" "$@" ;;

@@ -28,6 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from voxtype_storage import locked
 from voxtype_delivery import await_receipt
+import shuush_timing
 
 
 def tokens(s: str) -> tuple[list[str], list[str]]:
@@ -166,21 +167,77 @@ def main() -> int:
     take = e.get("RV_TAKE_ID", "")
     if take and not re.fullmatch(r"[0-9]+", take):
         return 0
-    disposition = e.get("RV_DISPOSITION") or await_receipt(rt_dir, take if e.get("RV_TAGGED") else "", e.get("RV_SESSION_ID", ""))
+    preset_disp = e.get("RV_DISPOSITION", "")
+    disposition = preset_disp or await_receipt(rt_dir, take if e.get("RV_TAGGED") else "", e.get("RV_SESSION_ID", ""))
     if disposition == "private_not_inserted" or (take and (rt_dir / "takes" / take / "pp_private").exists()):
         return 0
+    take_dir = (rt_dir / "takes" / take) if take else None
+    if not preset_disp and disposition not in ("", "unknown") and take_dir and take_dir.is_dir():
+        shuush_timing.record_events(take_dir, ["delivery_done"], take_id=take)
     if disposition == "recovered" and take:
         try:
             clean = (rt_dir / "takes" / take / "recovered.txt").read_text()
         except OSError:
             pass
+
+    app_class = e.get("RV_APP_CLASS", "").strip()
+    if not app_class:
+        target_path = Path(e.get("RV_TARGET", "")) if e.get("RV_TARGET") else (take_dir / "target_window" if take_dir else None)
+        if target_path and target_path.is_file():
+            try:
+                app_class = str(json.loads(target_path.read_text(encoding="utf-8")).get("class") or "").strip()
+            except (OSError, ValueError, AttributeError):
+                pass
+    delivery_mode = e.get("RV_DELIVERY_MODE", "").strip() or "daemon"
+    delivery_method = e.get("RV_DELIVERY_METHOD", "").strip()
+    if not delivery_method:
+        if disposition == "recovered":
+            delivery_method = "recovered"
+        elif disposition == "clipboard_only":
+            delivery_method = "clipboard_only"
+        elif delivery_mode == "daemon":
+            delivery_method = "daemon"
+    app_family = e.get("RV_APP_FAMILY", "").strip() or shuush_timing.classify_app_family(app_class, e.get("RV_MODE", ""))
+
+    timing_compact: dict = {}
+    raw_timing_env = e.get("RV_TIMING_JSON", "").strip()
+    if raw_timing_env:
+        try:
+            parsed_t = json.loads(raw_timing_env)
+            if isinstance(parsed_t, dict):
+                timing_compact = parsed_t
+        except ValueError:
+            pass
+    elif take_dir and take_dir.is_dir():
+        summary = shuush_timing.summarize(
+            take_dir,
+            take_id=take,
+            delivery_mode=delivery_mode,
+            delivery_method=delivery_method,
+            app_class=app_class,
+            mode=e.get("RV_MODE", ""),
+            text_chars=len(clean),
+            write_file=True,
+        )
+        timing_compact = shuush_timing.compact_for_history(summary)
+
+    row: dict = {
+        "ts": e.get("RV_TS"), "mode": e.get("RV_MODE"), "via": via,
+        "pp_ms": int(e.get("RV_PP", 0)), "llm_ms": int(e.get("RV_LLM", 0)),
+        "audio_ms": audio_ms, "outcome": disposition, "take_id": take,
+        "raw": raw, "clean": clean, "swaps": swaps, "review": review,
+        "chars": len(clean),
+        "delivery_mode": delivery_mode,
+        "delivery_method": delivery_method,
+        "app_family": app_family,
+    }
+    if app_class:
+        row["app_class"] = app_class
+    if timing_compact:
+        row["timing"] = timing_compact
+
     with locked(hist), hist.open("a", encoding="utf-8") as f:
-        f.write(json.dumps({
-            "ts": e.get("RV_TS"), "mode": e.get("RV_MODE"), "via": via,
-            "pp_ms": int(e.get("RV_PP", 0)), "llm_ms": int(e.get("RV_LLM", 0)),
-            "audio_ms": audio_ms, "outcome": disposition, "take_id": take,
-            "raw": raw, "clean": clean, "swaps": swaps, "review": review,
-        }, ensure_ascii=False) + "\n")
+        f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     # The model's own swaps are not hints. tally() is a no-op kept so this call
     # stays the one place a future learning rule would hook in. A raw fallback

@@ -47,7 +47,23 @@ See [models.md](models.md) for which provider to pick.
 | `PP_KEEP_ON_CLIPBOARD` | `1` | Also put each dictation on the clipboard, so it is never lost. `0` leaves your clipboard alone. |
 | `PP_RELEASE_TAIL_MS` | `200` | Keep recording this long after you release push-to-talk, so the last syllable is not clipped. Skipped when the daemon has voxtype-fork's adaptive `release_tail_ms` (`shuush caps has release_tail_ms`) and it is set (in `[audio]` or as `VOXTYPE_RELEASE_TAIL_MS`), which does this natively. A daemon without it ignores both, so the tail applies. |
 
-To press Enter after a dictation, end it with the word "submit" and set `smart_auto_submit = true` under `[text]` in `config.toml` (a voxtype feature).
+To press Enter after a dictation, end it with the word "submit" and set `smart_auto_submit = true` under `[text]` in `config.toml` (a voxtype feature; in `PP_DELIVERY=shuush` mode, use `PP_SMART_AUTO_SUBMIT=1` in `postprocess.env` instead).
+
+## Shuush delivery (`PP_DELIVERY=shuush`, opt-in)
+
+By default (`PP_DELIVERY=daemon`), `voxtype-postprocess.sh` prints the cleaned text back to `voxtype` and `voxtype` types or pastes it. Setting `PP_DELIVERY=shuush` hands each take to Shuush's ordered delivery service (`shuush-deliver.service`) and returns empty stdout so stock `voxtype` (with `fallback_on_empty = false`) goes idle immediately after recognition.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `PP_DELIVERY` | `daemon` | `daemon` (voxtype delivers) or `shuush` (Shuush's ordered queue delivers). Degrades to `daemon` automatically if the worker is unreachable or `fallback_on_empty` is not `false`. |
+| `PP_PASTE_OVER_CHARS` | `300` | In `shuush` delivery mode, non-private takes longer than this many characters are pasted instead of typed (`0` = always type). Private takes never use the clipboard. |
+| `PP_STREAM_TYPING` | `1` | Stream-type verified sentences as cleanup arrives when the target supports it (non-private, focused, `>= PP_STREAM_MIN_WORDS`, within `PP_PASTE_OVER_CHARS`). |
+| `PP_PASTE_KEYS` | `auto` | Paste shortcut: `auto` (`ctrl+shift+v` for terminals, `ctrl+v` elsewhere), `shift+insert`, `ctrl+v`, `ctrl+shift+v`, or `super+v`. |
+| `PP_AUTO_SUBMIT` | `0` | Press Enter after every non-empty delivered take (replaces `[output] auto_submit`). |
+| `PP_SMART_AUTO_SUBMIT` | `0` | Strip a trailing "submit" and press Enter (replaces `[text] smart_auto_submit`). |
+| `PP_APPEND_TEXT` | `""` | Append a suffix string to every delivered take (replaces `[output] append_text`). |
+
+Switching on: set `PP_DELIVERY=shuush` in `~/.config/voxtype/postprocess.env`, run `shuush wire`, enable `systemctl --user enable --now shuush-deliver.service`, and restart `voxtype`. Switching off: set `PP_DELIVERY=daemon` and run `shuush wire` (which restores any `auto_submit`, `smart_auto_submit`, and `append_text` keys from `~/.config/shuush/wired.json`). `shuush doctor` shows which mode is active, and `shuush stats latency` prints per-stage p50/p90/p95 latency breakdowns.
 
 ## In `config.toml`
 

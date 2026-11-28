@@ -34,7 +34,42 @@ import shuush_caps  # noqa: E402
 
 MANIFEST_VERSION = 1
 PROFILES = ("terminal", "chat", "command")
+DELIVERY_ONLY_KEYS = ("output.auto_submit", "text.smart_auto_submit", "output.append_text")
 HEADER_RE = re.compile(r"^\s*\[([^\]]+)\]\s*(?:#.*)?$")
+
+
+def configured_delivery_mode() -> str:
+    env_val = (os.environ.get("PP_DELIVERY") or "").strip().lower()
+    if env_val in ("shuush", "daemon", "voxtype"):
+        return "shuush" if env_val == "shuush" else "daemon"
+    pp_env = conf_dir() / "postprocess.env"
+    if pp_env.is_file():
+        try:
+            for line in pp_env.read_text(encoding="utf-8", errors="replace").splitlines():
+                m = re.match(r'^\s*(?:export\s+)?PP_DELIVERY\s*=\s*"?([A-Za-z0-9_-]+)"?', line)
+                if m:
+                    env_val = m.group(1).lower()
+        except OSError:
+            pass
+    return "shuush" if env_val == "shuush" else "daemon"
+
+
+def _seed_postprocess_env(key: str, value: str) -> bool:
+    """Record a migrated setting in postprocess.env if not already present."""
+    p = conf_dir() / "postprocess.env"
+    existing = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
+    if re.search(rf"^\s*(?:export\s+)?{re.escape(key)}\s*=", existing, re.MULTILINE):
+        return False
+    p.parent.mkdir(parents=True, exist_ok=True)
+    sep = "" if (not existing or existing.endswith("\n")) else "\n"
+    encoded = json.dumps(value) if not re.fullmatch(r"[A-Za-z0-9_.-]+", value) else value
+    line = f"{key}={encoded}\n"
+    tmp = p.with_name(p.name + ".tmp")
+    tmp.write_text(existing + sep + line, encoding="utf-8")
+    if p.is_file():
+        shutil.copymode(p, tmp)
+    os.replace(tmp, p)
+    return True
 
 
 def conf_dir() -> Path:
@@ -202,7 +237,7 @@ def toml_update(text: str, section: str, key: str, value: str, entry: dict | Non
 # ── the plan ──────────────────────────────────────────────────────────────────
 
 
-def plan(pp_cmd: str) -> list[dict]:
+def plan(pp_cmd: str, delivery: str = "daemon") -> list[dict]:
     items = [
         {"key": "output.post_process.command", "value": pp_cmd},
         {"key": "output.post_process.timeout_ms", "value": 20000},
@@ -215,25 +250,34 @@ def plan(pp_cmd: str) -> list[dict]:
         {"key": "osd.position", "value": "bottom-center", "seed": True},
         {"key": "osd.margin_px", "value": 20, "seed": True},
     ]
+    if delivery == "shuush":
+        # Stock voxtype still acts on an empty post-process reply when these are on:
+        # Shuush performs submit and append_text itself in shuush delivery mode.
+        items.extend([
+            {"key": "output.auto_submit", "value": False, "delivery_only": True},
+            {"key": "text.smart_auto_submit", "value": False, "delivery_only": True},
+            {"key": "output.append_text", "value": None, "delivery_only": True},
+        ])
     for p in PROFILES:
         items.append({"key": f"profiles.{p}.post_process_command", "value": f"{pp_cmd} {p}", "via": "toml"})
     return items
 
 
 def decide(item: dict, cur, entry: dict | None, force: bool) -> tuple[str, str]:
-    """(action, why). Actions: set, ok, skip."""
+    """(action, why). Actions: set, unset, ok, skip."""
     want = item["value"]
+    op = "unset" if want is None else "set"
     if entry is not None:
         if cur == want:
-            return "ok", "already set"
+            return "ok", "already off (not set)" if want is None else "already set"
         if cur == entry["new"] or force:
-            return "set", "ours, updating" if cur == entry["new"] else "changed since, --force"
+            return op, "ours, updating" if cur == entry["new"] else "changed since, --force"
         return "skip", f"you changed it to {show(cur)} since; --force overwrites"
     if cur == want:
-        return "ok", "already set"
+        return "ok", "already off (not set)" if want is None else "already set"
     if item.get("seed") and cur is not None:
         return "skip", f"yours ({show(cur)}), left alone"
-    return "set", "not set" if cur is None else f"was {show(cur)}"
+    return op, "not set" if cur is None else f"was {show(cur)}"
 
 
 def current_values(vox: Voxtype, items: list[dict]) -> tuple[dict[str, dict], dict[str, object]]:
@@ -265,14 +309,17 @@ def cmd_wire(a) -> int:
     if not (conf_dir() / "config.toml").exists():
         print(f"No {conf_dir() / 'config.toml'} found: run 'voxtype setup' first, then 'shuush wire'.", file=sys.stderr)
         return 1
+    delivery = a.delivery or configured_delivery_mode()
+    man = load_manifest()
     try:
         vox = find_voxtype()
-        items = plan(a.command)
-        keys, cur = current_values(vox, items)
+        items = plan(a.command, delivery=delivery)
+        extra_restore_keys = [k for k in DELIVERY_ONLY_KEYS if delivery != "shuush" and k in man["keys"]]
+        probe_items = list(items) + [{"key": k} for k in extra_restore_keys]
+        keys, cur = current_values(vox, probe_items)
     except (RuntimeError, ValueError, KeyError, OSError, subprocess.SubprocessError) as e:
         print(f"shuush wire: {e}", file=sys.stderr)
         return 1
-    man = load_manifest()
     rows = []
     for it in items:
         entry = man["keys"].get(it["key"])
@@ -282,59 +329,97 @@ def cmd_wire(a) -> int:
         action, why = decide(it, cur[it["key"]], entry, a.force)
         rows.append({**it, "action": action, "why": why, "now": cur[it["key"]]})
 
+    # Switching back from shuush -> daemon delivery: restore delivery-only keys Shuush turned off.
+    for key in extra_restore_keys:
+        entry = man["keys"][key]
+        now = cur.get(key)
+        if now != entry["new"] and not a.force:
+            rows.append({"key": key, "value": entry["old"], "action": "skip", "why": f"you changed it to {show(now)} since; --force restores anyway", "now": now, "restore_delivery": True})
+        else:
+            rows.append({"key": key, "value": entry["old"], "action": "restore", "why": "restored for daemon delivery", "now": now, "restore_delivery": True})
+
     if a.dry_run:
-        out = {"dry_run": True, "binary": vox.binary, "manifest": str(manifest_path()), "keys": rows}
+        out = {"dry_run": True, "delivery": delivery, "binary": vox.binary, "manifest": str(manifest_path()), "keys": rows}
         if a.json:
             print(json.dumps(out, indent=2))
         else:
-            print(f"shuush wire --dry-run: nothing is written ({vox.binary})")
+            print(f"shuush wire --dry-run: nothing is written ({vox.binary}, delivery={delivery})")
             for r in rows:
-                how = ("edits config.toml: voxtype has no settable profile key" if r.get("via") == "toml"
-                       else f"voxtype config set {r['key']} {fmt(r['value'])}")
-                if r["action"] == "set":
+                if r["action"] == "unset":
+                    print(f"  unset {r['key']}   (now: {show(r['now'])}; voxtype config unset {r['key']})")
+                elif r["action"] == "restore":
+                    how = f"voxtype config unset {r['key']}" if r["value"] is None else f"voxtype config set {r['key']} {fmt(r['value'])}"
+                    print(f"  restore {r['key']}: {show(r['now'])} -> {show(r['value'])}   ({how})")
+                elif r["action"] == "set":
+                    how = ("edits config.toml: voxtype has no settable profile key" if r.get("via") == "toml"
+                           else f"voxtype config set {r['key']} {fmt(r['value'])}")
                     print(f"  set   {r['key']} = {json.dumps(r['value'])}   (now: {show(r['now'])}; {how})")
                 else:
                     print(f"  {r['action']:<5} {r['key']}   ({r['why']})")
             print(f"  would record old and new values in {manifest_path()}")
         return 0
 
-    todo = [r for r in rows if r["action"] == "set"]
+    todo = [r for r in rows if r["action"] in ("set", "unset", "restore")]
     bak = backup() if todo else None
     if bak and not man["keys"]:
         man["backup"] = str(bak)
     failed = 0
+    migrated: list[str] = []
     for r in rows:
-        if r["action"] != "set":
+        if r["action"] == "restore":
+            entry = man["keys"][r["key"]]
+            err = vox.unset(r["key"]) if entry["old"] is None else vox.set(r["key"], entry["old"])
+            if err:
+                r["action"], r["why"] = "failed", err
+                failed += 1
+                continue
+            del man["keys"][r["key"]]
+            continue
+        if r["action"] not in ("set", "unset"):
             if r["action"] == "ok" and r["key"] in man["keys"]:
                 man["keys"][r["key"]]["new"] = r["value"]
             continue
         entry = man["keys"].get(r["key"])
         old = entry["old"] if entry else r["now"]
+        # Carry active empty-string-sensitive settings over into Shuush's postprocess.env.
+        if delivery == "shuush":
+            if r["key"] == "output.auto_submit" and old is True:
+                if _seed_postprocess_env("PP_AUTO_SUBMIT", "1"):
+                    migrated.append("PP_AUTO_SUBMIT=1")
+            elif r["key"] == "text.smart_auto_submit" and old is True:
+                if _seed_postprocess_env("PP_SMART_AUTO_SUBMIT", "1"):
+                    migrated.append("PP_SMART_AUTO_SUBMIT=1")
+            elif r["key"] == "output.append_text" and isinstance(old, str) and old:
+                if _seed_postprocess_env("PP_APPEND_TEXT", old):
+                    migrated.append(f"PP_APPEND_TEXT={json.dumps(old)}")
         if r.get("via") == "toml":
             section, _, name = r["key"].rpartition(".")
             text, record = toml_update(read_cfg(), section, name, r["value"], entry)
             write_cfg(text)
             man["keys"][r["key"]] = {"old": old, "new": r["value"], "via": "toml", "toml": record}
         else:
-            err = vox.set(r["key"], r["value"])
+            err = vox.unset(r["key"]) if r["action"] == "unset" else vox.set(r["key"], r["value"])
             if err:
                 r["action"], r["why"] = "failed", err
                 failed += 1
                 continue
             man["keys"][r["key"]] = {"old": old, "new": r["value"], "via": "voxtype"}
-    man.update({"version": MANIFEST_VERSION, "binary": vox.binary,
+    man.update({"version": MANIFEST_VERSION, "binary": vox.binary, "delivery": delivery,
                 "wired_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds")})
     save_manifest(man)
     if a.json:
-        print(json.dumps({"dry_run": False, "binary": vox.binary, "backup": str(bak) if bak else None, "keys": rows}, indent=2))
+        print(json.dumps({"dry_run": False, "delivery": delivery, "binary": vox.binary,
+                          "backup": str(bak) if bak else None, "migrated": migrated, "keys": rows}, indent=2))
     else:
         for r in rows:
             if r["action"] == "failed":
                 print(f"  failed {r['key']}: {r['why']}", file=sys.stderr)
             elif r["action"] == "skip":
                 print(f"  skipped {r['key']} ({r['why']})")
-        n = sum(1 for r in rows if r["action"] == "set")
-        print(f"Wired {n} key(s) in {conf_dir() / 'config.toml'}; restore them with 'shuush unwire'.")
+        n = sum(1 for r in rows if r["action"] in ("set", "unset", "restore"))
+        print(f"Wired {n} key(s) in {conf_dir() / 'config.toml'} (delivery={delivery}); restore them with 'shuush unwire'.")
+        if migrated:
+            print(f"Carried over to {conf_dir() / 'postprocess.env'}: {', '.join(migrated)}")
         if n:
             print("Restart voxtype for the changes to apply: systemctl --user restart voxtype")
     return 1 if failed else 0
@@ -437,6 +522,8 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--force", action="store_true", help="also touch a key you changed after wiring")
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--command", default="", help="path of the post-process script (wire)")
+    ap.add_argument("--delivery", choices=("daemon", "shuush"), default=None,
+                    help="delivery mode to wire for (default: PP_DELIVERY from postprocess.env)")
     a = ap.parse_args(argv)
     if a.action == "wire" and not a.command:
         a.command = str(Path(os.path.abspath(__file__)).with_name("voxtype-postprocess.sh"))

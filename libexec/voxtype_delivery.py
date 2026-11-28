@@ -40,5 +40,5 @@ def await_receipt(runtime, take, session, timeout=30):
             return status
         if time.monotonic() >= deadline:
             break
-        time.sleep(0.05)
+        time.sleep(0.02)
     return "unknown"
