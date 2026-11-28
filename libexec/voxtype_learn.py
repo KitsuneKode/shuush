@@ -35,6 +35,9 @@ import sys
 import tomllib
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from voxtype_storage import atomic_write, locked
+
 CONF = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "voxtype"
 STATE = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "voxtype"
 TSV = CONF / "corrections.tsv"
@@ -302,12 +305,10 @@ def load() -> dict[str, list]:
     return pairs
 
 
-def save(pairs: dict[str, list]) -> None:
+def _save(pairs: dict[str, list]) -> None:
     TSV.parent.mkdir(parents=True, exist_ok=True)
     body = "".join(f"{h}\t{m}\t{src}\t{n}\n" for h, (m, src, n) in sorted(pairs.items()))
-    tmp = TSV.with_suffix(".tmp")
-    tmp.write_text(HEADER + body)
-    tmp.replace(TSV)
+    atomic_write(TSV, HEADER + body)
 
 
 def unsafe_heard(heard: str) -> str | None:
@@ -348,20 +349,47 @@ def is_mishearing(heard: str, meant: str) -> bool:
     return sounds_alike(h, m)
 
 
-def remember(heard: str, meant: str, source: str) -> str | None:
-    """Store one pair. Returns None on success, otherwise why it was refused."""
+def remember(heard: str, meant: str, source: str, undo=None) -> str | None:
+    """Store one pair. An optional undo log records only the rows we changed."""
     if (why := unsafe_heard(heard)):
         return why
-    pairs = load()
     key = norm(heard)
-    old = pairs.get(key)
-    n = old[2] + 1 if old and old[0].lower() == meant.lower() else 1
-    # A user fix always wins over what the model guessed.
-    if old and old[1] == "user" and source != "user" and old[0].lower() != meant.lower():
-        return "a hand-added pair already has this"
-    pairs[key] = [meant, source, n]
-    save(pairs)
+    with locked(TSV):
+        pairs = load()
+        old = pairs.get(key)
+        n = old[2] + 1 if old and old[0].lower() == meant.lower() else 1
+        if old and old[1] == "user" and source != "user" and old[0].lower() != meant.lower():
+            return "a hand-added pair already has this"
+        pairs[key] = [meant, source, n]
+        _save(pairs)
+        if undo is not None:
+            undo[key] = (undo.get(key, (old,))[0], pairs[key])
     return None
+
+
+def forget(heard, undo=None):
+    key = norm(heard)
+    with locked(TSV):
+        pairs = load()
+        old = pairs.pop(key, None)
+        if old is None:
+            return False
+        _save(pairs)
+        if undo is not None:
+            undo[key] = (old, None)
+        return True
+
+
+def undo_corrections(changes):
+    with locked(TSV):
+        pairs = load()
+        for key, (before, after) in changes.items():
+            if pairs.get(key) == after:
+                if before is None:
+                    pairs.pop(key, None)
+                else:
+                    pairs[key] = before
+        _save(pairs)
 
 
 def _cand_view(v) -> tuple[int, bool]:
@@ -440,11 +468,11 @@ def remove_replacement(heard: str) -> bool:
     return True
 
 
-def accept_pair(heard: str, meant: str) -> str | None:
+def accept_pair(heard: str, meant: str, undo=None) -> str | None:
     """Learn (heard -> meant) as the user's own fix; why not, if refused.
     A fix from an English word (is_hint_only) is kept as a hint only."""
     hint = is_hint_only(heard, meant)
-    why = remember(heard, meant, "hint" if hint else "user")
+    why = remember(heard, meant, "hint" if hint else "user", undo)
     if why:
         return why
     _add_vocab_if_distinctive(meant)
@@ -788,11 +816,9 @@ def main(argv: list[str]) -> int:
             reject_pair(h, m)
         print(f"rejected: {want}")
     elif cmd == "forget" and len(argv) == 3:
-        pairs = load()
-        if pairs.pop(norm(argv[2]), None) is None:
+        if not forget(argv[2]):
             print("not found", file=sys.stderr)
             return 1
-        save(pairs)
     elif cmd == "sync-toml":
         n = sync_replacements()
         print(f"synced {n} new sure-name replacement(s) to {CONFIG_TOML}")

@@ -25,6 +25,11 @@ import time
 from pathlib import Path
 
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from voxtype_storage import locked
+from voxtype_delivery import await_receipt
+
+
 def tokens(s: str) -> tuple[list[str], list[str]]:
     keys, orig = [], []
     for t in s.split():
@@ -144,7 +149,7 @@ def main() -> int:
     if e.get("RV_MODE") == "command" or via == "snippet":
         swaps = []
     elif via == "passthrough" and len(a) >= 2:
-        review = "cleanup failed, inserted exactly as heard"
+        review = "cleanup failed, kept as heard"
     elif len(swaps) >= 3 or (a and swapped / len(a) > 0.15):
         review = f"{len(swaps)} words were repaired from context"
 
@@ -158,12 +163,22 @@ def main() -> int:
         audio_ms = compute_audio_ms(rt_dir, now_ms=now_ms)
 
     hist = Path(e.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "voxtype/history.jsonl"
-    hist.parent.mkdir(parents=True, exist_ok=True)
-    with hist.open("a", encoding="utf-8") as f:
+    take = e.get("RV_TAKE_ID", "")
+    if take and not re.fullmatch(r"[0-9]+", take):
+        return 0
+    disposition = e.get("RV_DISPOSITION") or await_receipt(rt_dir, take if e.get("RV_TAGGED") else "", e.get("RV_SESSION_ID", ""))
+    if disposition == "private_not_inserted" or (take and (rt_dir / "takes" / take / "pp_private").exists()):
+        return 0
+    if disposition == "recovered" and take:
+        try:
+            clean = (rt_dir / "takes" / take / "recovered.txt").read_text()
+        except OSError:
+            pass
+    with locked(hist), hist.open("a", encoding="utf-8") as f:
         f.write(json.dumps({
             "ts": e.get("RV_TS"), "mode": e.get("RV_MODE"), "via": via,
             "pp_ms": int(e.get("RV_PP", 0)), "llm_ms": int(e.get("RV_LLM", 0)),
-            "audio_ms": audio_ms,
+            "audio_ms": audio_ms, "outcome": disposition, "take_id": take,
             "raw": raw, "clean": clean, "swaps": swaps, "review": review,
         }, ensure_ascii=False) + "\n")
 
@@ -183,7 +198,7 @@ def main() -> int:
 
     # Watch the field for the next few minutes: a name you fix by hand there is
     # the strongest mishearing signal there is (voxtype_edit_watch.py).
-    if (voxtype_learn and e.get("RV_MODE") != "command" and via != "snippet" and len(b) >= 3
+    if (disposition in ("delivered", "unknown") and voxtype_learn and e.get("RV_MODE") != "command" and via != "snippet" and len(b) >= 3
             and voxtype_learn.env_flag("PP_WATCH_EDITS") and voxtype_learn.env_flag("PP_SCREEN_CONTEXT")):
         try:
             subprocess.Popen([sys.executable, "-I", str(Path(__file__).resolve().parent / "voxtype_edit_watch.py")],

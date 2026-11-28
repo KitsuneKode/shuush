@@ -124,6 +124,8 @@ Item {
         printErrors: false
         onFileChanged: reload()
         onLoaded: {
+            sensitiveFile.reload(); sensitiveFile.text();
+            if (root.hideWords) return;
             const raw = text() || "";
             const nl = raw.indexOf("\n");
             const at = Number(nl > 0 ? raw.substring(0, nl) : 0);
@@ -154,7 +156,9 @@ Item {
     // edge, which also ends cancelled, empty and failed sessions.
     property bool lingering: false
     property bool confirmed: false
-    property double outputDoneAt: 0
+    property string takeId: ""
+    property string terminalLabel: ""
+    property string cleanupTake: ""
     // Longer when cleanup changed words, so the marked ones can be read.
     readonly property int confirmHoldMs: changedCount > 0 ? 800 : 420
     // Delivered, but as heard: every cleanup provider failed and
@@ -162,15 +166,12 @@ Item {
     // turns amber and the pill says so, held long enough to read, instead of
     // passing for a cleaned insert ("never a silent fallback").
     property bool deliveredRaw: false
-    property double ppResultAt: 0
     property string ppVia: ""
     readonly property int rawHoldMs: 1400
     // Cancelled (Escape / SUPER+SHIFT+D via voxtype-cancel.sh, which writes
     // `cancelled`): the transcript folds away, the bars lie flat and the
     // pill says so briefly, instead of vanishing like an empty session.
     property bool wasCancelled: false
-    property double cancelledAt: 0
-    readonly property int cancelHoldMs: 450
     // First Escape arms cancel for 600ms (voxtype-cancel.sh writes
     // `cancel_armed`); the pill says how to finish it.
     property bool cancelArmed: false
@@ -191,57 +192,84 @@ Item {
     Timer { id: armedTimer; onTriggered: root.cancelArmed = false }
 
     FileView {
-        path: root._runtimeDir.length > 0 ? root._runtimeDir + "/voxtype/cancelled" : ""
+        id: takeFile
+        path: root._runtimeDir + "/voxtype/take_id"
+        blockLoading: true
+        printErrors: false
+    }
+    FileView {
+        path: root._runtimeDir + "/voxtype/pp_result"
         watchChanges: true
         printErrors: false
         onFileChanged: reload()
         onLoaded: {
-            const ms = Number((text() || "").trim());
-            if (ms > 0) root.cancelledAt = ms;
+            const parts = text().trim().split(" ");
+            root.ppVia = parts[1] || "";
+            root.cleanupTake = parts[2] || "";
         }
     }
-
     FileView {
-        path: root._runtimeDir.length > 0 ? root._runtimeDir + "/voxtype/pp_result" : ""
-        watchChanges: true
+        id: outcomeFile
+        path: root._runtimeDir + "/voxtype/outcome.json"
+        blockLoading: true
         printErrors: false
-        onFileChanged: reload()
-        onLoaded: {
-            const parts = (text() || "").trim().split(" ");
-            const ms = Number(parts[0]);
-            if (ms > 0) { root.ppResultAt = ms; root.ppVia = parts[1] || ""; }
-        }
     }
 
-    // The fork's marker, written only on success. Fallback for outcome.json.
-    FileView {
-        path: root._runtimeDir.length > 0 ? root._runtimeDir + "/voxtype/output_done" : ""
-        watchChanges: true
-        printErrors: false
-        onFileChanged: reload()
-        onLoaded: {
-            const ms = Number((text() || "").trim().split(" ")[0]);
-            if (ms > 0) root.outputDoneAt = ms;
+    function terminalOutcome(record) {
+        if (!record || !(record.at_ms >= localStart)) return "";
+        if (record.take_id) {
+            if (!capabilities || !capabilities.take_identity || record.take_id !== takeId) return "";
+            return record.outcome;
         }
+        if (!recordingStart || record.session_started_at_ms !== recordingStart) return "";
+        if (record.outcome === "ok") return "output_complete";
+        if (record.outcome === "cancelled") return "cancelled";
+        if (record.outcome === "error" || record.outcome === "output_failed") return "failed";
+        // An older daemon's ok includes a successful clipboard fallback.
+        return "";
     }
 
-    // voxtype's own result of the take: {"outcome": "ok" | "empty" | "cancelled"
-    // | "no_speech" | "too_short" | "output_failed", "at_ms": ...}. Only "ok"
-    // counts as delivered, as with output_done; "cancelled" feeds the cancel fold.
-    property double outcomeOkAt: 0
+    // Probe once per HUD. Hide text until the sensitive-field capability is known.
+    property var capabilities: null
+    Process {
+        command: ["sh", "-c", "exec shuush caps"]
+        running: true
+        stdout: StdioCollector {
+            onStreamFinished: {
+                try {
+                    const probe = JSON.parse(text);
+                    root.capabilities = probe.probe_ok === false ? ({}) : probe.caps || ({});
+                }
+                catch (e) { root.capabilities = ({}); }
+            }
+        }
+        onExited: if (root.capabilities === null) root.capabilities = ({})
+    }
+    property bool sensitiveField: true
+    property bool privateTake: false
+    readonly property bool checkSensitive: capabilities !== null && capabilities.sensitive_field !== false
+    readonly property bool hideWords: capabilities === null || (checkSensitive && sensitiveField) || privateTake
     FileView {
-        path: root._runtimeDir.length > 0 ? root._runtimeDir + "/voxtype/outcome.json" : ""
+        id: sensitiveFile
+        path: root.checkSensitive ? root._runtimeDir + "/voxtype/sensitive_field" : ""
+        blockLoading: true
         watchChanges: true
         printErrors: false
         onFileChanged: reload()
         onLoaded: {
-            let o = null;
-            try { o = JSON.parse(text() || "null"); } catch (e) { o = null; }
-            const at = o ? Number(o.at_ms) : 0;
-            if (!(at > 0)) return;
-            if (o.outcome === "ok") root.outcomeOkAt = at;
-            else if (o.outcome === "cancelled") root.cancelledAt = Math.max(root.cancelledAt, at);
+            root.sensitiveField = true;
+            if (root.active || root.lingering) root.privateTake = true;
         }
+        onLoadFailed: error => { root.sensitiveField = error !== FileViewError.FileNotFound; }
+    }
+    FileView {
+        id: privateFile
+        path: root.capabilities && root.capabilities.take_identity && root.takeId ? root._runtimeDir + "/voxtype/takes/" + root.takeId + "/pp_private" : ""
+        watchChanges: true
+        blockLoading: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: root.privateTake = true
     }
 
     readonly property string _runtimeDir: {
@@ -255,7 +283,12 @@ Item {
         path: root._runtimeDir.length > 0 ? root._runtimeDir + "/voxtype/live_text" : ""
         watchChanges: true
         printErrors: false
-        onLoaded: { root.liveText = (text() || "").trim(); inFieldFile.reload(); }
+        onLoaded: {
+            sensitiveFile.reload(); sensitiveFile.text();
+            if (root.takeId) { privateFile.reload(); privateFile.text(); }
+            root.liveText = root.hideWords ? "" : (text() || "").trim();
+            inFieldFile.reload();
+        }
         onLoadFailed: root.liveText = ""
         onFileChanged: reload()
     }
@@ -339,7 +372,7 @@ Item {
         const cut = t.indexOf(" ", t.length - 600);
         return t.substring(cut > 0 ? cut + 1 : t.length - 600);
     }
-    readonly property string transcriptShown: _cap(shownText)
+    readonly property string transcriptShown: hideWords ? "" : _cap(shownText)
     readonly property bool hasText: wordsOk && transcriptShown.length > 0
 
     // ------------------------------------------------------------------
@@ -468,6 +501,7 @@ Item {
 
     // voxtype's own start of the take: {"started_at_ms": ..., "mode", "engine", "model"}.
     FileView {
+        id: sessionFile
         path: root._runtimeDir.length > 0 ? root._runtimeDir + "/voxtype/recording.json" : ""
         watchChanges: true
         printErrors: false
@@ -494,6 +528,7 @@ Item {
     function _applyState(next) {
         if (next === "" || next === vstate) return;
         const wasActive = _isActive(vstate);
+        const newRecording = vstate === "transcribing" && (next === "recording" || next === "streaming");
         vstate = next;
         if (!_isActive(next)) {
             if (wasActive) {
@@ -502,7 +537,16 @@ Item {
             } else {
                 _finishExit();
             }
-        } else if (!wasActive) {
+        } else if (!wasActive || newRecording) {
+            takeFile.reload();
+            const id = takeFile.text().trim();
+            takeId = /^[0-9]+$/.test(id) ? id : "";
+            sessionFile.reload();
+            terminalLabel = "";
+            privateTake = false;
+            sensitiveFile.reload(); sensitiveFile.text();
+            if (checkSensitive && sensitiveField) privateTake = true;
+            if (takeId) { privateFile.reload(); privateFile.text(); }
             shownAccent = _accentFor(next);
             shownLabel = _labelFor(next);
             // Fresh session (possibly cutting a previous exit short): clear
@@ -562,13 +606,16 @@ Item {
         id: exitGrace
         interval: 80
         onTriggered: {
-            const doneAt = Math.max(root.outcomeOkAt, root.outputDoneAt, root.ppResultAt);
-            const fresh = Date.now() - doneAt < 2500;
-            const delivered = fresh && doneAt >= root.localStart - 100;
-            // Before `confirmed`: the check paints its colour as it starts drawing.
-            root.deliveredRaw = delivered && root.ppVia === "passthrough"
-                && root.ppResultAt >= root.localStart - 100;
-            root.wasCancelled = !delivered && root.cancelledAt >= root.localStart - 100;
+            outcomeFile.reload();
+            let kind = "";
+            try { kind = root.terminalOutcome(JSON.parse(outcomeFile.text())); } catch (e) {}
+            const delivered = kind === "delivered";
+            root.deliveredRaw = delivered && root.ppVia === "passthrough" && root.cleanupTake === root.takeId;
+            root.wasCancelled = kind === "cancelled";
+            const labels = {output_complete: "Output complete", clipboard_only: "Clipboard only", recovered: "Target changed · saved in Studio",
+                cancelled: "Cancelled", failed: "Delivery failed", private_not_inserted: "Private · not inserted"};
+            root.terminalLabel = labels[kind] || "";
+            if (root.terminalLabel) root.shownText = "";
             root.cancelArmed = false;
             root.confirmed = delivered;
             // The marks fade from here, in clear view: while the text was
@@ -588,7 +635,7 @@ Item {
     // Reduced motion: fade only.
     SequentialAnimation {
         id: exitSeq
-        PauseAnimation { duration: root.deliveredRaw ? root.rawHoldMs : root.confirmed ? root.confirmHoldMs : root.wasCancelled ? root.cancelHoldMs : 0 }
+        PauseAnimation { duration: root.deliveredRaw || root.terminalLabel ? root.rawHoldMs : root.confirmed ? root.confirmHoldMs : 0 }
         ScriptAction { script: card.settled = false }
         ParallelAnimation {
             NumberAnimation { target: card; property: "morph"; to: root.reducedMotion ? 1.0 : 0.0; duration: root.reducedMotion ? 0 : 240; easing.type: Easing.BezierSpline; easing.bezierCurve: root.easeInOut }
@@ -1170,7 +1217,8 @@ Item {
                 // A muted mic or wrong source sends pure digital silence; say
                 // so instead of "Listening" to nothing for the whole take.
                 readonly property bool warn: (root.micDead && root.listening) || root.deliveredRaw
-                text: root.wasCancelled ? "Cancelled"
+                text: root.terminalLabel ? root.terminalLabel
+                    : root.hideWords ? "Private"
                     : root.cancelArmed ? "Esc again to cancel"
                     : root.deliveredRaw ? "Cleanup failed · typed as heard"
                     : root.micDead && root.listening ? "No mic input"
@@ -1188,7 +1236,7 @@ Item {
 
             Text {
                 id: transcript
-                visible: opacity > 0
+                visible: !root.hideWords && opacity > 0
                 // -- leading ellipsis, part of the line --------------------
                 // When the dictation runs past the two visible lines, the top
                 // line starts mid-sentence. That line is indented by the width

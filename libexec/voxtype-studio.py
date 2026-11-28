@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import tomllib
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
@@ -29,6 +30,9 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango  # noqa: E402
 SCRIPTS = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS))
 import voxtype_learn as learn  # noqa: E402
+import shuush_caps
+from voxtype_delivery import OUTCOMES
+from voxtype_storage import update_history
 import voxtype_pp_gate as gate  # noqa: E402
 
 CONF = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "voxtype"
@@ -526,10 +530,9 @@ def wl_copy(text: str) -> None:
 
 
 def load_history(limit: int = 2000) -> list[dict]:
-    if not HISTORY.exists():
-        return []
     out: list[dict] = []
-    for line in reversed(HISTORY.read_text(errors="replace").splitlines()):
+    lines = HISTORY.read_text(errors="replace").splitlines() if HISTORY.exists() else []
+    for line in reversed(lines):
         if not line.strip():
             continue
         try:
@@ -540,7 +543,33 @@ def load_history(limit: int = 2000) -> list[dict]:
                     break
         except ValueError:
             continue
-    return out
+    # A raw bypass can lose its target after the postprocessor would have run.
+    # Such a take has a recovery file even when there is no cleanup history row.
+    indexed = {row["take_id"]: row for row in out if row.get("take_id")}
+    recovery_files = list((RT / "takes").glob("*/recovered.txt"))
+    if recovery_files:
+        caps = shuush_caps.capabilities()["caps"]
+        if not (caps.get("take_identity") and caps.get("take_recovery")):
+            return out
+    for path in recovery_files:
+        take = path.parent.name
+        try:
+            if not take.isdecimal() or (path.parent / "pp_private").exists():
+                continue
+            if (path.parent / "disposition").read_text().strip() != "recovered":
+                continue
+            row = indexed.get(take)
+            if row is not None and row.get("outcome") == "recovered":
+                continue
+            text = path.read_text()
+            if row is None:
+                ts = datetime.fromtimestamp(path.stat().st_mtime).astimezone().isoformat()
+                row = {"ts": ts, "take_id": take, "raw": text}
+                out.append(row)
+            row.update(clean=text, outcome="recovered")
+        except (OSError, UnicodeError):
+            continue
+    return sorted(out, key=lambda row: row.get("ts") or "", reverse=True)[:limit]
 
 
 PROVIDERS: list[dict[str, str]] = [
@@ -936,7 +965,7 @@ def diff_markup(raw: str, clean: str) -> str:
     return " ".join(p for p in parts if p)
 
 
-def learn_from_pair(raw: str, clean: str, edited: str) -> list[tuple[str, str]]:
+def learn_from_pair(raw: str, clean: str, edited: str, undo=None) -> list[tuple[str, str]]:
     rw = learn.words(learn.norm(raw))
     cw = learn.words(learn.norm(clean))
     nw = learn.words(learn.norm(edited))
@@ -949,7 +978,7 @@ def learn_from_pair(raw: str, clean: str, edited: str) -> list[tuple[str, str]]:
         meant = " ".join(cased[k1:k2]) if len(cased) == len(nw) else " ".join(nw[k1:k2])
         meant = meant.strip(".,;:!?")
         if learn.norm(heard) != learn.norm(meant):
-            why = learn.remember(heard, meant, "user")
+            why = learn.remember(heard, meant, "user", undo)
             if not why:
                 learned.append((learn.norm(heard), meant))
                 if any(ch.isupper() for ch in meant) or "." in meant or "-" in meant:
@@ -1135,36 +1164,11 @@ def update_history_entry(
     new_mode: str | None = None,
 ) -> bool:
     """Atomically update a matching entry in history.jsonl with new cleaned text and mode."""
-    if not history_path.exists():
-        return False
-    lines = history_path.read_text(encoding="utf-8", errors="replace").splitlines()
-    target_ts = entry.get("ts")
-    target_raw = entry.get("raw")
-    hit_idx = -1
-    parsed_hit: dict | None = None
-    for idx in range(len(lines) - 1, -1, -1):
-        line = lines[idx].strip()
-        if not line:
-            continue
-        try:
-            d = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(d, dict) and d.get("ts") == target_ts and d.get("raw") == target_raw:
-            hit_idx = idx
-            parsed_hit = d
-            break
-    if hit_idx < 0 or parsed_hit is None:
-        return False
-    eff_mode = new_mode or parsed_hit.get("mode") or "default"
-    parsed_hit["clean"] = new_clean
-    parsed_hit["mode"] = eff_mode
-    parsed_hit["swaps"] = compute_swaps(parsed_hit.get("raw", ""), new_clean, eff_mode)
-    lines[hit_idx] = json.dumps(parsed_hit, ensure_ascii=False)
-    tmp = history_path.with_suffix(".jsonl.tmp")
-    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    tmp.replace(history_path)
-    return True
+    def changes(row):
+        mode = new_mode or row.get("mode") or "default"
+        return {"clean": new_clean, "mode": mode,
+                "swaps": compute_swaps(row.get("raw", ""), new_clean, mode)}
+    return update_history(history_path, entry, changes)
 
 
 def compute_insights(entries: list[dict]) -> dict:
@@ -1182,7 +1186,9 @@ def compute_insights(entries: list[dict]) -> dict:
     p50 = pp[len(pp) // 2] if pp else 0
     p90 = pp[int(len(pp) * 0.9)] if pp else 0
     fallbacks = sum(1 for e in entries if e.get("via") == "passthrough")
-    success_pct = ((total - fallbacks) * 100.0 / total) if total else 100.0
+    confirmed = [e["outcome"] for e in entries if e.get("outcome") in OUTCOMES]
+    success_pct = 100 * confirmed.count("delivered") / len(confirmed) if confirmed else None
+    delivery_rate = f"{success_pct:.1f}%" if confirmed else "—"
     by_mode = collections.Counter(e.get("mode") or "default" for e in entries)
     by_via = collections.Counter(e.get("via") or "?" for e in entries)
     by_day: collections.Counter[str] = collections.Counter()
@@ -1203,7 +1209,7 @@ def compute_insights(entries: list[dict]) -> dict:
         "total_audio_ms": total_audio_ms,
         "p50": p50,
         "p90": p90,
-        "success_pct": success_pct,
+        "success_pct": success_pct, "delivery_rate": delivery_rate,
         "fallbacks": fallbacks,
         "by_mode": by_mode,
         "by_via": by_via,
@@ -1217,7 +1223,7 @@ def build_ai_audit_prompt(entries: list[dict], ins: dict, suggs: list[tuple[str,
     wpm_str = f"Median pace: {ins['median_wpm']:.0f} WPM ({ins['wpm_count']} takes)" if ins.get("median_wpm") else "Median pace: n/a"
     lines = [
         "# Voxtype Dictation Audit",
-        f"- Total takes: {ins['total']} | Words: {ins['words']:,} | {wpm_str} | Cleanup success: {ins['success_pct']:.1f}% | Latency P50/P90: {ins['p50']}ms / {ins['p90']}ms",
+        f"- Total takes: {ins['total']} | Words: {ins['words']:,} | {wpm_str} | Confirmed insertion rate: {ins['delivery_rate']} | Latency P50/P90: {ins['p50']}ms / {ins['p90']}ms",
         f"- Modes: {dict(ins['by_mode'])} | Providers: {dict(ins['by_via'])}",
         "",
         "## Unlearned safe candidates",
@@ -1400,6 +1406,9 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             sm = Gio.File.new_for_path(str(RT / "state")).monitor_file(Gio.FileMonitorFlags.NONE, None)
             sm.connect("changed", self._on_state_file_changed)
             self._monitors.append(sm)
+            om = Gio.File.new_for_path(str(RT / "outcome.json")).monitor_file(Gio.FileMonitorFlags.NONE, None)
+            om.connect("changed", self._on_history_file_changed)
+            self._monitors.append(om)
         except Exception:
             pass
 
@@ -1990,7 +1999,10 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
 
         status = Gtk.Label()
         status.add_css_class("pill")
-        if d.get("via") == "passthrough":
+        if d.get("outcome") in OUTCOMES and d["outcome"] != "delivered":
+            status.set_text(OUTCOMES[d["outcome"]])
+            status.add_css_class("pill-review")
+        elif d.get("via") == "passthrough":
             status.set_text("● Fallback")
             status.add_css_class("pill-danger")
         elif d.get("review"):
@@ -2189,17 +2201,17 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         edited = self._edited_text()
         if not edited:
             return
-        before_pairs = learn.load()
-        learned = learn_from_pair(self.selected_entry.get("raw", ""), self.selected_entry.get("clean", ""), edited)
+        undo = {}
+        learned = learn_from_pair(self.selected_entry.get("raw", ""), self.selected_entry.get("clean", ""), edited, undo)
         for chk, h, m in self.swap_checks:
             if chk.get_active():
-                if not learn.remember(h, m, "user"):
+                if not learn.remember(h, m, "user", undo):
                     learned.append((learn.norm(h), m))
         wl_copy(edited)
         if learned:
             summary = ", ".join(f"{h} → {m}" for h, m in learned[:3])
             self.reload_all()
-            self.show_toast(f"Learned & copied: {summary}", undo_cb=lambda: learn.save(before_pairs))
+            self.show_toast(f"Learned & copied: {summary}", undo_cb=lambda: learn.undo_corrections(undo))
         else:
             self.show_toast("Copied to clipboard (edit a word or check a repair to teach)")
 
@@ -2282,8 +2294,8 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         m = self.corr_meant.get_text().strip()
         if not h or not m:
             return
-        before = learn.load()
-        why = learn.remember(h, m, "user")
+        undo = {}
+        why = learn.remember(h, m, "user", undo)
         if why:
             self.show_toast(f"Refused: {why}")
             return
@@ -2291,7 +2303,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         self.corr_meant.set_text("")
         self._render_corrections()
         self._refresh_kpis()
-        self.show_toast(f"Learned: {learn.norm(h)} → {m}", undo_cb=lambda: learn.save(before))
+        self.show_toast(f"Learned: {learn.norm(h)} → {m}", undo_cb=lambda: learn.undo_corrections(undo))
 
     def _render_corrections(self) -> None:
         pairs = learn.load()
@@ -2358,18 +2370,18 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             self.corr_list.append(r)
 
     def _on_accept_sugg(self, _btn, h: str, m: str) -> None:
-        before, cands_before = learn.load(), learn.load_candidates()
+        edits, cands_before = {}, learn.load_candidates()
         hint = learn.is_hint_only(h, m)
-        why = learn.accept_pair(h, m)
+        why = learn.accept_pair(h, m, edits)
         if why:
             self.show_toast(f"Refused: {why}")
             return
         self.reload_all()
 
         def undo() -> None:
-            learn.save(before)
+            learn.undo_corrections(edits)
             learn.save_candidates(cands_before)
-            if h not in before:
+            if edits[learn.norm(h)][0] is None and learn.norm(h) not in learn.load():
                 learn.remove_replacement(h)
             self.reload_all()
 
@@ -2382,14 +2394,12 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         self.show_toast(f"Dismissed: {h} → {m}", undo_cb=lambda k=key: learn.unreject_pair(k))
 
     def _on_del_correction(self, _btn, h: str) -> None:
-        before = learn.load()
-        pairs = learn.load()
-        if pairs.pop(h, None) is not None:
-            learn.save(pairs)
+        undo = {}
+        if learn.forget(h, undo):
             learn.remove_replacement(h)
             self._render_corrections()
             self._refresh_kpis()
-            self.show_toast(f"Removed '{h}'", undo_cb=lambda: (learn.save(before), learn.sync_replacements()))
+            self.show_toast(f"Removed '{h}'", undo_cb=lambda: (learn.undo_corrections(undo), learn.sync_replacements()))
 
     # ── Tab 3: Vocabulary ────────────────────────────────────────────────
     def _build_vocab_page(self) -> Gtk.Widget:
@@ -3222,7 +3232,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         for lbl_title, val_w, sub_w in [
             ("Words dictated", self.ins_words, Gtk.Label(label="all recorded takes", xalign=0)),
             ("Speaking pace", self.ins_wpm, self.ins_wpm_sub),
-            ("Cleanup reliability", self.ins_acc, Gtk.Label(label="non-fallback rate", xalign=0)),
+            ("Insertion rate", self.ins_acc, Gtk.Label(label="among known outcomes", xalign=0)),
             ("P50 / P90 latency", self.ins_p90, Gtk.Label(label="end-to-end cleanup", xalign=0)),
         ]:
             card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
@@ -3304,7 +3314,7 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
         else:
             self.ins_wpm.set_text("—")
             self.ins_wpm_sub.set_text("no timed takes yet")
-        self.ins_acc.set_text(f"{ins['success_pct']:.1f}%")
+        self.ins_acc.set_text(ins["delivery_rate"])
         self.ins_p90.set_text(f"{ins['p50']} / {ins['p90']} ms")
         self.vol_chart.set_bars(ins["by_day"])
 
@@ -3372,18 +3382,18 @@ class VoxtypeStudioWindow(Adw.ApplicationWindow):
             self.hot_box.append(row)
 
     def _on_learn_all_safe(self, _btn) -> None:
-        before = learn.load()
-        suggs = suggest_from_history(self.history, before)
+        undo = {}
+        suggs = suggest_from_history(self.history, learn.load())
         added = 0
         for h, m, _n in suggs:
-            if not learn.remember(h, m, "user"):
+            if not learn.remember(h, m, "user", undo):
                 added += 1
         if added:
             learn.sync_replacements()
             self.reload_all()
             self.show_toast(
                 f"Learned {added} safe fix(es) & synced to daemon",
-                undo_cb=lambda: (learn.save(before), learn.sync_replacements()),
+                undo_cb=lambda: (learn.undo_corrections(undo), learn.sync_replacements()),
             )
 
     def _on_copy_ai_audit(self, _btn) -> None:

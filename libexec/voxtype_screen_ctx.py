@@ -154,7 +154,8 @@ def _roots(Atspi, pid: int, cls: str, title: str, deadline: float) -> list:
     return roots
 
 
-def collect(pid: int, cls: str, title: str, budget_s: float = 0.25, max_nodes: int = 500) -> dict:
+def collect(pid: int, cls: str, title: str, budget_s: float = 0.25, max_nodes: int = 500,
+            sensitivity_only: bool = False) -> dict:
     empty = {"password": False, "draft": "", "screen": "", "source": "none"}
     try:
         import gi
@@ -200,7 +201,7 @@ def collect(pid: int, cls: str, title: str, budget_s: float = 0.25, max_nodes: i
                 password = True
                 break
 
-            if focused and (editable or role in EDITABLE_ROLES):
+            if not sensitivity_only and focused and (editable or role in EDITABLE_ROLES):
                 raw_draft = _safe_text(node, Atspi.Text, 450)
                 if raw_draft.strip():
                     draft = gate.screen_block(raw_draft, lines=6, limit=400)
@@ -208,7 +209,7 @@ def collect(pid: int, cls: str, title: str, budget_s: float = 0.25, max_nodes: i
                 if split is not None:
                     before_caret = split[0]
 
-            if role in TEXT_ROLES:
+            if not sensitivity_only and role in TEXT_ROLES:
                 txt = _safe_text(node, Atspi.Text, 400) if role in ("paragraph", "document-text", "terminal", "text", "entry") else ""
                 if not txt:
                     txt = (node.get_name() or "").strip()
@@ -293,7 +294,7 @@ def main(argv: list[str]) -> int:
     cls = argv[2] if len(argv) > 2 else ""
     title = argv[3] if len(argv) > 3 else ""
     budget = float(os.environ.get("PP_SCREEN_BUDGET_S", "0.25"))
-    res = collect(pid, cls, title, budget_s=budget)
+    res = collect(pid, cls, title, budget_s=budget, sensitivity_only="--sensitivity-only" in argv[4:])
     sys.stdout.write(json.dumps(res, ensure_ascii=False))
     return 0
 

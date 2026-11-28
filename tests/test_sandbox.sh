@@ -340,8 +340,8 @@ ok "F9 release sleeps PP_RELEASE_TAIL_MS (default 200) unless a daemon that has 
 
 if python3 -m pytest --version >/dev/null 2>&1; then
   echo "=== 10. Pytest Suite (Queue, Single-jq, WPM, Re-clean, Clipboard Snippet, Inotify OSD) ==="
-  python3 -m pytest -q -p no:cacheprovider "$ROOT/tests/test_dictation_pass.py" "$ROOT/tests/test_layer_groundwork.py"
-  ok "Pytest dictation-pass and layer-groundwork suites passed"
+  python3 -m pytest -q -p no:cacheprovider "$ROOT/tests"
+  ok "Pytest dictation, capabilities, privacy and delivery suites passed"
 fi
 
 echo ""

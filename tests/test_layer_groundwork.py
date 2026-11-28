@@ -244,8 +244,8 @@ def test_press_while_polishing_skips_cleanup_only_where_voxtype_can(tmp_path: Pa
 
 
 def test_queue_needs_the_daemon_to_have_it_even_with_a_live_queue_pid(tmp_path: Path) -> None:
-    for schema, started in ((FORK, True), (STOCK, False)):
-        d = tmp_path / ("fork" if started else "stock")
+    for schema, started in ((FORK, False), (STOCK, False)):
+        d = tmp_path / ("fork" if schema == FORK else "stock")
         d.mkdir()
         env, log = toggle_env(d, schema)
         rt = d / "rt/voxtype"
@@ -390,7 +390,7 @@ def test_wire_sets_through_voxtype_and_records_old_and_new(tmp_path: Path) -> No
     assert res.returncode == 0, res.stderr
     data = tomllib.loads(cfg.read_text())
     pp = data["output"]["post_process"]
-    assert pp == {"timeout_ms": 20000, "command": PP, "trim": False}
+    assert pp == {"timeout_ms": 20000, "command": PP, "trim": False, "fallback_on_empty": False}
     assert data["osd"]["style"] == "kitsune-hud" and data["osd"]["position"] == "top-center"
     assert data["osd"]["margin_px"] == 20 and data["osd"]["frontend"] == "auto"
     assert data["profiles"]["terminal"]["post_process_command"] == f"{PP} terminal"
@@ -410,7 +410,7 @@ def test_wire_sets_through_voxtype_and_records_old_and_new(tmp_path: Path) -> No
     # Only validated writes through the CLI, only the keys Shuush owns
     sets = [line.split()[2] for line in log.read_text().splitlines() if line.startswith("config set ") and "--help" not in line]
     assert sorted(sets) == ["osd.margin_px", "osd.style", "output.post_process.command",
-                            "output.post_process.timeout_ms", "output.post_process.trim"]
+                            "output.post_process.fallback_on_empty", "output.post_process.timeout_ms", "output.post_process.trim"]
 
 
 def test_wire_twice_changes_nothing_and_keeps_the_first_old_values(tmp_path: Path) -> None:
@@ -562,13 +562,9 @@ def test_shuush_cli_wire_unwire_and_the_old_name(tmp_path: Path) -> None:
 def test_hud_reads_voxtypes_state_files_with_the_fork_files_as_fallback() -> None:
     qml = (ROOT / "osd/kitsune-hud/KitsuneHud.qml").read_text()
     assert '"/voxtype/outcome.json"' in qml and '"/voxtype/recording.json"' in qml
-    assert "o.outcome === \"ok\"" in qml and "started_at_ms" in qml and "at_ms" in qml
-    # fallbacks stay: the fork's marker and the watcher's session_start
-    assert '"/voxtype/output_done"' in qml and '"/voxtype/session_start"' in qml
-    # delivered = the newest of the three
-    assert "Math.max(root.outcomeOkAt, root.outputDoneAt, root.ppResultAt)" in qml
-    # only a successful outcome counts as delivered
-    assert 'if (o.outcome === "ok") root.outcomeOkAt = at;' in qml
+    assert '"delivered"' in qml and 'record.take_id !== takeId' in qml
+    assert '"/voxtype/session_start"' in qml
+    assert 'record.outcome === "ok") return "output_complete"' in qml
     # a stale recording.json from another take is ignored the way session_start is
     assert "Math.abs(localStart - recordingStart) < 3000" in qml
 

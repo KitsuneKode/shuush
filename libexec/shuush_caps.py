@@ -10,6 +10,7 @@ re-asked only when the binary changes.
     shuush-caps                  the whole answer as JSON
     shuush-caps has CAP...       exit 0 when every CAP is on, 1 when one is off,
                                  2 for a name nobody knows
+    shuush-caps sensitive        exit 0 for a present sensitive-field marker on a supporting or unknown build
     shuush-caps list             one line per capability
     shuush-caps bin              the daemon's binary
     shuush-caps --refresh        ignore the cache and probe again
@@ -68,6 +69,9 @@ CAPS: dict[str, tuple[str, str]] = {
     "last_take": ("mark:last_take.wav", "last_take.wav: the last recording, for replay and real WPM"),
     "record_recover": ("cli:record recover", "`voxtype record recover`: bring back a cancelled take"),
     "skip_post_process": ("help:record stop::--no-post-process", "`record stop --no-post-process`: skip the cleanup while it runs"),
+    "take_identity": ("mark:VOXTYPE_TAKE_ID", "postprocessor and terminal outcome identified by take"),
+    "sensitive_field": ("mark:sensitive_field", "runtime marker for password and sensitive fields"),
+    "take_recovery": ("mark:recovered.txt", "target-loss recovery file in the identified take directory"),
     "delivered_marker": ("mark:output_done", "output_done marker (the fork's; outcome.json is the stock one)"),
 }
 
@@ -290,6 +294,11 @@ def has(names: list[str], binary: str | None = None) -> int:
 
 
 def main(argv: list[str]) -> int:
+    if argv == ["sensitive"]:
+        if not (runtime_dir() / "voxtype" / "sensitive_field").exists():
+            return 1
+        doc = capabilities()
+        return 0 if not doc["probe_ok"] or doc["caps"]["sensitive_field"] else 1
     refresh = False
     binary = None
     args: list[str] = []

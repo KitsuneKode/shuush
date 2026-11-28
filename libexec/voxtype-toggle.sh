@@ -16,6 +16,8 @@
 # recording started with).
 
 set -u
+set -o pipefail
+umask 077
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 verb="${1:-toggle}"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
@@ -27,31 +29,29 @@ now_ms() { date +%s%3N; }
 # What the running voxtype can do (shuush-caps: asked of the daemon's own
 # binary, cached until it changes). Anything off falls back to what stock
 # voxtype does.
-cap() { python3 -I "$SCRIPT_DIR/shuush_caps.py" has "$1" 2>/dev/null; }
+cap() { python3 -I "$SCRIPT_DIR/shuush_caps.py" has "$@" 2>/dev/null; }
 
 # Queued dictation (voxtype-fork, [audio] queue_dictations): allow a new hold
 # take while the previous one is still transcribing. Only on a daemon that has
-# the feature; there the running queue (queue_pid) decides, unless the user
-# opts in or out via VOXTYPE_QUEUE=1 or 0.
+# the feature and an active queue_pid. VOXTYPE_QUEUE=0 opts out.
 daemon_supports_queue() {
-    cap queue_dictations || return 1
+    # Older queue builds publish queue_pid even with queue_dictations off
+    # and do not pass an identity to a queued take's postprocessor.
+    cap queue_dictations take_identity || return 1
     local flag="${VOXTYPE_QUEUE:-}"
     if [ -z "$flag" ] && [ -f "$CONF/postprocess.env" ]; then
         flag=$(sed -n 's/^VOXTYPE_QUEUE=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
     fi
     case "$flag" in
-        1) return 0 ;;
         0) return 1 ;;
     esac
     local qpid dpid
-    [ -r "$rt/queue_pid" ] || return 1
+    [ -r "$rt/queue_pid" ] && [ -r "$rt/pid" ] || return 1
     IFS= read -r qpid < "$rt/queue_pid" || true
     [[ "$qpid" =~ ^[0-9]+$ ]] || return 1
     kill -0 "$qpid" 2>/dev/null || return 1
-    if [ -r "$rt/pid" ]; then
-        IFS= read -r dpid < "$rt/pid" || true
-        [ -n "$dpid" ] && [ "$qpid" != "$dpid" ] && return 1
-    fi
+    IFS= read -r dpid < "$rt/pid" || true
+    [ "$qpid" = "$dpid" ] || return 1
     return 0
 }
 
@@ -62,6 +62,8 @@ daemon_supports_queue() {
 # ignored and the text lands when the cleanup finishes.
 polishing_now() {
     cap skip_post_process || exit 0
+    # Only the identified daemon can check a captured target on the raw bypass.
+    [ ! -e "$rt/current_capture" ] || cap take_identity || exit 0
     # This path skips the cleanup script, so the script will not clear the border.
     "$SCRIPT_DIR/voxtype-outline.sh" off >/dev/null 2>&1 || true
     exec voxtype record stop --no-post-process
@@ -81,6 +83,11 @@ active_window_json() {
 }
 
 start() {  # [profile]
+    # Concurrent hotkey processes must publish and submit one start at a time.
+    exec 9>"$rt/shuush-start.lock"
+    flock -n 9 || return 0
+    [ ! -e "$rt/start_requested" ] || return 0
+    [ "$(cat "$rt/state" 2>/dev/null || echo idle)" = "$state" ] || return 0
     # A muted microphone records silence: say so instead of starting a take.
     if wpctl get-volume @DEFAULT_AUDIO_SOURCE@ 2>/dev/null | grep -q MUTED; then
         msg="Microphone is muted · Ctrl+Alt+M turns it on"
@@ -88,39 +95,40 @@ start() {  # [profile]
             || notify-send -a Voxtype -t 4000 "$msg" 2>/dev/null
         exit 0
     fi
-    # Gone before the background capture refills it: a take that ends first
-    # must not read the previous field's caret, draft or password state.
-    rm -f "$rt/handsfree" "$rt/take_screen_ctx.json"
-    # Captures below publish only while this is still the current take: a
-    # slow one from a cancelled take must not stand in for this one's.
+    rm -f "$rt/handsfree"
     take=$(date +%s%N)
-    printf '%s' "$take" > "$rt/take_id"
+    dir="$rt/takes/$take"
+    mkdir -p "$rt/takes" && mkdir "$dir" || exit 1
     win=$(active_window_json)
     [ -n "$win" ] || win='{}'
-    # Which window this take belongs to. The pill reads the class, and the
-    # cleanup puts the text back here if focus moves while it is polishing.
-    printf '%s' "$win" > "$rt/target_window.tmp" 2>/dev/null \
-        && mv -f "$rt/target_window.tmp" "$rt/target_window"
+    printf '%s' "$win" > "$dir/target_window" || exit 1
+    if [ -e "$rt/sensitive_field" ] && python3 -I "$SCRIPT_DIR/shuush_caps.py" sensitive; then : > "$dir/pp_private"; fi
+    if [ "${1:-}" = command ] && [ ! -e "$dir/pp_private" ]; then
+        timeout 0.4 wl-paste --primary --no-newline 2>/dev/null | head -c 12000 > "$dir/command_selection"
+    fi
+    # Readers of the original flat files include the outline and older HUDs.
+    ln -s "$dir/target_window" "$dir/window.link" && mv -Tf "$dir/window.link" "$rt/target_window" || exit 1
     # A thicker border on that window until the text lands. Color is left alone.
     "$SCRIPT_DIR/voxtype-outline.sh" on >/dev/null 2>&1 || true
     # Superwhisper-style context capture at record start: highlighted primary
     # selection, clipboard baseline hash, AND AT-SPI/kitty screen+draft context
     # all run in the background while you speak, so stop->type pays 0 ms for them.
     (
-        umask 077
+        [ ! -e "$dir/pp_private" ] || exit 0
+        trap 'if [ -e "$dir/pp_private" ]; then rm -f "$dir"/take_{selection,clip,clip_start,screen_ctx.json} "$dir/command_selection"; fi' EXIT
         sel=$(timeout 0.15 wl-paste --primary --no-newline 2>/dev/null | head -c 600 || true)
         if [ -n "${sel//[[:space:]]/}" ]; then
-            printf '%s' "$sel" > "$rt/take_selection"
+            printf '%s' "$sel" > "$dir/take_selection"
         else
-            rm -f "$rt/take_selection"
+            rm -f "$dir/take_selection"
         fi
         now_s=$(date +%s)
         clip_types=""
         clip=""
         if clip_types=$(timeout 0.15 wl-paste --list-types 2>/dev/null); then
             if grep -qx 'x-kde-passwordManagerHint' <<<"$clip_types"; then
-                rm -f "$rt/take_clip"
-                printf 'secret\n%s\n' "$now_s" > "$rt/take_clip_start"
+                rm -f "$dir/take_clip"
+                printf 'secret\n%s\n' "$now_s" > "$dir/take_clip_start"
             else
                 clip=$(timeout 0.15 wl-paste --no-newline 2>/dev/null | head -c 800 || true)
                 if [ -n "${clip//[[:space:]]/}" ]; then
@@ -133,44 +141,35 @@ start() {  # [profile]
                         prev_ts=$now_s
                     fi
                     if [ "$chash" != "$self_hash" ] && [ $(( now_s - prev_ts )) -le 15 ]; then
-                        printf '%s' "$clip" > "$rt/take_clip"
+                        printf '%s' "$clip" > "$dir/take_clip"
                     else
-                        rm -f "$rt/take_clip"
+                        rm -f "$dir/take_clip"
                     fi
-                    printf '%s\n%s\n' "$chash" "$now_s" > "$rt/take_clip_start"
+                    printf '%s\n%s\n' "$chash" "$now_s" > "$dir/take_clip_start"
                 else
-                    rm -f "$rt/take_clip"
-                    printf 'empty\n%s\n' "$now_s" > "$rt/take_clip_start"
+                    rm -f "$dir/take_clip"
+                    printf 'empty\n%s\n' "$now_s" > "$dir/take_clip_start"
                 fi
             fi
         else
-            rm -f "$rt/take_clip" "$rt/take_clip_start"
+            rm -f "$dir/take_clip" "$dir/take_clip_start"
         fi
-        # Pre-capture screen & draft context in the background while talking
         sc_on=$(sed -n 's/^PP_SCREEN_CONTEXT=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
-        if [ "${sc_on:-1}" = 1 ]; then
-            w_cls=$(printf '%s' "$win" | jq -r '.class // empty' 2>/dev/null || true)
-            w_title=$(printf '%s' "$win" | jq -r '.title // empty' 2>/dev/null || true)
-            w_pid=$(printf '%s' "$win" | jq -r '.pid // 0' 2>/dev/null || true)
-            ctx_out=""
-            if [ "$w_cls" = kitty ] && [ -n "$w_pid" ] && [ "$w_pid" != "0" ]; then
-                sock="${XDG_RUNTIME_DIR:-/run/user/$UID}/mykitty-$w_pid"
-                if [ -S "$sock" ]; then
-                    ktxt=$(timeout 0.35 kitten @ --to "unix:$sock" get-text --match state:focused --extent screen 2>/dev/null || true)
-                    ctx_out=$(jq -nc --arg s "$ktxt" '{password:false, draft:"", screen:$s, source:"kitty"}')
-                fi
-            fi
-            if [ -z "$ctx_out" ]; then
-                ctx_out=$(timeout 0.35 python3 -I "$SCRIPT_DIR/voxtype_screen_ctx.py" "${w_pid:-0}" "$w_cls" "$w_title" 2>/dev/null || true)
-            fi
-            if [ -n "$ctx_out" ]; then
-                printf '%s' "$ctx_out" > "$rt/take_screen_ctx.$take" \
-                    && [ "$(cat "$rt/take_id" 2>/dev/null)" = "$take" ] \
-                    && mv -f "$rt/take_screen_ctx.$take" "$rt/take_screen_ctx.json"
-                rm -f "$rt/take_screen_ctx.$take"
-            fi
+        w_cls=$(jq -r '.class // empty' <<< "$win")
+        w_title=$(jq -r '.title // empty' <<< "$win")
+        w_pid=$(jq -r '.pid // 0' <<< "$win")
+        # Probe the focused role even when collecting text is disabled.
+        args=()
+        [ "${sc_on:-1}" = 1 ] || args+=(--sensitivity-only)
+        ctx=$(timeout 0.45 python3 -I "$SCRIPT_DIR/voxtype_screen_ctx.py" "$w_pid" "$w_cls" "$w_title" "${args[@]}") || exit 0
+        if jq -e '.password == true' <<< "$ctx" >/dev/null; then
+            : > "$dir/pp_private"
+        elif [ "${sc_on:-1}" = 1 ] && [ "$w_cls" = kitty ] && [ -S "${XDG_RUNTIME_DIR:-/run/user/$UID}/mykitty-$w_pid" ]; then
+            ktxt=$(timeout 0.35 kitten @ --to "unix:${XDG_RUNTIME_DIR:-/run/user/$UID}/mykitty-$w_pid" get-text --match state:focused --extent screen)
+            ctx=$(jq -c --arg s "$ktxt" '.screen=$s' <<< "$ctx")
         fi
-    ) >/dev/null 2>&1 &
+        printf '%s' "$ctx" > "$dir/context.tmp" && mv "$dir/context.tmp" "$dir/take_screen_ctx.json"
+    ) 9>&- >/dev/null 2>&1 &
     profile="${1:-}"
     if [ -z "$profile" ]; then
         class=$(printf '%s' "$win" | jq -r '.class // empty' 2>/dev/null | tr '[:upper:]' '[:lower:]')
@@ -192,8 +191,16 @@ start() {  # [profile]
                 esac ;;
         esac
     fi
-    printf '%s' "${profile:-default}" > "$rt/target_profile.tmp" 2>/dev/null \
-        && mv -f "$rt/target_profile.tmp" "$rt/target_profile"
+    printf '%s' "${profile:-default}" > "$dir/target_profile" || exit 1
+    ln -s "$dir/target_profile" "$dir/profile.link" && mv -Tf "$dir/profile.link" "$rt/target_profile" || exit 1
+    printf '%s' "$take" > "$dir/id.tmp" && mv "$dir/id.tmp" "$rt/current_capture" || exit 1
+    if cap take_identity; then
+        printf '%s' "$take" > "$dir/id.tmp" && mv "$dir/id.tmp" "$rt/take_id" || exit 1
+    else
+        rm -f "$rt/take_id"
+    fi
+    # Keep stopped/cancelled captures out of the runtime directory long term.
+    find "$rt/takes" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*' -mmin +1440 -exec rm -rf -- {} + 9>&- </dev/null >/dev/null 2>&1 &
     if [ -n "$profile" ]; then
         exec voxtype record start --profile "$profile"
     fi
@@ -275,14 +282,6 @@ case "$verb" in
             idle|"") ;;
             *) exec voxtype record stop ;;
         esac
-        # What is highlighted now (the primary selection). Empty: the model
-        # writes what was asked for instead of rewriting.
-        sel=$(timeout 0.4 wl-paste --primary --no-newline 2>/dev/null | head -c 12000)
-        if [ -n "${sel//[[:space:]]/}" ]; then
-            (umask 077; printf '%s' "$sel" > "$rt/command_selection")
-        else
-            rm -f "$rt/command_selection"
-        fi
         start command ;;
 
     *)

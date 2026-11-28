@@ -268,7 +268,7 @@ def learn_from(hunks: list[tuple[str, str]], app: str = "", spellings: list[str]
 def main() -> int:
     raw, clean = os.environ.get("RV_RAW", ""), os.environ.get("RV_CLEAN", "")
     try:
-        target = json.loads((RT / "target_window").read_text())
+        target = json.loads(Path(os.environ.get("RV_TARGET", RT / "target_window")).read_text())
     except (OSError, ValueError):
         return 0
     pid = int(target.get("pid") or 0)
@@ -286,6 +286,8 @@ def main() -> int:
     t0 = time.monotonic()
     for tick in TICKS:
         time.sleep(max(0.0, tick - (time.monotonic() - t0)))
+        if (RT / "sensitive_field").exists():
+            return 0
         if addr and active_address() not in (None, addr):
             continue
         field = im_field() or sc.focused_field(pid, cls, title)

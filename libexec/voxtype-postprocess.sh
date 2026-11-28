@@ -3,6 +3,7 @@
 # stdin = raw transcript → stdout = cleaned text.
 # Providers in PP_ORDER (default: local Ollama GPU, then Groq), else passthrough.
 set -o pipefail
+umask 077
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
 MODE="${1:-default}"     # invoked as: voxtype-postprocess.sh [default|terminal|chat|command]
@@ -52,9 +53,40 @@ trap '[ -n "$SDIR" ] && rm -rf "$SDIR"' EXIT
 # dictation is never lost (typed text used to skip the clipboard entirely).
 # wl-copy forks a clipboard owner — its stdio MUST NOT inherit our stdout or
 # voxtype blocks on the pipe until post_process timeout.
-# The window that was focused when the hotkey went down. Cleanup reads it
-# for <app>, and the text is put back there if focus moved while polishing.
-# Older than 20 minutes is a previous take, not this one.
+# A tagged daemon pins the caller's ID at record start. A serial legacy
+# daemon can claim the current capture once. Studio has no live target.
+TAKE=""
+CAPTURE="$RT"
+BAD_ID=0
+if [ "${PP_NO_HISTORY:-0}" != 1 ]; then
+  if [ -n "${VOXTYPE_TAKE_ID:-}" ]; then
+    TAKE="$VOXTYPE_TAKE_ID"
+    cap take_identity || BAD_ID=1
+  else
+    latest=$(cat "$RT/current_capture" 2>/dev/null)
+    if [[ "$latest" =~ ^[0-9]+$ ]] && [ -d "$RT/takes/$latest" ] && [ ! -e "$RT/takes/$latest/claimed" ] && mkdir "$RT/takes/$latest/legacy_claim" 2>/dev/null; then
+      TAKE="$latest"
+    elif [ -L "$RT/target_window" ]; then
+      # A built-in hotkey after a completed Shuush take has no captured target.
+      CAPTURE="$RT/unbound"
+    fi
+  fi
+  if [ -n "$TAKE" ]; then
+    if [ "$BAD_ID" = 0 ] && [[ "$TAKE" =~ ^[0-9]+$ ]] && [ -d "$RT/takes/$TAKE" ]; then
+      CAPTURE="$RT/takes/$TAKE"
+    else
+      BAD_ID=1
+    fi
+  fi
+fi
+TARGET="$CAPTURE/target_window"
+# Do not send unchecked sentence fragments to the daemon before emit().
+if [ -n "$TAKE" ] || [ -f "$TARGET" ]; then STREAM=0; fi
+
+current_take() {
+  [ -z "$TAKE" ] || [ "$TAKE" = "$(cat "$RT/current_capture" 2>/dev/null)" ]
+}
+
 active_window_json() {
   if command -v hyprctl >/dev/null 2>&1; then
     timeout 0.3 hyprctl activewindow -j 2>/dev/null | jq -c '{address, class, title, pid}' 2>/dev/null && return
@@ -68,25 +100,22 @@ active_window_json() {
   printf '{}'
 }
 
-focus_target() {
-  local f="$RT/target_window" age addr cur
-  [ -f "$f" ] || return 0
-  age=$(( $(date +%s) - $(stat -c %Y "$f" 2>/dev/null || echo 0) ))
-  [ "$age" -le 1200 ] || return 0
-  addr=$(jq -r '.address // empty' "$f" 2>/dev/null)
-  [ -n "$addr" ] || return 0
-  if command -v hyprctl >/dev/null 2>&1 && [[ "$addr" =~ ^0x[0-9a-fA-F]+$ ]]; then
-    cur=$(timeout 0.3 hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty')
-    [ "$addr" = "$cur" ] && return 0
-    timeout 0.3 hyprctl dispatch "hl.dsp.focus({window=\"address:$addr\"})" >/dev/null 2>&1 \
-      || timeout 0.3 hyprctl dispatch focuswindow "address:$addr" >/dev/null 2>&1 || true
-  elif command -v niri >/dev/null 2>&1 && [[ "$addr" =~ ^[0-9]+$ ]]; then
-    cur=$(timeout 0.3 niri msg -j focused-window 2>/dev/null | jq -r '.id // empty')
-    [ "$addr" = "$cur" ] && return 0
-    timeout 0.3 niri msg action focus-window --id "$addr" >/dev/null 2>&1 || true
-  elif command -v swaymsg >/dev/null 2>&1 && [[ "$addr" =~ ^[0-9]+$ ]]; then
-    timeout 0.3 swaymsg "[con_id=$addr]" focus >/dev/null 2>&1 || true
-  fi
+target_still_focused() {
+  [ "$BAD_ID" = 0 ] || return 1
+  [ -n "$TAKE" ] || [ -f "$TARGET" ] || return 0
+  local addr pid current
+  addr=$(jq -er '.address | select(type == "string" and length > 0 and . != "null" and . != "0x0")' "$TARGET" 2>/dev/null) || {
+    # An unsupported legacy compositor never supplied a target identity.
+    [ -z "${VOXTYPE_TAKE_ID:-}" ] && [ -f "$TARGET" ]
+    return
+  }
+  pid=$(jq -r '.pid // 0' "$TARGET")
+  current=$(active_window_json)
+  jq -e --arg addr "$addr" --arg pid "$pid"     '.address == $addr and ($pid == "0" or (.pid | tostring) == $pid)' <<< "$current" >/dev/null 2>&1
+}
+
+private_marker() {
+  { [ -e "$RT/sensitive_field" ] && python3 -I "$SCRIPT_DIR/shuush_caps.py" sensitive; } || { [ -n "$TAKE" ] && [ -e "$CAPTURE/pp_private" ]; }
 }
 
 # Back-to-back takes into the same field: "…done." + "Next" used to land as
@@ -99,7 +128,7 @@ smart_join() {
   # voxtype's input method sees the field directly (no AT-SPI needed, so
   # Electron apps too); the record-start AT-SPI capture is the fallback.
   local f="$RT/field_text.json" q='.before // "" | .[-40:]' before prev first rest lower
-  [ -f "$f" ] || { f="$RT/take_screen_ctx.json"; q='.before_caret // "" | .[-40:]'; }
+  [ -z "${TAKE:-}" ] && [ -f "$f" ] || { f="${CAPTURE:-$RT}/take_screen_ctx.json"; q='.before_caret // "" | .[-40:]'; }
   [ -f "$f" ] || return 0
   before=$(jq -j "$q" "$f" 2>/dev/null; printf x)
   before=${before%x}
@@ -124,17 +153,18 @@ smart_join() {
 }
 
 emit() {
-  local text="$1"
+  local text="$1" disposition="" message=""
+  if [ "$VIA" != private ] && private_marker; then emit_private; fi
   # Vocabulary spelled exactly (gate finish); and when no model answered, the
   # raw words without the sounds that are never words (gate fallback).
-  if [ -n "${text//[[:space:]]/}" ] && [ "$STREAMED" != 1 ]; then
+  if [ -n "${text//[[:space:]]/}" ] && [ "$STREAMED" != 1 ] && [ "$VIA" != private ]; then
     # voxtype keeps our whitespace ([output.post_process] trim = false), so
     # the model's stray spaces go here and smart_join's leading one survives.
     text="${text#"${text%%[![:space:]]*}"}"; text="${text%"${text##*[![:space:]]}"}"
     # (A snippet, a private take and an edit are typed exactly as they are.)
     if [ "$VIA" = passthrough ] && [ "$MODE" != command ]; then
       text=$(printf '%s' "$text" | python3 -I "$GATE" fallback 2>/dev/null || printf '%s' "$text")
-    elif [ "$VIA" != snippet ] && [ "$VIA" != private ] && [ "$MODE" != command ] && [ "$FINISHED" != 1 ]; then
+    elif [ "$VIA" != snippet ] && [ "$MODE" != command ] && [ "$FINISHED" != 1 ]; then
       text=$(printf '%s' "$text" | python3 -I "$GATE" finish 2>/dev/null || printf '%s' "$text")
     fi
     [ "${PP_NO_HISTORY:-0}" = 1 ] || smart_join
@@ -145,34 +175,40 @@ emit() {
     [ "$STREAMED" = 1 ] || printf '%s' "$text"
     exit 0
   fi
-  # "<epoch ms>" then the text, for the pill to show the cleaned words and
-  # mark the ones that changed. Never for a private take.
-  if [ "$VIA" != private ] && [ "$MODE" != command ] && [ -n "${text//[[:space:]]/}" ]; then
-    (umask 077; printf '%s\n%s' "$(date +%s%3N)" "${text# }" > "$RT/pp_final.tmp" \
-      && mv -f "$RT/pp_final.tmp" "$RT/pp_final") 2>/dev/null
-  else
-    rm -f "$RT/pp_final"
+  if current_take; then "$SCRIPT_DIR/voxtype-outline.sh" off >/dev/null 2>&1 || true; fi
+  if [ -n "$text" ] && ! target_still_focused; then
+    disposition=recovered
+    message="Target changed · open Shuush Studio to copy this take"
+    if [ "$VIA" = private ]; then
+      disposition=private_not_inserted
+      message="Private dictation not inserted · target changed"
+    fi
+  elif [ "$VIA" = private ] && [ -z "$text" ]; then
+    disposition=private_not_inserted
   fi
-  # The target window's border goes back to its usual width as the text lands.
-  "$SCRIPT_DIR/voxtype-outline.sh" off >/dev/null 2>&1 || true
-  focus_target
-  # "<epoch ms> <via>" for the OSD, so a raw fallback shows in the pill
-  # instead of passing for a cleaned insert. Written before stdout: voxtype
-  # only goes idle after it has typed what we print.
-  printf '%s %s\n' "$(date +%s%3N)" "$VIA" > "$RT/pp_result.tmp" 2>/dev/null \
-    && mv -f "$RT/pp_result.tmp" "$RT/pp_result" 2>/dev/null
-  [ "$STREAMED" = 1 ] || printf '%s' "$text"
-  [ -z "${text//[[:space:]]/}" ] && exit 0
-  # A private take is typed and forgotten: not on the clipboard, not in history.
-  # The fork's input method reads the field after a take (field_text.json):
-  # never for a private one. field_text.off tells it to stop for a while (a
-  # daemon without read_field/preedit has no such reader).
+  if [ -n "$disposition" ]; then
+    if [ "$disposition" = recovered ] && [ -n "${VOXTYPE_TAKE_ID:-}" ]; then
+      printf '%s' "$text" > "$CAPTURE/recovered.tmp.$$" && mv "$CAPTURE/recovered.tmp.$$" "$CAPTURE/recovered.txt" || disposition=failed
+    fi
+    [ -z "$TAKE" ] || [ "$CAPTURE" = "$RT" ] || printf '%s\n' "$disposition" > "$CAPTURE/disposition"
+    if [ -n "$message" ] && { [ -z "${VOXTYPE_TAKE_ID:-}" ] || ! current_take; }; then notify-send -a Voxtype "$message" </dev/null >/dev/null 2>&1 & fi
+  else
+    [ "$STREAMED" = 1 ] || printf '%s' "$text"
+  fi
+  if current_take; then
+    if [ "$VIA" != private ] && [ "$MODE" != command ] && [ -n "$text" ]; then
+      printf '%s\n%s' "$(date +%s%3N)" "${text# }" > "$RT/pp_final.$$" && mv "$RT/pp_final.$$" "$RT/pp_final"
+    else
+      rm -f "$RT/pp_final"
+    fi
+    printf '%s %s %s\n' "$(date +%s%3N)" "$VIA" "$TAKE" > "$RT/pp_result.$$" && mv "$RT/pp_result.$$" "$RT/pp_result"
+  fi
   if [ "$VIA" = private ]; then
-    rm -f "$RT/field_text.json" "$RT/take_selection" "$RT/take_screen_ctx.json" "$RT/take_clip_start" "$RT/take_clip"
-    if cap read_field || cap preedit; then : > "$RT/field_text.off"; fi
+    rm -f "$CAPTURE"/take_{selection,screen_ctx.json,clip_start,clip} "$CAPTURE/command_selection"
     exit 0
   fi
-  rm -f "$RT/pp_private" "$RT/field_text.off"
+  [ -z "${text//[[:space:]]/}" ] && exit 0
+  if current_take; then rm -f "$RT/pp_private" "$RT/field_text.off"; fi
   # Record our own emitted hash (ts=0) BEFORE wl-copy so the next take never
   # mistakes our own dictation for freshly copied user <clipboard> context.
   local emit_hash keep_clip
@@ -183,7 +219,7 @@ emit() {
   # Environment overrides postprocess.env so callers (e.g. Studio Re-clean) can force 0.
   keep_clip="${PP_KEEP_ON_CLIPBOARD:-}"
   [ -z "$keep_clip" ] && keep_clip=$(sed -n 's/^PP_KEEP_ON_CLIPBOARD=\([01]\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
-  if [ "${keep_clip:-1}" != 0 ] && command -v wl-copy >/dev/null 2>&1; then
+  if [ -z "$disposition" ] && [ "${keep_clip:-1}" != 0 ] && command -v wl-copy >/dev/null 2>&1; then
     wl-copy -- "$text" </dev/null >/dev/null 2>&1 &
   fi
   # History line (+ swaps/review flag, desktop notification when a dictation
@@ -191,11 +227,26 @@ emit() {
   # pp_ms is this whole script, llm_ms just the model call. Backgrounded
   # with stdio detached: voxtype types only once this script exits, and the
   # Python start-up was ~40ms on every insert.
+  RV_TAKE_ID="$TAKE" RV_TAGGED="${VOXTYPE_TAKE_ID:+1}" RV_DISPOSITION="$disposition" RV_TARGET="$TARGET" RV_SESSION_ID="$SESSION_ID" \
   RV_TS="$(date -Is)" RV_MODE="$MODE" RV_VIA="$VIA" RV_RAW="$RAW_ORIG" RV_CLEAN="$text" \
   RV_PP="$(( $(date +%s%3N) - T0 ))" RV_LLM="$LLM_MS" RV_T0="$T0" RV_SCREEN_TERMS="${PP_SCREEN_TERMS:-}" \
     python3 "$SCRIPT_DIR/voxtype-review.py" </dev/null >/dev/null 2>&1 &
   exit 0
 }
+emit_private() {
+  VIA=private
+  if [ "${PP_NO_HISTORY:-0}" != 1 ]; then
+    # The legacy fork watches mtime after postprocess starts.
+    date +%s > "$RT/pp_private"
+    if [ -n "$TAKE" ] && [ "$CAPTURE" != "$RT" ]; then : > "$CAPTURE/pp_private"; fi
+    if cap read_field || cap preedit; then : > "$RT/field_text.off"; fi
+    rm -f "$RT/field_text.json" "$RT/last_take.wav"
+  fi
+  if [ "$MODE" = command ] || [ "$(cat "$CAPTURE/target_profile" 2>/dev/null)" = command ] || [ "$BAD_ID" = 1 ]; then emit ""; fi
+  emit "$RAW_ORIG"
+}
+if private_marker || [ "$BAD_ID" = 1 ]; then emit_private; fi
+SESSION_ID=$(jq -r '.started_at_ms // empty' "$RT/recording.json" 2>/dev/null)
 [ -z "${raw//[[:space:]]/}" ] && emit "$raw"
 GATE="$SCRIPT_DIR/voxtype_pp_gate_run.py"
 
@@ -203,7 +254,7 @@ GATE="$SCRIPT_DIR/voxtype_pp_gate_run.py"
 # Captured at record start by voxtype-toggle.sh (the toggle, F9 and command
 # mode all start there), so it is the window the hotkey went down in, not
 # whichever one has focus now. Older than 20 minutes is a previous take.
-TARGET="$RT/target_window"
+
 cls=""; title=""; kpid=""
 SCREEN_RAW=""
 DRAFT_RAW=""
@@ -218,7 +269,7 @@ PP_PRIVATE_GUARD=$(sed -n 's/^PP_PRIVATE_GUARD=\([01]\).*/\1/p' "$CONF/postproce
 if [ "${PP_NO_HISTORY:-0}" != 1 ]; then
   age=99999
   [ -f "$TARGET" ] && age=$(( $(date +%s) - $(stat -c %Y "$TARGET" 2>/dev/null || echo 0) ))
-  if [ "$age" -le 1200 ]; then
+  if [ -n "$TAKE" ] || [ "$age" -le 1200 ]; then
     win=$(cat "$TARGET" 2>/dev/null)
   else
     win=$(active_window_json)
@@ -236,8 +287,8 @@ if [ "${PP_NO_HISTORY:-0}" != 1 ]; then
 
   # Recover profile when voxtype streaming mode invokes default post_process without profile arg
   if [ "$MODE" = default ]; then
-    pf="$RT/target_profile"
-    if [ -f "$pf" ] && [ $(( $(date +%s) - $(stat -c %Y "$pf" 2>/dev/null || echo 0) )) -le 1200 ]; then
+    pf="$CAPTURE/target_profile"
+    if [ -f "$pf" ] && { [ -n "$TAKE" ] || [ $(( $(date +%s) - $(stat -c %Y "$pf" 2>/dev/null || echo 0) )) -le 1200 ]; }; then
       p_saved=$(cat "$pf" 2>/dev/null || true)
       case "$p_saved" in terminal|chat|command) MODE="$p_saved" ;; agent) MODE=terminal ;; esac
     fi
@@ -255,39 +306,40 @@ if [ "${PP_NO_HISTORY:-0}" != 1 ]; then
   # voxtype-toggle.sh (0 ms on the stop->type path); fall back to live capture
   # when invoked from voxtype's built-in hotkey without voxtype-toggle.sh.
   ctx_json=""
-  SC_CACHE="$RT/take_screen_ctx.json"
-  if [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
-    if [ -f "$SC_CACHE" ] && [ $(( $(date +%s) - $(stat -c %Y "$SC_CACHE" 2>/dev/null || echo 0) )) -le 1200 ]; then
-      ctx_json=$(cat "$SC_CACHE" 2>/dev/null || true)
-    elif [ "$cls" = kitty ] && [ -n "$kpid" ]; then
-      sock="${XDG_RUNTIME_DIR:-/run/user/$UID}/mykitty-$kpid"
-      [ -S "$sock" ] && SCREEN_RAW=$(timeout 0.4 kitten @ --to "unix:$sock" get-text --match state:focused --extent screen 2>/dev/null || true)
-    else
-      ctx_json=$(timeout 0.35 python3 -I "$SCRIPT_DIR/voxtype_screen_ctx.py" "${kpid:-0}" "$cls" "$title" 2>/dev/null || true)
-    fi
-    if [ -n "$ctx_json" ] && ctx_tsv=$(printf '%s' "$ctx_json" | jq -r '[
-      "x" + (if .password then "1" else "0" end),
-      "x" + (.draft // "" | tostring),
-      "x" + (.screen // "" | tostring)
-    ] | @tsv' 2>/dev/null) && [ -n "$ctx_tsv" ]; then
-      IFS=$'\t' read -r AT_SPI_PASSWORD DRAFT_RAW SCREEN_RAW <<<"$ctx_tsv"
-      AT_SPI_PASSWORD="${AT_SPI_PASSWORD#x}"
-      printf -v DRAFT_RAW '%b' "${DRAFT_RAW#x}"
-      printf -v SCREEN_RAW '%b' "${SCREEN_RAW#x}"
-    fi
+  SC_CACHE="$CAPTURE/take_screen_ctx.json"
+  if [ -f "$SC_CACHE" ] && [ $(( $(date +%s) - $(stat -c %Y "$SC_CACHE" 2>/dev/null || echo 0) )) -le 1200 ]; then
+    ctx_json=$(cat "$SC_CACHE" 2>/dev/null || true)
+  else
+    args=()
+    [ "${PP_SCREEN_CONTEXT:-1}" = 1 ] || args+=(--sensitivity-only)
+    ctx_json=$(timeout 0.35 python3 -I "$SCRIPT_DIR/voxtype_screen_ctx.py" "${kpid:-0}" "$cls" "$title" "${args[@]}" 2>/dev/null) || emit_private
   fi
+  if [ -n "$ctx_json" ] && ctx_tsv=$(printf '%s' "$ctx_json" | jq -er 'select(.password | type == "boolean") | [
+    "x" + (if .password then "1" else "0" end),
+    "x" + (.draft // "" | tostring),
+    "x" + (.screen // "" | tostring)
+  ] | @tsv' 2>/dev/null) && [ -n "$ctx_tsv" ]; then
+    IFS=$'\t' read -r AT_SPI_PASSWORD DRAFT_RAW SCREEN_RAW <<<"$ctx_tsv"
+    AT_SPI_PASSWORD="${AT_SPI_PASSWORD#x}"
+    printf -v DRAFT_RAW '%b' "${DRAFT_RAW#x}"
+    printf -v SCREEN_RAW '%b' "${SCREEN_RAW#x}"
+  else
+    emit_private
+  fi
+  if [ "$AT_SPI_PASSWORD" = 1 ]; then emit_private; fi
+  if [ "${PP_SCREEN_CONTEXT:-1}" != 1 ]; then SCREEN_RAW=""; DRAFT_RAW=""; fi
 
   # Selection & fresh (<=15s) clipboard raw text (redacted inside gate prepare)
   if [ "${PP_APP_CONTEXT:-1}" = 1 ] && [ "${PP_SCREEN_CONTEXT:-1}" = 1 ]; then
-    if [ -f "$RT/take_selection" ] && [ $(( $(date +%s) - $(stat -c %Y "$RT/take_selection" 2>/dev/null || echo 0) )) -le 900 ]; then
-      SEL_RAW=$(head -c 600 "$RT/take_selection" 2>/dev/null || true)
+    if [ -f "$CAPTURE/take_selection" ] && [ $(( $(date +%s) - $(stat -c %Y "$CAPTURE/take_selection" 2>/dev/null || echo 0) )) -le 900 ]; then
+      SEL_RAW=$(head -c 600 "$CAPTURE/take_selection" 2>/dev/null || true)
     fi
     if [ "${PP_CLIPBOARD_CONTEXT:-1}" = 1 ]; then
       now_s=$(date +%s)
       need_live_clip=1
-      if [ -f "$RT/take_clip_start" ] && [ $(( now_s - $(stat -c %Y "$RT/take_clip_start" 2>/dev/null || echo 0) )) -le 900 ]; then
+      if [ -f "$CAPTURE/take_clip_start" ] && [ $(( now_s - $(stat -c %Y "$CAPTURE/take_clip_start" 2>/dev/null || echo 0) )) -le 900 ]; then
         start_hash=""
-        IFS= read -r start_hash < "$RT/take_clip_start" || true
+        IFS= read -r start_hash < "$CAPTURE/take_clip_start" || true
         if [ "$start_hash" = secret ] || [ "$start_hash" = empty ]; then
           need_live_clip=0
         elif [ -n "$start_hash" ]; then
@@ -300,13 +352,13 @@ if [ "${PP_NO_HISTORY:-0}" != 1 ]; then
             need_live_clip=0
           elif [ "$start_hash" = "$seen_hash" ] && [ $(( now_s - ${seen_ts:-0} )) -gt 15 ]; then
             need_live_clip=0
-          elif [ -f "$RT/take_clip" ]; then
-            CLIP_RAW=$(head -c 800 "$RT/take_clip" 2>/dev/null || true)
+          elif [ -f "$CAPTURE/take_clip" ]; then
+            CLIP_RAW=$(head -c 800 "$CAPTURE/take_clip" 2>/dev/null || true)
             need_live_clip=0
           fi
         fi
       fi
-      if [ "$need_live_clip" = 1 ] && command -v wl-paste >/dev/null 2>&1; then
+      if [ "$need_live_clip" = 1 ] && [ -z "$TAKE" ] && command -v wl-paste >/dev/null 2>&1; then
         # A password manager marks its copies: they never go to a model. When the
         # types cannot be read in time, the clipboard is not read either.
         cur_clip=""
@@ -321,7 +373,7 @@ if [ "${PP_NO_HISTORY:-0}" != 1 ]; then
           if [ -r "$RT/clip_seen" ]; then
             { IFS= read -r seen_hash || true; IFS= read -r seen_ts || true; } < "$RT/clip_seen"
           fi
-          [ -r "$RT/take_clip_start" ] && IFS= read -r start_hash < "$RT/take_clip_start" || true
+          [ -r "$CAPTURE/take_clip_start" ] && IFS= read -r start_hash < "$CAPTURE/take_clip_start" || true
           if [ "$cur_hash" != "$self_hash" ]; then
             if [ "$cur_hash" != "$seen_hash" ]; then
               (umask 077; printf '%s\n%s\n' "$cur_hash" "$now_s" > "$RT/clip_seen")
@@ -339,7 +391,7 @@ fi
 
 # Single Python call runs private check, strip, snippet, hard_apply, app/screen/draft/sel/clip redaction, terms, and hints
 # The text goes through the environment, never argv (readable in /proc).
-PREP_JSON=$(PPX_RAW="$raw" PPX_TITLE="$title" PPX_SCREEN="$SCREEN_RAW" PPX_DRAFT="$DRAFT_RAW" \
+if PREP_JSON=$(PPX_RAW="$raw" PPX_TITLE="$title" PPX_SCREEN="$SCREEN_RAW" PPX_DRAFT="$DRAFT_RAW" \
   PPX_SEL="$SEL_RAW" PPX_CLIP="$CLIP_RAW" jq -nc \
   --arg mode "$MODE" --arg cls "$cls" \
   --argjson app_ctx "$([ "${PP_APP_CONTEXT:-1}" = 1 ] && echo true || echo false)" \
@@ -349,9 +401,10 @@ PREP_JSON=$(PPX_RAW="$raw" PPX_TITLE="$title" PPX_SCREEN="$SCREEN_RAW" PPX_DRAFT
   '{raw:$ENV.PPX_RAW, mode:$mode, cls:$cls, title:$ENV.PPX_TITLE, screen_raw:$ENV.PPX_SCREEN,
     draft_raw:$ENV.PPX_DRAFT, sel_raw:$ENV.PPX_SEL, clip_raw:$ENV.PPX_CLIP, app_ctx:$app_ctx, screen_ctx:$screen_ctx,
     private_guard:$private_guard, atspi_password:$atspi_password}' \
-  | python3 -I "$GATE" prepare 2>/dev/null || true)
-
-if [ -n "$PREP_JSON" ] && prep_tsv=$(printf '%s' "$PREP_JSON" | jq -r '[
+  | python3 -I "$GATE" prepare 2>/dev/null) && prep_tsv=$(printf '%s' "$PREP_JSON" | jq -ers '
+  select(length == 1) | .[0] | select((.private_why | type == "string") and
+    (.private_why != "" or .empty == true or (.snippet | type == "string") or
+      ([.heard, .hard, .hard_framed] | all(type == "string")))) | [
   "x" + (.private_why // "" | tostring),
   "x" + (if .empty then "1" else "0" end),
   "x" + (if .snippet != null then "1" else "0" end),
@@ -376,12 +429,8 @@ if [ -n "$PREP_JSON" ] && prep_tsv=$(printf '%s' "$PREP_JSON" | jq -r '[
   has_snip="${has_snip#x}"
   printf -v snip_hit '%b' "${snip_hit#x}"
   if [ -n "$why" ]; then
-    printf '%s  private  %s: typed as heard, not sent or kept\n' "$(date +%T)" "$why" >> "$PP_LOG"
-    date +%s > "$RT/pp_private"
-    rm -f "$RT/last_take.wav"
-    VIA=private
-    [ "$MODE" = command ] && emit ""
-    emit "$raw"
+    printf '%s  private  %s\n' "$(date +%T)" "$why" >> "$PP_LOG"
+    emit_private
   fi
   if [ "$prep_empty" = 1 ]; then
     emit ""
@@ -403,18 +452,16 @@ if [ -n "$PREP_JSON" ] && prep_tsv=$(printf '%s' "$PREP_JSON" | jq -r '[
   printf -v PP_SCREEN_TERMS '%b' "${PP_SCREEN_TERMS#x}"
   printf -v HINTS '%b' "${HINTS#x}"
 else
-  NUMBERS_ONLY=0
-  HEARD="$raw"
-  RAW_FRAMED="$raw"
-  PP_TITLE_PAIR=""; APP=""; SCREEN=""; DRAFT=""; SEL_CTX=""; CLIP_CTX=""; PP_SCREEN_TERMS=""; HINTS=""
+  emit_private
 fi
 [ -z "${raw//[[:space:]]/}" ] && emit "$raw"
 export PP_TITLE_PAIR PP_SCREEN_TERMS
 
+if private_marker; then emit_private; fi
 # The OSD pill shows this while "Polishing" (the watcher clears it at idle).
 # A streamed take already put what you saw there: keep it, it is what the
 # pill marks the cleanup's changes against.
-[ "${PP_NO_HISTORY:-0}" = 1 ] || [ -s "$RT/live_text" ] || printf '%s\n' "$raw" 2>/dev/null >"$RT/live_text"
+! current_take || [ "${PP_NO_HISTORY:-0}" = 1 ] || [ -s "$RT/live_text" ] || printf '%s\n' "$raw" 2>/dev/null >"$RT/live_text"
 
 # A single word or a numbers-only take has nothing for an LLM to improve (and raw digits sent to one only risk corruption).
 words=$(wc -w <<< "$raw")
@@ -562,7 +609,7 @@ SEL=""
 if [ "$MODE" = command ]; then
   STREAM=0
   export PP_MAXTOK=4096 PP_MAXTOK_LOCAL=4096
-  f="$RT/command_selection"
+  f="$CAPTURE/command_selection"
   if [ -f "$f" ] && [ $(( $(date +%s) - $(stat -c %Y "$f" 2>/dev/null || echo 0) )) -le 1200 ]; then
     SEL=$(cat "$f")
   fi
@@ -828,6 +875,7 @@ try_openrouter() {
 }
 
 for provider in $PP_ORDER; do
+    if private_marker; then emit_private; fi
     left=$(remain_sec)
     if awk -v l="$left" 'BEGIN{exit !(l+0 < 0.8)}'; then
         printf '%s  budget  left=%ss  skip %s\n' "$(date +%T)" "$left" "$provider" >> "$PP_LOG"

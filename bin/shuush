@@ -56,7 +56,7 @@ Usage:
   shuush wire [--dry-run]  Set [output.post_process], profiles & OSD in config.toml (voxtype config set) and record the old values
   shuush wire --status     Which wired keys are still as Shuush set them
   shuush unwire [--dry-run]  Put every wired key back as it was before
-  shuush recover           Bring back the last cancelled take (needs a voxtype with `record recover`)
+  shuush recover           Copy the latest recovered text, or bring back a cancelled take
   shuush build-wtype [--check|--dry-run]  Build the patched wtype (fast, exact typing) into ~/.local/bin
   shuush wire-config       Same as wire (kept for the installer and old scripts)
 EOF
@@ -195,11 +195,22 @@ unwire_config() {
 
 # The daemon's own binary, so `record recover` talks to the build that can answer it.
 recover() {
+  local rt take dir
+  rt="${XDG_RUNTIME_DIR:-/run/user/$UID}/voxtype"
+  take=$(cat "$rt/take_id" 2>/dev/null || true)
+  if [[ "$take" =~ ^[0-9]+$ ]] && python3 -I "$LIBEXEC/shuush_caps.py" has take_identity take_recovery; then
+    dir="$rt/takes/$take"
+    if [ ! -e "$dir/pp_private" ] && [ "$(cat "$dir/disposition" 2>/dev/null)" = recovered ] && [ -s "$dir/recovered.txt" ]; then
+      wl-copy < "$dir/recovered.txt" || exit 1
+      notify-send -a Voxtype "Recovered dictation copied" >/dev/null 2>&1 || true
+      exit 0
+    fi
+  fi
   if ! python3 -I "$LIBEXEC/shuush_caps.py" has record_recover; then
     echo "This voxtype has no 'record recover' (the companion fork does); nothing to bring back." >&2
     exit 3
   fi
-  exec "$(python3 -I "$LIBEXEC/shuush_caps.py" bin)" record recover
+  exec "$(python3 -I "$LIBEXEC/shuush_caps.py" bin)" record recover >/dev/null 2>&1
 }
 
 cmd="${1:-help}"

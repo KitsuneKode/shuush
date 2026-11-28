@@ -128,7 +128,9 @@ def test_toggle_hold_transcribing_starts_when_queue_pid_live(tmp_path: Path) -> 
     fake_bin.mkdir()
     log = tmp_path / "voxtype.log"
     _setup_toggle_shims(fake_bin, log)
-    env = _sandbox_env(tmp_path, fake_bin, {"FAKE_SCHEMA": FORK_SCHEMA})
+    tagged = _write_exec(fake_bin / "voxtype-tagged",
+                         (ROOT / "tests/fixtures/fake-voxtype").read_text() + "\n# VOXTYPE_TAKE_ID\n")
+    env = _sandbox_env(tmp_path, fake_bin, {"FAKE_SCHEMA": FORK_SCHEMA, "SHUUSH_VOXTYPE_BIN": str(tagged)})
     rt = tmp_path / "rt/voxtype"
     (rt / "state").write_text("transcribing\n", encoding="utf-8")
     pid = str(os.getpid())
@@ -170,10 +172,9 @@ def test_toggle_hold_transcribing_respects_voxtype_queue_flag(tmp_path: Path) ->
 
     res = subprocess.run([str(LIBEXEC / "voxtype-toggle.sh"), "hold"], env=env, capture_output=True, text=True)
     assert res.returncode == 0
-    assert "record start" in log.read_text(encoding="utf-8")
+    assert not log.exists()
 
     # Explicit VOXTYPE_QUEUE=0 overrides live queue_pid
-    log.unlink()
     pid = str(os.getpid())
     (rt / "pid").write_text(pid + "\n", encoding="utf-8")
     (rt / "queue_pid").write_text(pid + "\n", encoding="utf-8")
@@ -235,7 +236,7 @@ fi
         fake_bin / "wl-copy",
         f'#!/usr/bin/env bash\nprintf "%s\\n" "$*" >> "{copy_log}"\n',
     )
-    _write_exec(fake_bin / "hyprctl", "#!/usr/bin/env bash\nexit 1\n")
+    _write_exec(fake_bin / "hyprctl", '#!/bin/sh\n[ "$1" = activewindow ] && cat "$XDG_RUNTIME_DIR/voxtype/target_window"\n')
 
     dump_file = tmp_path / "messages.json"
     if dump_file.exists():

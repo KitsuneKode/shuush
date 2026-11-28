@@ -208,6 +208,7 @@ def plan(pp_cmd: str) -> list[dict]:
         {"key": "output.post_process.timeout_ms", "value": 20000},
         # Keep the leading space smart join adds (Shuush trims the model's own).
         {"key": "output.post_process.trim", "value": False},
+        {"key": "output.post_process.fallback_on_empty", "value": False},
         {"key": "osd.style", "value": "kitsune-hud"},
         # Left alone when you already chose one.
         {"key": "osd.frontend", "value": "auto", "seed": True},
