@@ -1,0 +1,32 @@
+[package]
+name = "shuush-ime"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+description = "Shuush's Wayland input method: live words as preedit, the final text in one commit, the focused field's text"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "shuush-ime"
+path = "src/main.rs"
+
+[dependencies]
+libc = "0.2"
+serde_json = "1"
+wayland-client = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "unstable"] }
+wayland-protocols-misc = { version = "0.3", features = ["client"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[dev-dependencies]
+# A private compositor for the protocol test (tests/wayland.rs); never linked into the helper.
+wayland-server = "0.31"
+wayland-protocols = { version = "0.32", features = ["client", "server", "unstable"] }
+wayland-protocols-misc = { version = "0.3", features = ["client", "server"] }

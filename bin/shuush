@@ -58,6 +58,7 @@ Usage:
   shuush unwire [--dry-run]  Put every wired key back as it was before
   shuush recover           Copy the latest recovered text, or bring back a cancelled take
   shuush build-wtype [--check|--dry-run]  Build the patched wtype (fast, exact typing) into ~/.local/bin
+  shuush build-ime [--check|--dry-run]    Build shuush-ime (live preedit, IME commit, field text) into ~/.local/bin
   shuush wire-config       Same as wire (kept for the installer and old scripts)
 EOF
 }
@@ -145,6 +146,11 @@ doctor() {
   check "osd_hud"      '[ -f "$CONF/osd/kitsune-hud/KitsuneHud.qml" ]' "KitsuneHud Quickshell pill installed" "re-run: ./install.sh"
   check "secrets_perm" '[ ! -f "$CONF/secrets.env" ] || [ "$(stat -c %a "$CONF/secrets.env")" = "600" ]' "secrets.env permissions secure (0600)" "chmod 600 $CONF/secrets.env"
   check "no_dup_proxy" '! (systemctl --user is-active --quiet voxtype-llm-proxy.service && systemctl --user is-active --quiet shuush-llm-proxy.service)' "No duplicate LLM proxy service on port 11435" "systemctl --user disable --now voxtype-llm-proxy.service"
+  local pp_ime
+  pp_ime=${PP_IME:-$(sed -n 's/^PP_IME=\([a-z]*\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1 || true)}
+  if [ "$pp_ime" = shuush ]; then
+    check "shuush_ime" 'python3 -I "$LIBEXEC/shuush_caps.py" ime' "shuush-ime input method (PP_IME=shuush)" "shuush build-ime (and a compositor with input-method-v2)"
+  fi
   check "llm_ready"    '[ -f "$CONF/secrets.env" ] || curl -fsS --max-time 1 http://127.0.0.1:11434/api/tags' "LLM provider configured (secrets.env or local Ollama)" "open shuush studio -> Settings -> API keys or enable Offline mode"
 
   local caps_json
@@ -230,6 +236,7 @@ case "$cmd" in
   caps)        exec python3 -I "$LIBEXEC/shuush_caps.py" "$@" ;;
   recover)     recover ;;
   build-wtype) exec "$LIBEXEC/shuush-build-wtype.sh" "$@" ;;
+  build-ime)   exec "$LIBEXEC/shuush-build-ime.sh" "$@" ;;
   -h|--help|help) usage ;;
   *) echo "Unknown command: $cmd" >&2; usage >&2; exit 2 ;;
 esac

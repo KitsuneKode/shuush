@@ -24,6 +24,7 @@ optdepends=(
   'quickshell: KitsuneHud 60fps liquid-glass Wayland waveform pill'
   'ollama: 100% air-gapped local LLM cleanup'
   'libnotify: desktop review notifications'
+  'rust: shuush build-ime (live preedit, input-method commit, field text)'
 )
 provides=('shuush')
 conflicts=('shuush')
@@ -61,6 +62,10 @@ EOF
   # The gate runs on every dictation: ship its bytecode (/usr/lib is not
   # writable at run time, so Python could not cache it there).
   python -m compileall -q -d /usr/lib/shuush/libexec "$pkgdir/usr/lib/shuush/libexec"
+
+  # shuush-ime's source, for `shuush build-ime`.
+  install -dm755 "$pkgdir/usr/lib/shuush/ime"
+  cp -r ime/Cargo.toml ime/Cargo.lock ime/LICENSE ime/src ime/tests "$pkgdir/usr/lib/shuush/ime/"
 
   install -Dm644 osd/kitsune-hud/KitsuneHud.qml "$pkgdir/usr/share/shuush/osd/kitsune-hud/KitsuneHud.qml"
   install -Dm644 osd/kitsune-hud/voxtype-osd.toml "$pkgdir/usr/share/shuush/osd/kitsune-hud/voxtype-osd.toml"

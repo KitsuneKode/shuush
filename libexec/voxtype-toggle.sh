@@ -31,6 +31,35 @@ now_ms() { date +%s%3N; }
 # voxtype does.
 cap() { python3 -I "$SCRIPT_DIR/shuush_caps.py" has "$@" 2>/dev/null; }
 
+# Shuush's own input method (PP_IME=shuush in postprocess.env or the
+# environment; off by default): shuush-ime binds for the take, shows the live
+# words as preedit, takes the final text in one commit and reads the field.
+# It needs the daemon's own `[output] preedit` and `read_field` off, which
+# `shuush wire` does while PP_IME=shuush. Prints the helper when it is on.
+ime_bin() {
+    local on="${PP_IME:-}"
+    [ -n "$on" ] || on=$(sed -n 's/^PP_IME=\([a-z]*\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
+    [ "$on" = shuush ] || return 1
+    python3 -I "$SCRIPT_DIR/shuush_caps.py" ime 2>/dev/null
+}
+
+# Started from here so that it lives only for the take: its parent is a
+# subshell that waits for it (the toggle itself execs voxtype and is gone),
+# and --pdeathsig ends it with that parent. It exits by itself once the take
+# is delivered or cancelled and the field it went into loses focus.
+start_ime() {  # take dir
+    local ime live=()
+    ime=$(ime_bin) || return 0
+    # The fork's preview file has the words as they are heard; a private
+    # take shows none.
+    if [ ! -e "$2/pp_private" ] && cap streaming_preview; then live=(--live auto); fi
+    if command -v setpriv >/dev/null 2>&1; then
+        setpriv --pdeathsig TERM -- "$ime" serve --take "$1" "${live[@]}"
+    else
+        "$ime" serve --take "$1" "${live[@]}"
+    fi
+}
+
 # Queued dictation (voxtype-fork, [audio] queue_dictations): allow a new hold
 # take while the previous one is still transcribing. Only on a daemon that has
 # the feature and an active queue_pid. VOXTYPE_QUEUE=0 opts out.
@@ -66,6 +95,9 @@ polishing_now() {
     [ ! -e "$rt/current_capture" ] || cap take_identity || exit 0
     # This path skips the cleanup script, so the script will not clear the border.
     "$SCRIPT_DIR/voxtype-outline.sh" off >/dev/null 2>&1 || true
+    # voxtype types the raw text now: the live words leave the field first.
+    local ime
+    if ime=$(ime_bin); then "$ime" end >/dev/null 2>&1 || true; fi
     exec voxtype record stop --no-post-process
 }
 
@@ -199,6 +231,7 @@ start() {  # [profile]
     else
         rm -f "$rt/take_id"
     fi
+    ( start_ime "$take" "$dir"; : ) 9>&- </dev/null >/dev/null 2>&1 &
     # Keep stopped/cancelled captures out of the runtime directory long term.
     find "$rt/takes" -mindepth 1 -maxdepth 1 -type d -name '[0-9]*' -mmin +1440 -exec rm -rf -- {} + 9>&- </dev/null >/dev/null 2>&1 &
     if [ -n "$profile" ]; then

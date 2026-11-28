@@ -7,6 +7,8 @@ umask 077
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
 MODE="${1:-default}"     # invoked as: voxtype-postprocess.sh [default|terminal|chat|command]
+PROFILE_ARG=""           # set when voxtype ran a [profiles.*] command (see deliver)
+case "${1:-default}" in default) ;; *) PROFILE_ARG="$1" ;; esac
 T0=$(date +%s%3N)
 raw=$(cat)
 RT="${XDG_RUNTIME_DIR:-/run/user/$UID}/voxtype"
@@ -85,6 +87,45 @@ if [ -n "$TAKE" ] || [ -f "$TARGET" ]; then STREAM=0; fi
 
 current_take() {
   [ -z "$TAKE" ] || [ "$TAKE" = "$(cat "$RT/current_capture" 2>/dev/null)" ]
+}
+
+# Shuush's own input method (PP_IME=shuush, off by default; the toggle starts
+# shuush-ime for the take). Only a running helper is used: its socket is there.
+IME=""
+IME_TAKE=""
+pp_ime="${PP_IME:-}"
+[ -n "$pp_ime" ] || pp_ime=$(sed -n 's/^PP_IME=\([a-z]*\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
+if [ "$pp_ime" = shuush ] && [ "${PP_NO_HISTORY:-0}" != 1 ] && [ -S "${XDG_RUNTIME_DIR:-/run/user/$UID}/shuush/ime.sock" ]; then
+  IME="${SHUUSH_IME_BIN:-$(command -v shuush-ime 2>/dev/null || printf '%s' "$HOME/.local/bin/shuush-ime")}"
+  [ -x "$IME" ] || IME=""
+  IME_TAKE="${TAKE:-$(cat "$RT/current_capture" 2>/dev/null)}"
+  [[ "$IME_TAKE" =~ ^[0-9]+$ ]] || IME_TAKE=""
+fi
+
+# The live words leave the field before voxtype types anything; the helper
+# answers once the compositor has removed them.
+ime_end() {
+  [ -n "$IME" ] || return 0
+  "$IME" end ${IME_TAKE:+--take "$IME_TAKE"} </dev/null >/dev/null 2>&1 || true
+}
+
+# The final text: into the field in one input-method commit when that is
+# safe, else on stdout for voxtype to type. The commit needs a daemon that
+# takes an empty answer as "nothing to type" (handoff, with
+# fallback_on_empty = false in config.toml); voxtype's [profiles.*] commands
+# always fall back to the transcript, and command mode edits a selection.
+deliver() {
+  if [ -n "$IME" ]; then
+    if [ -n "$IME_TAKE" ] && [ -z "$PROFILE_ARG" ] && [ "$MODE" != command ] && [ "$VIA" != private ] \
+       && grep -qE '^[[:space:]]*fallback_on_empty[[:space:]]*=[[:space:]]*false' "$CONF/config.toml" 2>/dev/null \
+       && cap handoff \
+       && printf '%s' "$1" | "$IME" commit --take "$IME_TAKE" >/dev/null 2>&1; then
+      printf '%s  ime commit  %dB\n' "$(date +%T)" "${#1}" >> "$PP_LOG"
+      return 0
+    fi
+    ime_end
+  fi
+  printf '%s' "$1"
 }
 
 active_window_json() {
@@ -187,13 +228,14 @@ emit() {
     disposition=private_not_inserted
   fi
   if [ -n "$disposition" ]; then
+    ime_end
     if [ "$disposition" = recovered ] && [ -n "${VOXTYPE_TAKE_ID:-}" ]; then
       printf '%s' "$text" > "$CAPTURE/recovered.tmp.$$" && mv "$CAPTURE/recovered.tmp.$$" "$CAPTURE/recovered.txt" || disposition=failed
     fi
     [ -z "$TAKE" ] || [ "$CAPTURE" = "$RT" ] || printf '%s\n' "$disposition" > "$CAPTURE/disposition"
     if [ -n "$message" ] && { [ -z "${VOXTYPE_TAKE_ID:-}" ] || ! current_take; }; then notify-send -a Voxtype "$message" </dev/null >/dev/null 2>&1 & fi
   else
-    [ "$STREAMED" = 1 ] || printf '%s' "$text"
+    [ "$STREAMED" = 1 ] || deliver "$text"
   fi
   if current_take; then
     if [ "$VIA" != private ] && [ "$MODE" != command ] && [ -n "$text" ]; then
@@ -239,7 +281,7 @@ emit_private() {
     # The legacy fork watches mtime after postprocess starts.
     date +%s > "$RT/pp_private"
     if [ -n "$TAKE" ] && [ "$CAPTURE" != "$RT" ]; then : > "$CAPTURE/pp_private"; fi
-    if cap read_field || cap preedit; then : > "$RT/field_text.off"; fi
+    if [ -n "$IME" ] || cap read_field || cap preedit; then : > "$RT/field_text.off"; fi
     rm -f "$RT/field_text.json" "$RT/last_take.wav"
   fi
   if [ "$MODE" = command ] || [ "$(cat "$CAPTURE/target_profile" 2>/dev/null)" = command ] || [ "$BAD_ID" = 1 ]; then emit ""; fi
@@ -734,6 +776,7 @@ stream_call() {  # url key body
     printf '%s' "$3" > "$SDIR/body"
     printf '%s' "$raw" > "$SDIR/raw"
     rm -f "$SDIR/final" "$SDIR/final.printed"
+    ime_end
     PP_KEY="$2" python3 -I "$SCRIPT_DIR/voxtype_pp_stream.py" "$1" "$SDIR/body" "$SDIR/raw" "$SDIR/final" \
         2>>"$PP_LOG"
     STREAM_RC=$?

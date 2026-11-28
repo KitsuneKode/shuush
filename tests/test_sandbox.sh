@@ -70,13 +70,18 @@ test -f "$TMP1/.config/voxtype/osd/kitsune-hud/KitsuneHud.qml"
 test -f "$TMP1/.local/share/applications/shuush-studio.desktop"
 test -f "$TMP1/.config/systemd/user/shuush-llm-proxy.service"
 test -f "$TMP1/.config/systemd/user/shuush-live-osd.service"
+test -f "$TMP1/.local/share/shuush/ime/Cargo.lock" && test -f "$TMP1/.local/share/shuush/ime/src/main.rs"
+test ! -e "$TMP1/.local/share/shuush/ime/target"
+{ HOME="$TMP1" "$TMP1/.local/bin/shuush" build-ime --dry-run --prefix "$TMP1/out" || true; } \
+  | grep -q "source   $TMP1/.local/share/shuush/libexec/../ime (shuush-ime"
+test ! -e "$TMP1/out"
 grep -q '\[output\.post_process\]' "$TMP1/.config/voxtype/config.toml"
 grep -q '\[profiles\.terminal\]' "$TMP1/.config/voxtype/config.toml"
 grep -q '\[profiles\.command\]' "$TMP1/.config/voxtype/config.toml"
 grep -q 'style = "kitsune-hud"' "$TMP1/.config/voxtype/config.toml"
 grep -q '"box type" = "voxtype"' "$TMP1/.config/voxtype/config.toml"
 ls "$TMP1/.config/voxtype/config.toml.bak."* >/dev/null
-ok "Fresh install + --wire-config preserves existing TOML and backs up config"
+ok "Fresh install + --wire-config preserves existing TOML and backs up config; shuush-ime's source ships for build-ime"
 
 HOME="$TMP1" XDG_CONFIG_HOME="$TMP1/.config" XDG_DATA_HOME="$TMP1/.local/share" XDG_STATE_HOME="$TMP1/.local/state" \
   "$ROOT/install.sh" --uninstall >/dev/null
