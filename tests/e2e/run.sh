@@ -18,6 +18,9 @@
 # or media. Exit status: 0 when every scenario passed, 1 when any failed, 2
 # when the world could not be built.
 set -u
+# Nothing in the world may leave a core dump on the owner's machine (they are systemd-coredump'd
+# and raise a desktop alert): the limit is inherited by every process the world starts.
+ulimit -c 0
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 KEEP=0; NETNS=1; REPORT_DIR=""; LIST=0; ONLY=()

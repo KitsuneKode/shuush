@@ -169,6 +169,13 @@ SHIM
     e2e_spawn dbus dbus-daemon --session --address="unix:path=$E2E_RUN/bus" --nofork --nopidfile >/dev/null
     e2e_wait "dbus" 5 test -S "$E2E_RUN/bus" || die "private dbus did not start"
 
+    # --- the accessibility bus (AT-SPI): without it libatspi aborts the interpreter, so it is
+    # started for real; voxtype_screen_ctx.py also checks for it and says "unknown" without it.
+    if [ -x /usr/lib/at-spi-bus-launcher ]; then
+        e2e_spawn atspi /usr/lib/at-spi-bus-launcher --launch-immediately
+        e2e_wait "the a11y bus" 8 bash -c "ls $E2E_RUN/at-spi/bus* >/dev/null 2>&1 || ls $E2E_RUN/at-spi >/dev/null 2>&1" || log "no a11y bus: the screen context says unknown"
+    fi
+
     # --- the fake endpoints ------------------------------------------------------
     mkdir -p "$E2E_ROOT/pages"
     cp "$E2E_DIR/apps/"* "$E2E_ROOT/pages/" 2>/dev/null || true

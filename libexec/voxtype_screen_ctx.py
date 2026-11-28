@@ -41,6 +41,44 @@ EDITABLE_ROLES = {"entry", "text", "document-web", "document-frame", "document-t
 SKIP_SUBTREE_ROLES = {"page-tab-list", "menu-bar", "menu", "scroll-bar", "tool-bar"}
 
 
+def atspi_ready() -> bool:
+    """Whether libatspi has an accessibility bus to talk to, asked without libatspi.
+
+    With no bus, libatspi does not return an error: _atspi_bus() calls g_error() and the
+    interpreter aborts (SIGABRT, a core dump and a "python crashed" alert on the desktop).
+    So the bus is looked for first, through Gio, which fails with an exception instead:
+    AT_SPI_BUS_ADDRESS when it is set, else the session bus's org.a11y.Bus.GetAddress, and
+    a connection to the address it gives. SHUUSH_NO_ATSPI=1 says there is none."""
+    if os.environ.get("SHUUSH_NO_ATSPI") == "1":
+        return False
+    try:
+        import gi
+        gi.require_version("Gio", "2.0")
+        from gi.repository import Gio, GLib
+        addr = os.environ.get("AT_SPI_BUS_ADDRESS", "").strip()
+        if not addr:
+            # No session bus to ask: Gio would try to autolaunch one.
+            sess = os.environ.get("DBUS_SESSION_BUS_ADDRESS", "").strip()
+            if not sess:
+                return False
+            conn = Gio.DBusConnection.new_for_address_sync(
+                sess, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+            try:
+                res = conn.call_sync("org.a11y.Bus", "/org/a11y/bus", "org.a11y.Bus", "GetAddress", None,
+                                     GLib.VariantType("(s)"), Gio.DBusCallFlags.NONE, 300, None)
+                addr = res.unpack()[0]
+            finally:
+                conn.close_sync(None)
+        if not addr:
+            return False
+        a11y = Gio.DBusConnection.new_for_address_sync(
+            addr, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+        a11y.close_sync(None)
+        return True
+    except Exception:
+        return False
+
+
 def _safe_text(node, atspi_text, max_chars: int = 800) -> str:
     try:
         tif = node.get_text_iface()
@@ -155,8 +193,12 @@ def _roots(Atspi, pid: int, cls: str, title: str, deadline: float) -> list:
 
 
 def collect(pid: int, cls: str, title: str, budget_s: float = 0.25, max_nodes: int = 500,
-            sensitivity_only: bool = False) -> dict:
+            sensitivity_only: bool = False) -> dict | None:
+    """None when there is no accessibility bus: the field's kind is unknown, and callers
+    treat unknown as private (the same thing the old crash amounted to, minus the crash)."""
     empty = {"password": False, "draft": "", "screen": "", "source": "none"}
+    if not atspi_ready():
+        return None
     try:
         import gi
         gi.require_version("Atspi", "2.0")
@@ -247,6 +289,8 @@ def focused_field(pid: int, cls: str, title: str, budget_s: float = 0.4,
     {"password": True} for a password field, {"text": ...} otherwise, None when
     no focused editable field was found within the budget.
     """
+    if not atspi_ready():
+        return None
     try:
         import gi
         gi.require_version("Atspi", "2.0")
@@ -295,6 +339,8 @@ def main(argv: list[str]) -> int:
     title = argv[3] if len(argv) > 3 else ""
     budget = float(os.environ.get("PP_SCREEN_BUDGET_S", "0.25"))
     res = collect(pid, cls, title, budget_s=budget, sensitivity_only="--sensitivity-only" in argv[4:])
+    if res is None:
+        return 3          # no accessibility bus: no answer, which the privacy guard reads as "unknown"
     sys.stdout.write(json.dumps(res, ensure_ascii=False))
     return 0
 
