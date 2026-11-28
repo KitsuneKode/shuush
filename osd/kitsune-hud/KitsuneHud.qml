@@ -25,10 +25,11 @@
 // from the resolved config (position / margin_px / offset_x / offset_y).
 //
 // Four ways to show a take (pillStyle):
-//   field   words here only where the field can't show them (the default)
+//   ticker  the newest words on one line, on the target window's bottom edge
+//           (inside its corner when maximised); the whole take where the
+//           field can't show it (the default)
+//   field   words here only where the field can't show them
 //   words   every word here, a sliding window of the newest; for preedit off
-//   ticker  the newest few words, on the target window's bottom edge; the
-//           whole take where the field can't show it
 //   status  never words: meter, state and clock; the host shows them elsewhere
 
 import QtQuick
@@ -68,7 +69,7 @@ Item {
     // (~300ms), so retargets start from rest.
     // No system-wide reduced-motion signal on Hyprland; opt in per user.
     // Reduced = opacity/color only, no scale, rise or morph.
-    readonly property bool reducedMotion: Quickshell.env("VOXTYPE_OSD_REDUCED_MOTION") === "1"
+    readonly property bool reducedMotion: Quickshell.env("VOXTYPE_OSD_REDUCED_MOTION") === "1" || hostStill
     // Liquid glass needs the compositor to blur behind the pill (Hyprland:
     // a `layerrule` with blur on and ignore_alpha 0.5 for namespace
     // voxtype-osd). Without it, or with VOXTYPE_OSD_REDUCED_TRANSPARENCY=1,
@@ -81,16 +82,23 @@ Item {
     // host pid file: {"style", "textScale", "target": {address, monitor, x, y,
     // w, h, seam}} in $XDG_RUNTIME_DIR/kuwai/voxtype-pill.json, the target in
     // the monitor's logical pixels; seam is the y of the line the host draws
-    // under the window, when it draws one outside it. Without a host: VOXTYPE_OSD_PILL and
-    // VOXTYPE_OSD_TEXT_SCALE, else the default field style at 1x.
+    // under the window, when it draws one outside it. `glide` is the spring
+    // the host moves its ring with ({stiffness, damping}), so the pill follows
+    // a moving window the same way; `still` is the host's reduced motion.
+    // Without a host: VOXTYPE_OSD_PILL and VOXTYPE_OSD_TEXT_SCALE, else the
+    // default ticker style at 1x.
     readonly property var pillStyles: ["field", "words", "ticker", "status"]
     function _style(v) { return pillStyles.indexOf(String(v)) >= 0 ? String(v) : ""; }
     function _scale(v) { const n = Number(v); return n > 0 ? Math.max(1, Math.min(2, n)) : 0; }
-    readonly property string envStyle: _style(Quickshell.env("VOXTYPE_OSD_PILL")) || "field"
+    readonly property string envStyle: _style(Quickshell.env("VOXTYPE_OSD_PILL")) || "ticker"
     readonly property real envScale: _scale(Quickshell.env("VOXTYPE_OSD_TEXT_SCALE")) || 1
     property string pillStyle: envStyle
     property real textScale: envScale
     property var targetBox: null
+    property bool hostSeen: false
+    property bool hostStill: false
+    property real glideK: 1069
+    property real glideC: 57.5
     FileView {
         id: wishFile
         path: root._runtimeDir.length > 0 ? root._runtimeDir + "/kuwai/voxtype-pill.json" : ""
@@ -100,12 +108,22 @@ Item {
         onLoaded: {
             let w = {};
             try { w = JSON.parse(text() || "{}") || {}; } catch (e) { w = {}; }
-            root.pillStyle = root._style(w.style) || root.envStyle;
-            root.textScale = root._scale(w.textScale) || root.envScale;
+            root.hostSeen = true;
+            root.hostStill = w.still === true;
+            const g = w.glide || {};
+            root.glideK = Number(g.stiffness) > 0 ? Number(g.stiffness) : 1069;
+            root.glideC = Number(g.damping) > 0 ? Number(g.damping) : 57.5;
             const t = w.target;
-            root.targetBox = t && t.w > 0 && t.h > 0 ? t : null;
+            root._moveTo(() => {
+                root.pillStyle = root._style(w.style) || root.envStyle;
+                root.textScale = root._scale(w.textScale) || root.envScale;
+                root.targetBox = t && t.w > 0 && t.h > 0 ? t : null;
+            });
         }
-        onLoadFailed: { root.pillStyle = root.envStyle; root.textScale = root.envScale; root.targetBox = null; }
+        onLoadFailed: {
+            root.hostSeen = false; root.hostStill = false;
+            root._moveTo(() => { root.pillStyle = root.envStyle; root.textScale = root.envScale; root.targetBox = null; });
+        }
     }
     readonly property real ts: textScale
     readonly property bool calmMeter: pillStyle !== "field"
@@ -121,7 +139,51 @@ Item {
         return t.w >= maxCardWidth + 48 && t.h >= 160 * ts
             && t.x >= 0 && t.y >= 0 && t.x + t.w <= width + 1 && t.y + t.h <= height + 1;
     }
-    readonly property int targetInset: Math.round(10 * ts)
+    readonly property int targetInset: Math.round(8 * ts)
+    // How far the pill may reach into the window from the line under it: a
+    // pill at 2x text centred on the line covered a composer's last row.
+    readonly property int seatReach: 8
+    // Where it sits inside a window with no room under it (maximised,
+    // fullscreen): "centre" of the bottom edge, or its "left" or "right"
+    // corner. A chat app's composer and a terminal's prompt both start at
+    // the bottom left or centre, so the right corner covers the least.
+    property string insideSeat: "right"
+
+    // ------------------------------------------------------------------
+    // Glide
+    // When the window moves or the host says something new about it, the
+    // pill keeps its place on screen and glides to the
+    // new one on the host's ring spring: the offset left over springs to
+    // zero, and a new move mid-glide keeps its velocity. Only while the pill
+    // is on a window and showing; reduced motion moves it at once.
+    property real slideX: 0
+    property real slideY: 0
+    property real slideVX: 0
+    property real slideVY: 0
+    readonly property bool sliding: slideX !== 0 || slideY !== 0 || slideVX !== 0 || slideVY !== 0
+    function _moveTo(apply) {
+        const was = onTarget && (active || lingering) && card.opacity > 0;
+        const fromX = card.x, fromY = card.y;
+        apply();
+        if (!was || !onTarget || reducedMotion) { slideX = 0; slideY = 0; slideVX = 0; slideVY = 0; return; }
+        slideX = fromX - Math.round(_cardX(card.width));
+        slideY = fromY - Math.round(_cardY(card.height) + card.dropOffset);
+    }
+    function _slide(dt) {
+        if (reducedMotion) { slideX = 0; slideY = 0; slideVX = 0; slideVY = 0; return; }
+        const k = glideK, c = glideC;
+        let t = Math.min(dt, 0.05), x = slideX, y = slideY, vx = slideVX, vy = slideVY;
+        while (t > 0) {
+            const h = Math.min(t, 0.002);
+            vx += (-k * x - c * vx) * h; x += vx * h;
+            vy += (-k * y - c * vy) * h; y += vy * h;
+            t -= h;
+        }
+        const rest = Math.abs(x) < 0.25 && Math.abs(y) < 0.25 && Math.abs(vx) < 5 && Math.abs(vy) < 5;
+        slideX = rest ? 0 : x; slideY = rest ? 0 : y;
+        slideVX = rest ? 0 : vx; slideVY = rest ? 0 : vy;
+    }
+    FrameAnimation { running: root.sliding; onTriggered: root._slide(frameTime) }
     onPillStyleChanged: { _gateWords(); if (!active && !lingering) maskWords = pillStyle === "words" || pillStyle === "ticker"; }
 
     // ------------------------------------------------------------------
@@ -632,7 +694,7 @@ Item {
             glow = 0;
             _tickPrev = ""; tickOldText = ""; tickFreshText = ""; card.peakTickW = 0;
             maskWords = pillStyle === "words" || pillStyle === "ticker";
-            if (pillStyle === "ticker" && !onTarget) entranceHold.restart();
+            if (pillStyle === "ticker" && hostSeen && !onTarget) entranceHold.restart();
             else entrance.restart();
         }
     }
@@ -961,20 +1023,32 @@ Item {
 
     function _offset(key) { return Number(_cfg(key, 0)) || 0; }
     function _onScreen(v, room) { return Math.max(0, Math.min(room, v)); }
+    function _seated(h) {
+        const t = targetBox, seam = Number(t.seam);
+        return seam > 0 && seam - seatReach + h <= root.height;
+    }
     function _cardX(w) {
-        if (onTarget) return _onScreen(targetBox.x + (targetBox.w - w) / 2, root.width - w);
+        if (onTarget) {
+            const t = targetBox, inside = !_seated(card.height);
+            const x = inside && insideSeat === "left" ? Math.max(0, t.x) + targetInset
+                    : inside && insideSeat === "right" ? Math.min(root.width, t.x + t.w) - targetInset - w
+                    : t.x + (t.w - w) / 2;
+            return _onScreen(x, root.width - w);
+        }
         const x = pos.indexOf("left") >= 0 ? _margin()
                 : pos.indexOf("right") >= 0 ? root.width - w - _margin()
                 : (root.width - w) / 2;
         return _onScreen(x + _offset("offset_x"), root.width - w);
     }
-    // On the target: seated on the host's line under the window, so it
-    // covers the window's last few pixels only; with no room outside the
-    // window (maximised, fullscreen), just inside its bottom edge.
+    // On the target: seated on the host's line under the window, reaching
+    // at most seatReach into it, so it covers the window's last few pixels
+    // only. With no room outside the window (maximised, fullscreen): just
+    // inside its bottom edge, at insideSeat.
     function _cardY(h) {
         if (onTarget) {
-            const seam = Number(targetBox.seam);
-            const y = seam > 0 && seam + h / 2 <= root.height ? seam - h / 2 : targetBox.y + targetBox.h - h - targetInset;
+            const t = targetBox, bottom = t.y + t.h;
+            const y = _seated(h) ? Math.max(Number(t.seam) - h / 2, bottom - seatReach)
+                                 : Math.min(root.height, bottom) - targetInset - h;
             return _onScreen(y, root.height - h);
         }
         const y = atTop ? _margin() : root.height - h - _margin();
@@ -1075,7 +1149,13 @@ Item {
         onTickWChanged: if (root.tickerOn && tickW > peakTickW) peakTickW = tickW
         readonly property real fullW: Math.min(root.maxCardWidth,
                         chrome + (root.hasText ? holdTextW : root.tickerOn ? Math.max(tickW, peakTickW) : status.implicitWidth))
-        readonly property real fullH: Math.max(Math.round(34 * root.ts), (root.hasText ? viewH : status.implicitHeight) + 18)
+        readonly property real fullH: root.pillStyle === "ticker" && !root.hasText ? tickH
+                                    : Math.max(Math.round(34 * root.ts), (root.hasText ? viewH : status.implicitHeight) + 18)
+        // The ticker is one line and its padding at any text size, so at 2x it
+        // still fits under a window without reaching its last row.
+        FontMetrics { id: tickLine; font: transcript.font }
+        FontMetrics { id: statusLine; font: status.font }
+        readonly property real tickH: Math.ceil(Math.max(tickLine.height, statusLine.height, 16 * root.ts)) + 2 * Math.round(6 * root.ts)
         // Open/close morph, Dynamic Island style: 0 is a 12px dot at the
         // pill's centre, 1 the full pill. The contents only fade in over the
         // last 40% so they never ride on a half-grown pill (and the clip below
@@ -1088,8 +1168,8 @@ Item {
         radius: Math.min(height / 2, 18 * root.ts)
         clip: true
         // Whole pixels: fractional centring made edges shimmer between frames.
-        x: Math.round(root._cardX(width))
-        y: Math.round(root._cardY(height) + dropOffset)
+        x: Math.round(root._cardX(width) + root.slideX)
+        y: Math.round(root._cardY(height) + dropOffset + root.slideY)
         property real dropOffset: 0
 
         // Glass: a dark tint over the compositor's blur. 0.58 stays above
@@ -1368,6 +1448,7 @@ Item {
                     : root.tooQuiet ? "Too quiet · speak up"
                     : root.confirmed && root.calmMeter ? (root.destClass.length > 0 && !root.onTarget ? "Typed  ·  " + root.destClass : "Typed")
                     : root.shownLabel
+                textFormat: Text.PlainText
                 font.family: root.uiFont
                 font.pixelSize: Math.round(13 * root.ts)
                 font.weight: Font.Medium
@@ -1416,6 +1497,7 @@ Item {
                         id: tickOld
                         visible: text !== ""
                         text: root.tickOldText
+                        textFormat: Text.PlainText
                         font: transcript.font
                         renderType: Text.NativeRendering
                         color: root.fg
@@ -1424,6 +1506,7 @@ Item {
                         id: tickFresh
                         visible: text !== ""
                         text: root.tickFreshText
+                        textFormat: Text.PlainText
                         font: transcript.font
                         renderType: Text.NativeRendering
                         color: root.fg
