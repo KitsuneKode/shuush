@@ -174,6 +174,9 @@ SHIM
     if [ -x /usr/lib/at-spi-bus-launcher ]; then
         e2e_spawn atspi /usr/lib/at-spi-bus-launcher --launch-immediately
         e2e_wait "the a11y bus" 8 bash -c "ls $E2E_RUN/at-spi/bus* >/dev/null 2>&1 || ls $E2E_RUN/at-spi >/dev/null 2>&1" || log "no a11y bus: the screen context says unknown"
+        # Nothing here is under systemd, so the registry cannot be bus-activated: start it.
+        [ -x /usr/lib/at-spi2-registryd ] && e2e_spawn atspi-registry /usr/lib/at-spi2-registryd
+        sleep 0.3
     fi
 
     # --- the fake endpoints ------------------------------------------------------
