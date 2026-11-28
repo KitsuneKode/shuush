@@ -23,6 +23,13 @@
 // The parent OsdSurface handles visibility (non-idle only) and
 // click-through; this item fills the screen and positions its own card
 // from the resolved config (position / margin_px / offset_x / offset_y).
+//
+// Four ways to show a take (pillStyle):
+//   field   words here only where the field can't show them (the default)
+//   words   every word here, a sliding window of the newest; for preedit off
+//   ticker  the newest few words, on the target window's bottom edge; the
+//           whole take where the field can't show it
+//   status  never words: meter, state and clock; the host shows them elsewhere
 
 import QtQuick
 import Quickshell
@@ -67,6 +74,55 @@ Item {
     // voxtype-osd). Without it, or with VOXTYPE_OSD_REDUCED_TRANSPARENCY=1,
     // the tint goes back to near-solid so text never sits on raw content.
     readonly property bool reducedTransparency: Quickshell.env("VOXTYPE_OSD_REDUCED_TRANSPARENCY") === "1"
+
+    // ------------------------------------------------------------------
+    // Style, text size and target
+    // A host shell that draws this pill (kuwai) states its wishes beside its
+    // host pid file: {"style", "textScale", "target": {address, monitor, x, y,
+    // w, h, seam}} in $XDG_RUNTIME_DIR/kuwai/voxtype-pill.json, the target in
+    // the monitor's logical pixels; seam is the y of the line the host draws
+    // under the window, when it draws one outside it. Without a host: VOXTYPE_OSD_PILL and
+    // VOXTYPE_OSD_TEXT_SCALE, else the default field style at 1x.
+    readonly property var pillStyles: ["field", "words", "ticker", "status"]
+    function _style(v) { return pillStyles.indexOf(String(v)) >= 0 ? String(v) : ""; }
+    function _scale(v) { const n = Number(v); return n > 0 ? Math.max(1, Math.min(2, n)) : 0; }
+    readonly property string envStyle: _style(Quickshell.env("VOXTYPE_OSD_PILL")) || "field"
+    readonly property real envScale: _scale(Quickshell.env("VOXTYPE_OSD_TEXT_SCALE")) || 1
+    property string pillStyle: envStyle
+    property real textScale: envScale
+    property var targetBox: null
+    FileView {
+        id: wishFile
+        path: root._runtimeDir.length > 0 ? root._runtimeDir + "/kuwai/voxtype-pill.json" : ""
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: {
+            let w = {};
+            try { w = JSON.parse(text() || "{}") || {}; } catch (e) { w = {}; }
+            root.pillStyle = root._style(w.style) || root.envStyle;
+            root.textScale = root._scale(w.textScale) || root.envScale;
+            const t = w.target;
+            root.targetBox = t && t.w > 0 && t.h > 0 ? t : null;
+        }
+        onLoadFailed: { root.pillStyle = root.envStyle; root.textScale = root.envScale; root.targetBox = null; }
+    }
+    readonly property real ts: textScale
+    readonly property bool calmMeter: pillStyle !== "field"
+    // The ticker sits on the target window: the take's window, on this
+    // screen, big enough to hold the pill with room around it. Anything else
+    // (a tiny window, one on another monitor, no host) keeps the screen spot.
+    property string targetAddress: ""
+    readonly property string screenName: { const w = root.QsWindow.window; return w && w.screen ? String(w.screen.name) : ""; }
+    readonly property bool onTarget: {
+        const t = targetBox;
+        if (pillStyle !== "ticker" || !t || (t.address && t.address !== targetAddress)) return false;
+        if (t.monitor && screenName && t.monitor !== screenName) return false;
+        return t.w >= maxCardWidth + 48 && t.h >= 160 * ts
+            && t.x >= 0 && t.y >= 0 && t.x + t.w <= width + 1 && t.y + t.h <= height + 1;
+    }
+    readonly property int targetInset: Math.round(10 * ts)
+    onPillStyleChanged: { _gateWords(); if (!active && !lingering) maskWords = pillStyle === "words" || pillStyle === "ticker"; }
 
     // ------------------------------------------------------------------
     // Transcript transport
@@ -290,7 +346,12 @@ Item {
     }
     // Decided only while the take is on: the marker goes after the text
     // lands, and taking that mid-exit would flash the words under the check.
+    // words: every word, no wait (preedit is off there). status: never.
+    // ticker: wordsOk is the expanded form, gated as field is; the ticker
+    // itself shows the newest words in the meantime.
     function _gateWords() {
+        if (pillStyle === "status") { wordsWait.stop(); _askedField = false; wordsOk = false; return; }
+        if (pillStyle === "words") { wordsWait.stop(); _askedField = false; if (active) wordsOk = true; return; }
         if (liveInField) { wordsWait.stop(); _askedField = false; wordsOk = false; return; }
         if (!wordsOk && active && transcriptShown !== "" && !wordsWait.running) wordsWait.restart();
     }
@@ -307,10 +368,13 @@ Item {
         watchChanges: true
         printErrors: false
         onFileChanged: reload()
-        onLoadFailed: root.destClass = ""
+        onLoadFailed: { root.destClass = ""; root.targetAddress = ""; }
         onLoaded: {
             let cls = "";
-            try { cls = JSON.parse(text() || "{}").class || ""; } catch (e) { cls = ""; }
+            let w = {};
+            try { w = JSON.parse(text() || "{}") || {}; } catch (e) { w = {}; }
+            cls = w.class || "";
+            root.targetAddress = String(w.address || "");
             cls = String(cls).trim();
             const name = root._appName(cls);
             root.destClass = name.length > 24 ? name.substring(0, 23) + "…" : name;
@@ -388,7 +452,7 @@ Item {
         _births = births;
         nowMs = Date.now();
     }
-    onTranscriptShownChanged: { _trackWords(transcriptShown); _gateWords(); }
+    onTranscriptShownChanged: { _trackWords(transcriptShown); _gateWords(); if (pillStyle === "ticker") _tick(transcriptShown); }
     Timer { interval: 16; repeat: true; running: root.revealing || (root.highlighting && !root.reducedMotion); onTriggered: root.nowMs = Date.now() }
     // Reduced motion: the marked words hold their tint, then turn plain at once.
     Timer { interval: root.highlightMs; running: root.highlighting && root.reducedMotion; onTriggered: root._changedAt = 0 }
@@ -429,6 +493,35 @@ Item {
         return out + plain;
     }
     onHasTextChanged: if (!hasText) { transcript.resetOverflow(); card.peakTextW = 0; }
+
+    // ------------------------------------------------------------------
+    // Ticker (ticker style)
+    // Only the newest words, one line, the same in every app: it says the
+    // pill hears you without reading the field out twice. Settled words sit
+    // in tickOld; the words of the newest update in tickFresh, which fades in
+    // with a 4px rise while the line glides left by their width (one motion
+    // for the whole update, never a stagger per word). The left edge fades
+    // the oldest words out through a mask. A revised word swaps in place.
+    readonly property bool tickerOn: pillStyle === "ticker" && !hasText && transcriptShown.length > 0 && !cancelArmed
+    property string tickOldText: ""
+    property string tickFreshText: ""
+    property string _tickPrev: ""
+    function _tick(t) {
+        const prev = _tickPrev;
+        _tickPrev = t;
+        const tail = (x, n) => x.length > 0 ? x.split(" ").slice(-n).join(" ") : "";
+        if (prev.length > 0 && t.length > prev.length + 1 && t.indexOf(prev + " ") === 0) {
+            const fresh = t.substring(prev.length + 1);
+            tickFreshText = tail(fresh, 14);
+            tickOldText = tail(prev, Math.max(0, 14 - fresh.split(" ").length));
+            ticker.arrive();
+        } else {
+            tickOldText = tail(t, 14);
+            tickFreshText = "";
+            ticker.still();
+        }
+    }
+    onTickerOnChanged: if (tickerOn) _tick(transcriptShown)
 
     // ------------------------------------------------------------------
     // Session clock
@@ -535,7 +628,12 @@ Item {
             speaking = false;
             micDead = false;
             tick = 0;
-            entrance.restart();
+            bars = [];
+            glow = 0;
+            _tickPrev = ""; tickOldText = ""; tickFreshText = ""; card.peakTickW = 0;
+            maskWords = pillStyle === "words" || pillStyle === "ticker";
+            if (pillStyle === "ticker" && !onTarget) entranceHold.restart();
+            else entrance.restart();
         }
     }
 
@@ -554,7 +652,15 @@ Item {
         changedCount = 0;
         _changedAt = 0;
         level = 0;
+        _tickPrev = ""; tickOldText = ""; tickFreshText = "";
     }
+    // The ticker waits a moment for the host to say where the window is, so
+    // it opens there instead of opening on the screen and jumping.
+    Timer { id: entranceHold; interval: 180; onTriggered: entrance.restart() }
+    onOnTargetChanged: if (onTarget && entranceHold.running) { entranceHold.stop(); entrance.restart(); }
+    // Masked fades (words, ticker): latched at the start of a take, so the
+    // layer never switches while the pill is drawing one.
+    property bool maskWords: pillStyle === "words" || pillStyle === "ticker"
 
     // The output marker and the idle state arrive through separate file
     // watches, in either order; give the marker a moment before deciding.
@@ -643,6 +749,18 @@ Item {
     property bool speaking: false        // VAD with a hold, so it doesn't flap between words
     property bool micDead: false         // nothing but digital silence: muted or wrong source
     property int tick: 0                 // step of the highlight sequence
+    // Calm meter (every style but field): each bar follows its share of the
+    // ripple through an envelope, quick up and slower down, set on the 30Hz
+    // tick with no Behavior on top; the glow behind the bars rides the slow
+    // level. Hex's indicator splits it the same way (its glow follows the
+    // average power, its bloom the peak). Between words the bars settle into
+    // one line that breathes.
+    property var bars: []
+    property real glow: 0
+    // Nothing usable heard three seconds in: signal, but no word and nothing
+    // over the speech line. Said in amber, in place of "Listening".
+    readonly property bool tooQuiet: calmMeter && listening && feeding && !micDead && !speaking
+        && liveText === "" && elapsed >= 3
     readonly property bool feeding: audio !== null && audio.running
     // `lingering`: the exit keeps the scan; without it the idle edge read
     // as "speaking" for a frame and the bars flared to full height.
@@ -692,6 +810,17 @@ Item {
             const r = root.ripple.slice(0, 2 * root.centerBar);
             r.unshift(root.level);
             root.ripple = r;
+            if (root.calmMeter) {
+                const out = [];
+                for (let i = 0; i < root.barCount; i++) {
+                    const d = Math.abs(i - root.centerBar);
+                    const t = (r.length > 2 * d ? r[2 * d] : root.level) * root.profile[d];
+                    const v = root.bars.length === root.barCount ? root.bars[i] : 0;
+                    out.push(v + (t - v) * (t > v ? 0.65 : 0.22));
+                }
+                root.bars = out;
+                root.glow += (root.level - root.glow) * (root.level > root.glow ? 0.35 : 0.08);
+            }
             const now = Date.now();
             root.speaking = now - root.speechAt < 450;
             // Only before the first sound: RNNoise sends exact zeros in every
@@ -731,8 +860,12 @@ Item {
     }
 
     function _barHeight(i) {
-        const maxH = 16, minH = 3;
+        const maxH = 16 * ts, minH = 3;
         if (wasCancelled) return minH;
+        if (calmMeter && (meterMode === "speaking" || meterMode === "listening")) {
+            const b = bars.length === barCount ? bars[i] : 0;
+            return Math.max(minH, Math.min(maxH, minH + b * (maxH - minH)));
+        }
         if (meterMode === "thinking") return _highlighted(i) && !reducedMotion ? 8 : minH;
         if (meterMode === "connecting") return minH;
         const d = Math.abs(i - centerBar);
@@ -794,7 +927,7 @@ Item {
     // toggles on room noise and a flickering label reads as broken.
     function _labelFor(s) {
         const base = s === "transcribing" ? "Polishing" : "Listening";
-        return destClass.length > 0 ? base + "  ·  " + destClass : base;
+        return destClass.length > 0 && !onTarget ? base + "  ·  " + destClass : base;
     }
     readonly property string label: _labelFor(vstate)
     property string shownLabel: label
@@ -811,7 +944,7 @@ Item {
     readonly property string pos: String(_cfg("position", "bottom-center"))
     readonly property bool atTop: pos.indexOf("top") === 0
     function _margin() { return Math.max(0, Number(_cfg("margin_px", 10))); }
-    readonly property int maxCardWidth: Math.min(440, root.width - 2 * _margin())
+    readonly property int maxCardWidth: Math.min(Math.round(440 * ts), root.width - 2 * _margin())
     readonly property int padX: 13
     readonly property int gap: 10
 
@@ -820,7 +953,7 @@ Item {
     // label (different ascent/descent). Instead both sit on one baseline,
     // placed so the CAP height is centered in the pill: baseline = center +
     // capHeight/2 (SF/Inter cap height ≈ 0.70em of the 13px label).
-    readonly property real baselineBelowCenter: 13 * 0.35
+    readonly property real baselineBelowCenter: 13 * ts * 0.35
     function _onBaseline(t) {
         // verticalCenterOffset that puts Text t's baseline on the shared line
         return baselineBelowCenter - (t.baselineOffset - t.implicitHeight / 2);
@@ -829,12 +962,21 @@ Item {
     function _offset(key) { return Number(_cfg(key, 0)) || 0; }
     function _onScreen(v, room) { return Math.max(0, Math.min(room, v)); }
     function _cardX(w) {
+        if (onTarget) return _onScreen(targetBox.x + (targetBox.w - w) / 2, root.width - w);
         const x = pos.indexOf("left") >= 0 ? _margin()
                 : pos.indexOf("right") >= 0 ? root.width - w - _margin()
                 : (root.width - w) / 2;
         return _onScreen(x + _offset("offset_x"), root.width - w);
     }
+    // On the target: seated on the host's line under the window, so it
+    // covers the window's last few pixels only; with no room outside the
+    // window (maximised, fullscreen), just inside its bottom edge.
     function _cardY(h) {
+        if (onTarget) {
+            const seam = Number(targetBox.seam);
+            const y = seam > 0 && seam + h / 2 <= root.height ? seam - h / 2 : targetBox.y + targetBox.h - h - targetInset;
+            return _onScreen(y, root.height - h);
+        }
         const y = atTop ? _margin() : root.height - h - _margin();
         return _onScreen(y + _offset("offset_y"), root.height - h);
     }
@@ -883,7 +1025,7 @@ Item {
         // Held for as long as a transcript is on screen, not just while the
         // clock shows: releasing it at stop widened the wrap area, so words
         // jumped back up a line the moment recording ended.
-        readonly property real trailW: (clock.wanted || root.hasText) ? clock.width + root.gap + 4 : 0
+        readonly property real trailW: (clock.wanted || root.hasText || root.tickerOn) ? clock.width + root.gap + 4 : 0
         readonly property real textMaxW: root.maxCardWidth - 2 * root.padX - meterW - root.gap - trailW
 
         // Targets come from the text's final layout; the ease-out animates the
@@ -896,7 +1038,10 @@ Item {
         // "…", which would feed back into its implicit width (binding loop).
         // (+slack: advanceWidth omits letter-spacing, and a pixel short wraps
         // the last word of a one-line caption.)
-        readonly property real naturalW: Math.ceil(naturalText.advanceWidth + transcript.font.letterSpacing * root.transcriptShown.length) + 2
+        // (The new styles leave a negative spacing alone: advanceWidth has it
+        // already, and taking it off again wrapped the last word of a line.)
+        readonly property real spacingW: transcript.font.letterSpacing * root.transcriptShown.length
+        readonly property real naturalW: Math.ceil(naturalText.advanceWidth + (root.calmMeter ? Math.max(0, spacingW) : spacingW)) + 2
         readonly property real textW: Math.min(naturalW, textMaxW)
         TextMetrics { id: naturalText; font: transcript.font; text: root.transcriptShown }
         // Sized from the lines' real geometry (pitch, textH), not contentHeight:
@@ -922,9 +1067,15 @@ Item {
             return textMaxW;
         }
         readonly property real holdTextW: _tier(Math.max(textW, peakTextW))
+        // The ticker's room: about five words, growing to it, never back.
+        readonly property real tickMaxW: Math.round(180 * root.ts)
+        readonly property real tickW: Math.min(tickMaxW, Math.ceil(tickText.advanceWidth) + 2)
+        TextMetrics { id: tickText; font: transcript.font; text: (root.tickOldText + " " + root.tickFreshText).trim() }
+        property real peakTickW: 0
+        onTickWChanged: if (root.tickerOn && tickW > peakTickW) peakTickW = tickW
         readonly property real fullW: Math.min(root.maxCardWidth,
-                        chrome + (root.hasText ? holdTextW : status.implicitWidth))
-        readonly property real fullH: Math.max(34, (root.hasText ? viewH : status.implicitHeight) + 18)
+                        chrome + (root.hasText ? holdTextW : root.tickerOn ? Math.max(tickW, peakTickW) : status.implicitWidth))
+        readonly property real fullH: Math.max(Math.round(34 * root.ts), (root.hasText ? viewH : status.implicitHeight) + 18)
         // Open/close morph, Dynamic Island style: 0 is a 12px dot at the
         // pill's centre, 1 the full pill. The contents only fade in over the
         // last 40% so they never ride on a half-grown pill (and the clip below
@@ -934,7 +1085,7 @@ Item {
         readonly property real reveal: Math.max(0, Math.min(1, (morph - 0.6) / 0.4))
         width: dot + (fullW - dot) * morph
         height: dot + (fullH - dot) * morph
-        radius: Math.min(height / 2, 18)
+        radius: Math.min(height / 2, 18 * root.ts)
         clip: true
         // Whole pixels: fractional centring made edges shimmer between frames.
         x: Math.round(root._cardX(width))
@@ -1044,10 +1195,50 @@ Item {
                     // The 160ms colour fade gives the thinking scan a short tail.
                     color: root.confirmed ? badge.tone
                          : root._highlighted(index) ? root.shownAccent : Qt.alpha(root.fg, 0.22)
-                    Behavior on height { enabled: !root.confirmed; NumberAnimation { duration: 90; easing.type: Easing.OutCubic } }
+                    opacity: calmLine.on ? 0 : 1
+                    Behavior on opacity { NumberAnimation { duration: 160; easing.type: Easing.BezierSpline; easing.bezierCurve: root.easeOut } }
+                    Behavior on height { enabled: !root.confirmed && !(root.calmMeter && root.listening); NumberAnimation { duration: 90; easing.type: Easing.OutCubic } }
                     Behavior on color  { ColorAnimation  { duration: 160; easing.type: Easing.InOutQuad } }
                 }
             }
+        }
+
+        // Voice glow (calm meter): a soft light behind the bars that rides the
+        // slow level, so loud speech reads at a glance even in the eye's corner.
+        RectangularShadow {
+            anchors.centerIn: meter
+            width: meter.width
+            height: 8 * root.ts
+            radius: height / 2
+            blur: 10
+            color: root.shownAccent
+            opacity: root.calmMeter && root.meterMode === "speaking" && !root.confirmed ? Math.min(0.55, 0.6 * root.glow) : 0
+            visible: opacity > 0.01
+        }
+        // Between words (calm meter) the bars lie down into one line that
+        // breathes, 2.8s a cycle: open and calm, not a blinking bar. A mic that
+        // sends nothing gets a still amber line. Reduced motion: still.
+        Rectangle {
+            id: calmLine
+            readonly property bool on: root.calmMeter && root.listening && root.meterMode === "listening" && !root.wasCancelled
+            property real breath: 0.5
+            SequentialAnimation on breath {
+                running: calmLine.on && !root.micDead && !root.reducedMotion
+                loops: Animation.Infinite
+                NumberAnimation { to: 1; duration: 1400; easing.type: Easing.InOutSine }
+                NumberAnimation { to: 0; duration: 1400; easing.type: Easing.InOutSine }
+            }
+            property real shown: on ? 1 : 0
+            Behavior on shown { NumberAnimation { duration: 160; easing.type: Easing.BezierSpline; easing.bezierCurve: root.easeOut } }
+            readonly property real b: root.micDead || root.reducedMotion ? 0.5 : breath
+            anchors.verticalCenter: meter.verticalCenter
+            anchors.horizontalCenter: meter.horizontalCenter
+            width: meter.width * (0.55 + 0.45 * b)
+            height: 2
+            radius: 1
+            color: root.micDead ? root.warnColor : root.tooQuiet ? root.warnColor : root.fg
+            opacity: shown * (root.micDead ? 0.6 : 0.3 + 0.35 * b)
+            visible: opacity > 0.01
         }
 
         // -- delivered badge ------------------------------------------
@@ -1169,23 +1360,103 @@ Item {
                 Behavior on opacity { NumberAnimation { duration: 120; easing.type: Easing.BezierSpline; easing.bezierCurve: root.easeOut } }
                 // A muted mic or wrong source sends pure digital silence; say
                 // so instead of "Listening" to nothing for the whole take.
-                readonly property bool warn: (root.micDead && root.listening) || root.deliveredRaw
+                readonly property bool warn: (root.micDead && root.listening) || root.deliveredRaw || (root.tooQuiet && !root.wasCancelled && !root.cancelArmed)
                 text: root.wasCancelled ? "Cancelled"
                     : root.cancelArmed ? "Esc again to cancel"
                     : root.deliveredRaw ? "Cleanup failed · typed as heard"
                     : root.micDead && root.listening ? "No mic input"
+                    : root.tooQuiet ? "Too quiet · speak up"
+                    : root.confirmed && root.calmMeter ? (root.destClass.length > 0 && !root.onTarget ? "Typed  ·  " + root.destClass : "Typed")
                     : root.shownLabel
                 font.family: root.uiFont
-                font.pixelSize: 13
+                font.pixelSize: Math.round(13 * root.ts)
                 font.weight: Font.Medium
-                font.variableAxes: root.fontAxes(13, 510)
+                font.variableAxes: root.fontAxes(13 * root.ts, 510)
                 font.letterSpacing: root.track13
                 renderType: Text.NativeRendering
                 color: warn ? root.warnColor : root.fg
                 // The hint shows over a transcript too (it hides for 600ms).
-                opacity: root.cancelArmed ? 0.78 : root.hasText ? 0 : (root.wasCancelled ? 0.55 : 0.78)
+                opacity: root.cancelArmed ? 0.78 : root.hasText || root.tickerOn ? 0 : (root.wasCancelled ? 0.55 : 0.78)
             }
 
+            Item {
+                id: ticker
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.baseline: status.baseline
+                baselineOffset: tickOld.baselineOffset
+                height: tickOld.implicitHeight
+                visible: opacity > 0
+                opacity: root.tickerOn ? (root.polishing && !shimmer.on ? 0.72 : 1.0) : 0
+                Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.BezierSpline; easing.bezierCurve: root.easeOut } }
+                clip: true
+                layer.enabled: root.maskWords
+                layer.effect: MultiEffect { maskEnabled: true; maskSource: tickFade; maskThresholdMin: 0.5; maskSpreadAtMin: 1.0 }
+                property real rise: 1
+                property real shift: 0
+                function arrive() {
+                    arriveAnim.stop();
+                    rise = 0;
+                    shift = root.reducedMotion ? 0 : tickFresh.implicitWidth + tickRow.spacing;
+                    arriveAnim.restart();
+                }
+                function still() { arriveAnim.stop(); shift = 0; rise = 1; }
+                ParallelAnimation {
+                    id: arriveAnim
+                    NumberAnimation { target: ticker; property: "shift"; to: 0; duration: 220; easing.type: Easing.BezierSpline; easing.bezierCurve: root.easeOut }
+                    NumberAnimation { target: ticker; property: "rise"; to: 1; duration: 180; easing.type: Easing.BezierSpline; easing.bezierCurve: root.easeOut }
+                }
+                TextMetrics { id: tickSpace; font: transcript.font; text: " " }
+                Row {
+                    id: tickRow
+                    anchors.right: parent.right
+                    spacing: tickSpace.advanceWidth
+                    transform: Translate { x: ticker.shift }
+                    Text {
+                        id: tickOld
+                        visible: text !== ""
+                        text: root.tickOldText
+                        font: transcript.font
+                        renderType: Text.NativeRendering
+                        color: root.fg
+                    }
+                    Text {
+                        id: tickFresh
+                        visible: text !== ""
+                        text: root.tickFreshText
+                        font: transcript.font
+                        renderType: Text.NativeRendering
+                        color: root.fg
+                        opacity: ticker.rise
+                        transform: Translate { y: root.reducedMotion ? 0 : (1 - ticker.rise) * 4 * root.ts }
+                    }
+                }
+            }
+            // The oldest words leave through the left edge: transparent at the
+            // edge, whole by a fifth of the way in.
+            Item {
+                id: tickFade
+                anchors.fill: ticker
+                layer.enabled: true
+                visible: false
+                Rectangle {
+                    anchors.fill: parent
+                    gradient: Gradient {
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: 0.0; color: tickRow.width > ticker.width + 1 ? "#00ffffff" : "#ffffffff" }
+                        GradientStop { position: Math.min(0.5, 28 * root.ts / Math.max(1, tickFade.width)); color: "#ffffffff" }
+                        GradientStop { position: 1.0; color: "#ffffffff" }
+                    }
+                }
+            }
+
+            // Words and ticker styles: the line leaving the top fades out through
+            // a mask instead of a leading ellipsis (the words keep their places).
+            Item {
+            id: wordsView
+            anchors.fill: parent
+            layer.enabled: root.maskWords
+            layer.effect: MultiEffect { maskEnabled: true; maskSource: wordsFade; maskThresholdMin: 0.5; maskSpreadAtMin: 1.0 }
             Text {
                 id: transcript
                 visible: opacity > 0
@@ -1203,7 +1474,7 @@ Item {
                 readonly property real ell: Math.ceil(ellipsisSlot.advanceWidth) + 2
                 // True while the text is wider than one line. A pure function of
                 // the natural width, so it can't stick across sessions or flap.
-                readonly property bool reserve: card.naturalW > card.textMaxW
+                readonly property bool reserve: !root.maskWords && card.naturalW > card.textMaxW
                 onReserveChanged: forceLayout()
                 // Line geometry as laid out: every line is `pitch` tall, and
                 // the first starts `lead` below the top (proportional spacing
@@ -1224,7 +1495,7 @@ Item {
                     prevLine = -1; prevIndent = 0; prevY = 0;
                 }
                 function _retarget() {
-                    const want = lineCount > 2 ? lineCount - 2 : -1;
+                    const want = !root.maskWords && lineCount > 2 ? lineCount - 2 : -1;
                     if (want === indentLine) return;
                     indentOut.stop(); indentIn.stop();
                     prevLine = indentLine; prevIndent = indent; prevY = indentY;
@@ -1277,8 +1548,8 @@ Item {
                 wrapMode: Text.WordWrap
                 lineHeight: 1.16
                 font.family: root.uiFont
-                font.pixelSize: 14
-                font.variableAxes: root.fontAxes(14, 400)
+                font.pixelSize: Math.round(14 * root.ts)
+                font.variableAxes: root.fontAxes(14 * root.ts, 400)
                 font.letterSpacing: root.track14
                 renderType: Text.NativeRendering
                 color: root.fg
@@ -1294,6 +1565,33 @@ Item {
                 Behavior on y { enabled: card.settled && !root.reducedMotion && root.hasText; NumberAnimation { duration: 240; easing.type: Easing.BezierSpline; easing.bezierCurve: root.easeOut } }
             }
 
+            }
+            Item {
+                id: wordsFade
+                anchors.fill: wordsView
+                layer.enabled: true
+                visible: false
+                readonly property bool scrolled: root.hasText && transcript.y < -transcript.lead - 1
+                readonly property real topH: scrolled ? Math.round(card.lineH) : 0
+                // The top line holds the oldest words, at its left: it fades
+                // in from there over two fifths of its width.
+                Rectangle {
+                    width: parent.width
+                    height: wordsFade.topH
+                    gradient: Gradient {
+                        orientation: Gradient.Horizontal
+                        GradientStop { position: 0.0; color: "#00ffffff" }
+                        GradientStop { position: 0.4; color: "#ffffffff" }
+                        GradientStop { position: 1.0; color: "#ffffffff" }
+                    }
+                }
+                Rectangle {
+                    y: wordsFade.topH
+                    width: parent.width
+                    height: parent.height - y
+                    color: "#ffffffff"
+                }
+            }
             // Lines scrolled out of view leave through a short fade, not a
             // hard clip edge.
             Rectangle {
@@ -1301,7 +1599,7 @@ Item {
                 anchors.left: parent.left
                 anchors.right: parent.right
                 height: 7
-                visible: opacity > 0
+                visible: !root.maskWords && opacity > 0
                 opacity: root.hasText && transcript.y < -transcript.lead - 1 ? 1 : 0
                 Behavior on opacity { NumberAnimation { duration: 140; easing.type: Easing.BezierSpline; easing.bezierCurve: root.easeOut } }
                 gradient: Gradient {
@@ -1386,9 +1684,9 @@ Item {
             // Same size as the label: at 1.6x scale a 12px clock rounded to a
             // baseline ~0.75px above the 13px label even when baseline-anchored.
             // Secondary emphasis comes from opacity, not size.
-            font.pixelSize: 13
+            font.pixelSize: Math.round(13 * root.ts)
             font.weight: Font.Medium
-            font.variableAxes: root.fontAxes(13, 510)
+            font.variableAxes: root.fontAxes(13 * root.ts, 510)
             font.letterSpacing: root.track13
             font.features: { "tnum": 1 }
             renderType: Text.NativeRendering

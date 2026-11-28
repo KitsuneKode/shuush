@@ -65,3 +65,22 @@ post_process_command = "~/.local/share/shuush/libexec/voxtype-postprocess.sh ter
 ```
 
 With the [companion fork](voxtype-fork.md), `streaming = true` under `[output.post_process]` types long dictations sentence by sentence as the cleanup streams (stock voxtype types the whole cleaned text at once).
+
+## The pill
+
+How the KitsuneHud pill shows a take. A shell that draws the pill itself
+(kuwai: Settings → Dictation words) says so in
+`$XDG_RUNTIME_DIR/kuwai/voxtype-pill.json`; without one, set it in the OSD's
+environment:
+
+| `VOXTYPE_OSD_PILL` | While you speak |
+|---|---|
+| `field` (default) | The field shows the words (voxtype's `[output] preedit = true`); the pill shows them only where the field can't, after a short wait for the field's marker. |
+| `words` | Every word in the pill, the newest sliding in and the oldest fading out at the top left. Meant for `preedit = false`, so the words are in one place. |
+| `ticker` | The field shows the words; the pill sits on the line under the target window (just inside it when maximised or fullscreen) with only the newest few. Where the field can't show them it opens to the whole take. Needs a host that knows the window; otherwise it stays at the bottom of the screen. |
+| `status` | The pill never shows words: the level, the state and the time. The host shows a terminal's words in a caption on the window. |
+
+`VOXTYPE_OSD_TEXT_SCALE` (1 to 2) enlarges the pill's text and its room with it.
+Every style but `field` also lays the bars down into one breathing line between
+words, glows behind them with your voice, and says "Too quiet · speak up" in
+amber when three seconds pass with sound but no words.
