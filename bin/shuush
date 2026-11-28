@@ -55,6 +55,8 @@ Usage:
                            Print p50/p90/p95 latency by delivery method, length band and app family
   shuush stats reliability [--days 7] [--json]
                            How many takes were delivered, recovered or failed, per app (history + outcomes)
+  shuush bench [prompts|record|import|models|run]
+                           Offline dictation accuracy benchmark across voxtype models and options
   shuush deliver [serve|status|ping]
                            Manage the Shuush delivery queue worker (PP_DELIVERY=shuush)
   shuush doctor [--json]   Check voxtype, GPU, compositor, Wayland, AT-SPI, services, delivery mode & daemon caps
@@ -273,6 +275,7 @@ case "$cmd" in
   postprocess) exec "$LIBEXEC/voxtype-postprocess.sh" "$@" ;;
   learn)       exec python3 "$LIBEXEC/voxtype_learn.py" "$@" ;;
   stats)       exec python3 -I "$LIBEXEC/shuush_stats.py" "$@" ;;
+  bench)       exec python3 -I "$LIBEXEC/shuush_bench.py" "$@" ;;
   waybar)      exec "$LIBEXEC/voxtype-waybar.sh" "$@" ;;
   last)        exec "$LIBEXEC/voxtype-last.sh" "$@" ;;
   replay)      exec "$LIBEXEC/voxtype-last-audio.sh" "$@" ;;
