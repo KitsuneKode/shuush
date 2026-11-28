@@ -45,7 +45,7 @@ See [models.md](models.md) for which provider to pick.
 |---|---|---|
 | `PP_SMART_JOIN` | `1` | A dictation right after text in the same field gets a leading space, and continues an unfinished sentence in lowercase. Needs `trim = false` under `[output.post_process]` in `config.toml`. |
 | `PP_KEEP_ON_CLIPBOARD` | `1` | Also put each dictation on the clipboard, so it is never lost. `0` leaves your clipboard alone. |
-| `PP_RELEASE_TAIL_MS` | `200` | Keep recording this long after you release push-to-talk, so the last syllable is not clipped. |
+| `PP_RELEASE_TAIL_MS` | `200` | Keep recording this long after you release push-to-talk, so the last syllable is not clipped. Skipped when voxtype-fork's adaptive `release_tail_ms` is set (in `[audio]` or as `VOXTYPE_RELEASE_TAIL_MS`), which does this natively. |
 
 To press Enter after a dictation, end it with the word "submit" and set `smart_auto_submit = true` under `[text]` in `config.toml` (a voxtype feature).
 

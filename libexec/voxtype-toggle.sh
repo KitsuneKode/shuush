@@ -238,11 +238,12 @@ case "$verb" in
             exit 0
         fi
         # Short release tail so the last syllable isn't clipped when lifting off F9.
-        # Skipped automatically if voxtype-fork's native adaptive release_tail_ms is configured.
+        # Skipped when voxtype-fork's native adaptive tail is configured, in its
+        # config file or through its environment variable (VOXTYPE_RELEASE_TAIL_MS
+        # is the daemon's; this script's own length is PP_RELEASE_TAIL_MS).
         CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
-        if ! grep -qE '^\s*release_tail_ms\s*=' "$CONF/config.toml" 2>/dev/null; then
-            tail_ms="${VOXTYPE_RELEASE_TAIL_MS:-}"
-            [ -z "$tail_ms" ] && tail_ms=$(sed -n 's/^PP_RELEASE_TAIL_MS=\([0-9]*\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
+        if [ -z "${VOXTYPE_RELEASE_TAIL_MS:-}" ] && ! grep -qE '^\s*release_tail_ms\s*=' "$CONF/config.toml" 2>/dev/null; then
+            tail_ms=$(sed -n 's/^PP_RELEASE_TAIL_MS=\([0-9]*\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)
             tail_ms="${tail_ms:-200}"
             if [ "$tail_ms" -gt 0 ] 2>/dev/null; then
                 let_go=$(now_ms)
