@@ -252,8 +252,33 @@ grep -q 'style = "kitsune-hud"' "$TMP5/home/.config/voxtype/config.toml"
 bash -n "$ROOT/packaging/aur/shuush-git/PKGBUILD" "$ROOT/packaging/aur/shuush-git/shuush-git.install"
 ok "AUR /usr layout resolves libexec/share cleanly, seeds KitsuneHud + postprocess.env, and PKGBUILD syntax passes"
 
+echo "=== 9. F9 release tail defers to voxtype-fork's native release_tail_ms ==="
+TMP6="$(mktemp -d)"
+mkdir -p "$TMP6/bin" "$TMP6/run/voxtype" "$TMP6/conf/voxtype"
+printf '#!/bin/sh\necho "voxtype $*" >> "%s/calls"\n' "$TMP6" > "$TMP6/bin/voxtype"
+printf '#!/bin/sh\necho "sleep $*" >> "%s/calls"\n' "$TMP6" > "$TMP6/bin/sleep"
+chmod +x "$TMP6/bin/voxtype" "$TMP6/bin/sleep"
+release_calls() {
+  rm -f "$TMP6/calls" "$TMP6/run/voxtype/hold_ignore_release"
+  echo recording > "$TMP6/run/voxtype/state"
+  echo $(( $(date +%s%3N) - 2000 )) > "$TMP6/run/voxtype/hold_start"
+  env PATH="$TMP6/bin:$PATH" XDG_RUNTIME_DIR="$TMP6/run" XDG_CONFIG_HOME="$TMP6/conf" "$@" \
+    bash "$ROOT/libexec/voxtype-toggle.sh" release
+  tr '\n' ';' < "$TMP6/calls"
+}
+[ "$(release_calls env -u VOXTYPE_RELEASE_TAIL_MS)" = "sleep 0.200;voxtype record stop;" ]
+echo 'PP_RELEASE_TAIL_MS=350' > "$TMP6/conf/voxtype/postprocess.env"
+[ "$(release_calls env -u VOXTYPE_RELEASE_TAIL_MS)" = "sleep 0.350;voxtype record stop;" ]
+[ "$(release_calls env VOXTYPE_RELEASE_TAIL_MS=400)" = "voxtype record stop;" ]
+printf '[audio]\nrelease_tail_ms = 400\n' > "$TMP6/conf/voxtype/config.toml"
+[ "$(release_calls env -u VOXTYPE_RELEASE_TAIL_MS)" = "voxtype record stop;" ]
+printf '[audio]\n# release_tail_ms = 400\n' > "$TMP6/conf/voxtype/config.toml"
+echo 'PP_RELEASE_TAIL_MS=0' > "$TMP6/conf/voxtype/postprocess.env"
+[ "$(release_calls env -u VOXTYPE_RELEASE_TAIL_MS)" = "voxtype record stop;" ]
+ok "F9 release sleeps PP_RELEASE_TAIL_MS (default 200) only while the daemon's release_tail_ms is unset in config and environment"
+
 if python3 -m pytest --version >/dev/null 2>&1; then
-  echo "=== 9. Pytest Suite (Queue, Single-jq, WPM, Re-clean, Clipboard Snippet, Inotify OSD) ==="
+  echo "=== 10. Pytest Suite (Queue, Single-jq, WPM, Re-clean, Clipboard Snippet, Inotify OSD) ==="
   python3 -m pytest -q -p no:cacheprovider "$ROOT/tests/test_dictation_pass.py"
   ok "Pytest dictation-pass suite passed"
 fi
