@@ -11,6 +11,11 @@ neither command touches it without --force.
     shuush unwire [--dry-run] [--force] [--json]
     shuush wire --status [--json]
 
+With PP_IME=shuush (postprocess.env or the environment) Shuush's own input
+method helper, shuush-ime, holds the seat during a take, so the daemon's own
+`[output] preedit` and `read_field` are turned off and recorded like every other
+key; with PP_IME off again, `wire` puts them back as they were.
+
 The one exception to `voxtype config set` is `[profiles.*] post_process_command`:
 the binary has no settable key for a profile, so those lines are edited in
 config.toml directly, as exact line operations the manifest can reverse.
@@ -35,6 +40,8 @@ import shuush_caps  # noqa: E402
 MANIFEST_VERSION = 1
 PROFILES = ("terminal", "chat", "command")
 DELIVERY_ONLY_KEYS = ("output.auto_submit", "text.smart_auto_submit", "output.append_text")
+# The daemon's own input method; off while shuush-ime has the seat.
+IME_KEYS = ("output.preedit", "output.read_field")
 HEADER_RE = re.compile(r"^\s*\[([^\]]+)\]\s*(?:#.*)?$")
 
 
@@ -104,6 +111,20 @@ def save_manifest(m: dict) -> None:
 def fmt(v) -> str:
     """The text `voxtype config set` takes for a value."""
     return "true" if v is True else "false" if v is False else str(v)
+
+
+def ime_wanted() -> bool:
+    """PP_IME=shuush in the environment, else in postprocess.env."""
+    v = os.environ.get("PP_IME")
+    if v is None:
+        try:
+            for line in (conf_dir() / "postprocess.env").read_text(encoding="utf-8").splitlines():
+                m = re.match(r"^PP_IME=([a-z]*)", line)
+                if m:
+                    v = m.group(1)
+        except OSError:
+            pass
+    return v == "shuush"
 
 
 def show(v) -> str:
@@ -237,7 +258,7 @@ def toml_update(text: str, section: str, key: str, value: str, entry: dict | Non
 # ── the plan ──────────────────────────────────────────────────────────────────
 
 
-def plan(pp_cmd: str, delivery: str = "daemon") -> list[dict]:
+def plan(pp_cmd: str, delivery: str = "daemon", ime: bool = False) -> list[dict]:
     items = [
         {"key": "output.post_process.command", "value": pp_cmd},
         {"key": "output.post_process.timeout_ms", "value": 20000},
@@ -260,6 +281,8 @@ def plan(pp_cmd: str, delivery: str = "daemon") -> list[dict]:
         ])
     for p in PROFILES:
         items.append({"key": f"profiles.{p}.post_process_command", "value": f"{pp_cmd} {p}", "via": "toml"})
+    if ime:
+        items += [{"key": k, "value": False, "ime": True} for k in IME_KEYS]
     return items
 
 
@@ -311,16 +334,27 @@ def cmd_wire(a) -> int:
         return 1
     delivery = a.delivery or configured_delivery_mode()
     man = load_manifest()
+    ime = ime_wanted()
+    # PP_IME is off again: the daemon's own input method keys go back.
+    giveback = [] if ime else [{"key": k, "via": "voxtype"} for k in IME_KEYS
+                               if man["keys"].get(k, {}).get("via", "voxtype") == "voxtype" and k in man["keys"]]
     try:
         vox = find_voxtype()
-        items = plan(a.command, delivery=delivery)
+        items = plan(a.command, delivery=delivery, ime=ime)
         extra_restore_keys = [k for k in DELIVERY_ONLY_KEYS if delivery != "shuush" and k in man["keys"]]
-        probe_items = list(items) + [{"key": k} for k in extra_restore_keys]
+        probe_items = list(items) + [{"key": k} for k in extra_restore_keys] + giveback
         keys, cur = current_values(vox, probe_items)
     except (RuntimeError, ValueError, KeyError, OSError, subprocess.SubprocessError) as e:
         print(f"shuush wire: {e}", file=sys.stderr)
         return 1
     rows = []
+    for it in giveback:
+        entry = man["keys"][it["key"]]
+        now = cur.get(it["key"])
+        if now == entry["new"] or a.force:
+            rows.append({**it, "action": "restore", "why": "PP_IME is off: back to the daemon", "now": now, "value": entry["old"]})
+        else:
+            rows.append({**it, "action": "skip", "why": f"you changed it to {show(now)} since; --force restores anyway", "now": now, "value": entry["old"]})
     for it in items:
         entry = man["keys"].get(it["key"])
         if it.get("via") != "toml" and it["key"] not in keys:
@@ -367,8 +401,7 @@ def cmd_wire(a) -> int:
     migrated: list[str] = []
     for r in rows:
         if r["action"] == "restore":
-            entry = man["keys"][r["key"]]
-            err = vox.unset(r["key"]) if entry["old"] is None else vox.set(r["key"], entry["old"])
+            err = vox.unset(r["key"]) if r["value"] is None else vox.set(r["key"], r["value"])
             if err:
                 r["action"], r["why"] = "failed", err
                 failed += 1
@@ -416,10 +449,14 @@ def cmd_wire(a) -> int:
                 print(f"  failed {r['key']}: {r['why']}", file=sys.stderr)
             elif r["action"] == "skip":
                 print(f"  skipped {r['key']} ({r['why']})")
-        n = sum(1 for r in rows if r["action"] in ("set", "unset", "restore"))
+        n = sum(1 for r in rows if r["action"] in ("set", "unset"))
+        back = sum(1 for r in rows if r["action"] == "restore")
         print(f"Wired {n} key(s) in {conf_dir() / 'config.toml'} (delivery={delivery}); restore them with 'shuush unwire'.")
+        if back:
+            print(f"Gave {back} key(s) back to the daemon (shuush delivery or PP_IME switched off).")
         if migrated:
             print(f"Carried over to {conf_dir() / 'postprocess.env'}: {', '.join(migrated)}")
+        n += back
         if n:
             print("Restart voxtype for the changes to apply: systemctl --user restart voxtype")
     return 1 if failed else 0

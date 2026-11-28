@@ -17,6 +17,8 @@ Every place that leans on a fork-only feature checks it and does what stock voxt
 
 The patched wtype (fast, exact typing) is built by Shuush now, not by the fork: `shuush build-wtype`, check it with `shuush build-wtype --check`.
 
+The fork's input method (`[output] preedit`, `read_field`) has moved into Shuush as `shuush-ime` (`ime/`, `shuush build-ime`), behind `PP_IME=shuush` (see [configuration](configuration.md#shuushs-input-method-pp_ime-off-by-default)). Reading the field and committing the text work on stock voxtype; the live words need a live-text file, which only the fork writes until upstream's preview file lands.
+
 | Works on stock voxtype | Needs the companion fork |
 |---|---|
 | LLM cleanup and the faithfulness gate | Live text in the focused field while you speak (`[output] preedit`) |

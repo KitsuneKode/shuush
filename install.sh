@@ -28,7 +28,7 @@ if [ "$UNINSTALL" = 1 ]; then
   if [ -s "${XDG_CONFIG_HOME:-$HOME/.config}/shuush/wired.json" ]; then
     echo "Note: config.toml still has the keys 'shuush wire' set; 'shuush unwire' puts them back (run it first next time)."
   fi
-  rm -f "$BIN_DIR/shuush" "$BIN_DIR/shuush-studio" "$APP_DIR/shuush-studio.desktop" \
+  rm -f "$BIN_DIR/shuush" "$BIN_DIR/shuush-studio" "$BIN_DIR/shuush-ime" "$APP_DIR/shuush-studio.desktop" \
         "$UNIT_DIR/shuush-llm-proxy.service" "$UNIT_DIR/shuush-live-osd.service" \
         "$UNIT_DIR/shuush-deliver.service"
   rm -rf "$PREFIX"
@@ -50,6 +50,11 @@ for f in "$SRC/libexec/"*; do
       install -m 0644 "$f" "$PREFIX/libexec/$base" ;;
   esac
 done
+
+# shuush-ime's source, for `shuush build-ime` (optional; built on demand with cargo).
+rm -rf "$PREFIX/ime"
+mkdir -p "$PREFIX/ime"
+cp -r "$SRC/ime/Cargo.toml" "$SRC/ime/Cargo.lock" "$SRC/ime/LICENSE" "$SRC/ime/src" "$SRC/ime/tests" "$PREFIX/ime/"
 
 ln -sfn "$PREFIX/bin/shuush" "$BIN_DIR/shuush"
 cat > "$BIN_DIR/shuush-studio" <<EOF

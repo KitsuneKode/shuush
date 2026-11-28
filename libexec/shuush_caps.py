@@ -10,11 +10,20 @@ re-asked only when the binary changes.
     shuush-caps                  the whole answer as JSON
     shuush-caps has CAP...       exit 0 when every CAP is on, 1 when one is off,
                                  2 for a name nobody knows
-    shuush-caps sensitive        exit 0 for a present sensitive-field marker on a supporting or unknown build
+    shuush-caps sensitive        exit 0 for a present sensitive-field marker on a supporting or unknown build,
+                                 or while shuush-ime (which writes it too) is running
     shuush-caps list             one line per capability
     shuush-caps bin              the daemon's binary
+    shuush-caps ime              Shuush's input method helper, when it can work here
+                                 (exit 1 when it is not installed or the compositor lacks
+                                 input-method-v2)
     shuush-caps --refresh        ignore the cache and probe again
     shuush-caps --bin PATH       probe this binary instead of finding the daemon's
+
+Shuush's own helpers are capabilities too (HELPER_CAPS): `shuush_ime` is on when
+shuush-ime is installed and the compositor offers input-method-v2. That is asked
+with `shuush-ime probe`, which reads the compositor's registry and binds nothing,
+and cached by the helper's path, size and mtime and the Wayland display.
 
 The binary is run for `--version`, `config schema --json` and `--help` only,
 never as a daemon, with an empty throwaway config directory so that nothing of
@@ -73,6 +82,11 @@ CAPS: dict[str, tuple[str, str]] = {
     "sensitive_field": ("mark:sensitive_field", "runtime marker for password and sensitive fields"),
     "take_recovery": ("mark:recovered.txt", "target-loss recovery file in the identified take directory"),
     "delivered_marker": ("mark:output_done", "output_done marker (the fork's; outcome.json is the stock one)"),
+}
+
+# Capabilities of the helpers Shuush ships, not of the daemon.
+HELPER_CAPS: dict[str, str] = {
+    "shuush_ime": "shuush-ime: field text and the input-method commit (shuush build-ime; PP_IME=shuush)",
 }
 
 
@@ -284,12 +298,65 @@ def capabilities(binary: str | None = None, refresh: bool = False) -> dict:
     return doc
 
 
+def ime_binary() -> str | None:
+    """shuush-ime: SHUUSH_IME_BIN, else PATH, else ~/.local/bin (where build-ime puts it)."""
+    env = os.environ.get("SHUUSH_IME_BIN")
+    dirs = os.environ.get("PATH", "").split(os.pathsep) + [str(Path.home() / ".local" / "bin")]
+    for p in [env] if env else [os.path.join(d or ".", "shuush-ime") for d in dirs]:
+        if p and os.path.isfile(p) and os.access(p, os.X_OK):
+            return p
+    return None
+
+
+def ime_works(refresh: bool = False) -> tuple[str | None, bool]:
+    """(helper, whether the compositor offers input-method-v2), cached."""
+    binary = ime_binary()
+    if not binary:
+        return None, False
+    try:
+        st = os.stat(binary)
+    except OSError:
+        return None, False
+    key = {"binary": binary, "size": st.st_size, "mtime_ns": st.st_mtime_ns,
+           "display": os.environ.get("WAYLAND_DISPLAY", "")}
+    path = cache_path().with_name("ime-caps.json")
+    if not refresh:
+        try:
+            c = json.loads(path.read_text())
+            if isinstance(c, dict) and {k: c.get(k) for k in key} == key and isinstance(c.get("ok"), bool):
+                return binary, c["ok"]
+        except (OSError, ValueError):
+            pass
+    try:
+        rc = subprocess.run([binary, "probe"], capture_output=True, timeout=3,
+                            stdin=subprocess.DEVNULL).returncode
+    except (OSError, subprocess.SubprocessError):
+        return binary, False
+    ok = rc == 0
+    # Exit 0 offers it, 1 lacks it; anything else (no Wayland now) is not cached.
+    if rc in (0, 1):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(f"{path.name}.{os.getpid()}")
+            tmp.write_text(json.dumps({**key, "ok": ok}))
+            os.replace(tmp, path)
+        except OSError:
+            pass
+    return binary, ok
+
+
+def helper_caps(refresh: bool = False) -> dict[str, bool]:
+    return {"shuush_ime": ime_works(refresh)[1]}
+
+
 def has(names: list[str], binary: str | None = None) -> int:
-    unknown = [n for n in names if n not in CAPS]
+    unknown = [n for n in names if n not in CAPS and n not in HELPER_CAPS]
     if unknown:
         print(f"shuush-caps: unknown capability {unknown[0]}", file=sys.stderr)
         return 2
-    caps = capabilities(binary)["caps"]
+    caps = capabilities(binary)["caps"] if any(n in CAPS for n in names) else {}
+    if any(n in HELPER_CAPS for n in names):
+        caps = {**caps, **helper_caps()}
     return 0 if all(caps.get(n) for n in names) else 1
 
 
@@ -297,6 +364,10 @@ def main(argv: list[str]) -> int:
     if argv == ["sensitive"]:
         if not (runtime_dir() / "voxtype" / "sensitive_field").exists():
             return 1
+        # shuush-ime writes the marker too, on any daemon, and removes it
+        # when it exits: while its socket is there, the marker is its.
+        if (runtime_dir() / "shuush" / "ime.sock").exists():
+            return 0
         doc = capabilities()
         return 0 if not doc["probe_ok"] or doc["caps"]["sensitive_field"] else 1
     refresh = False
@@ -323,6 +394,12 @@ def main(argv: list[str]) -> int:
             return 1
         print(b)
         return 0
+    if args and args[0] == "ime":
+        helper, ok = ime_works(refresh)
+        if not (helper and ok):
+            return 1
+        print(helper)
+        return 0
     if args and args[0] == "has":
         if len(args) < 2:
             print("usage: shuush-caps has CAP...", file=sys.stderr)
@@ -331,8 +408,10 @@ def main(argv: list[str]) -> int:
             capabilities(binary, refresh=True)
         return has(args[1:], binary)
     doc = capabilities(binary, refresh=refresh)
+    doc["caps"].update(helper_caps(refresh))
     if args and args[0] == "list":
-        for name, (_, what) in CAPS.items():
+        rows = [(name, what) for name, (_, what) in CAPS.items()] + list(HELPER_CAPS.items())
+        for name, what in rows:
             print(f"{'on ' if doc['caps'][name] else 'off'}  {name:<22} {what}")
         return 0
     if args:

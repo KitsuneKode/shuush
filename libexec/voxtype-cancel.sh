@@ -36,6 +36,13 @@ fi
 rm -f "$RT/cancel_armed" "$RT/handsfree" "$RT/command_selection"
 echo "$now" > "$RT/cancelled"
 "$SCRIPT_DIR/voxtype-outline.sh" off >/dev/null 2>&1 || true
+# Shuush's input method (PP_IME=shuush): the live words leave the field and
+# the seat is let go now.
+CONF="${XDG_CONFIG_HOME:-$HOME/.config}/voxtype"
+pp_ime=${PP_IME:-$(sed -n 's/^PP_IME=\([a-z]*\).*/\1/p' "$CONF/postprocess.env" 2>/dev/null | tail -1)}
+if [ "$pp_ime" = shuush ] && ime=$(python3 -I "$SCRIPT_DIR/shuush_caps.py" ime 2>/dev/null); then
+  "$ime" release >/dev/null 2>&1 || true
+fi
 python3 -I "$SCRIPT_DIR/shuush_deliver.py" cancel >/dev/null 2>&1 || true
 if [ "$deliver_active" = 1 ]; then
   exit 0

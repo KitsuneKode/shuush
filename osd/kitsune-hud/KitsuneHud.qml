@@ -365,7 +365,8 @@ Item {
     }
     property bool sensitiveField: true
     property bool privateTake: false
-    readonly property bool checkSensitive: capabilities !== null && capabilities.sensitive_field !== false
+    // The daemon's own marker, or shuush-ime's (PP_IME=shuush), on any daemon.
+    readonly property bool checkSensitive: capabilities !== null && (capabilities.sensitive_field !== false || capabilities.shuush_ime === true)
     readonly property bool hideWords: capabilities === null || (checkSensitive && sensitiveField) || privateTake
     FileView {
         id: sensitiveFile

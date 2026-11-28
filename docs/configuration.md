@@ -37,7 +37,7 @@ See [models.md](models.md) for which provider to pick.
 | Setting | Default | What it does |
 |---|---|---|
 | `PP_AUTO_LEARN` | `1` | A mishearing seen twice is learned automatically (with guards against ordinary English words). Seen once, it waits in Studio's **Learning Inbox**. |
-| `PP_WATCH_EDITS` | `1` | For a few minutes after a take, a name you fix by hand in that field counts as a mishearing. Reads the field through AT-SPI, or through voxtype's input method when you run the [companion fork](voxtype-fork.md) with `read_field = true` or `preedit = true` under `[output]` (that also covers Electron apps). |
+| `PP_WATCH_EDITS` | `1` | For a few minutes after a take, a name you fix by hand in that field counts as a mishearing. Reads the field through AT-SPI, or through an input method (that also covers Electron apps): Shuush's own (`PP_IME=shuush`, below), or the [companion fork](voxtype-fork.md)'s with `read_field = true` or `preedit = true` under `[output]`. |
 
 ## Typing
 
@@ -64,6 +64,19 @@ By default (`PP_DELIVERY=daemon`), `voxtype-postprocess.sh` prints the cleaned t
 | `PP_APPEND_TEXT` | `""` | Append a suffix string to every delivered take (replaces `[output] append_text`). |
 
 Switching on: set `PP_DELIVERY=shuush` in `~/.config/voxtype/postprocess.env`, run `shuush wire`, enable `systemctl --user enable --now shuush-deliver.service`, and restart `voxtype`. Switching off: set `PP_DELIVERY=daemon` and run `shuush wire` (which restores any `auto_submit`, `smart_auto_submit`, and `append_text` keys from `~/.config/shuush/wired.json`). `shuush doctor` shows which mode is active, and `shuush stats latency` prints per-stage p50/p90/p95 latency breakdowns.
+
+### Shuush's input method (`PP_IME`, off by default)
+
+`PP_IME=shuush` hands the focused field to `shuush-ime`, a small helper Shuush starts for each take (build it with `shuush build-ime`; check it with `shuush build-ime --check`). It needs a compositor with input-method-v2 (Hyprland, Sway, niri) and a field with text-input-v3; anywhere else the take is typed as before.
+
+- It binds as the input method only while a take is live, and for up to two minutes after on the field the text went into (so smart join and learning from your fixes can read it), then exits. At rest it is not running, so fcitx5 or ibus keep the seat. A seat they already hold means typing, as without it.
+- With the companion fork's live text (`streaming_preview_file = "auto"`), the words heard so far show underlined in the field, the last ~240 bytes of them; `live_in_field` tells the pill to leave them out. A password or PIN field never shows them: `sensitive_field` appears instead and the take is private.
+- The final text goes into the field in one input-method commit, with no keys typed, when the daemon takes an empty answer as "nothing to type" (`fallback_on_empty = false`, which `shuush wire` sets). Text with newlines, a `terminal` / `chat` / `command` profile take and a private take are typed as before, after the live words are gone.
+- It reads the field into `field_text.json`, like the fork's `read_field`, also in Electron apps.
+
+Turn it on with `PP_IME=shuush` in `postprocess.env`, then `shuush wire` and `systemctl --user restart voxtype`: wire turns the daemon's own `[output] preedit` and `read_field` off (two input methods cannot share a seat) and records them; with `PP_IME` off again, `shuush wire` gives them back.
+
+To press Enter after a dictation, end it with the word "submit" and set `smart_auto_submit = true` under `[text]` in `config.toml` (a voxtype feature).
 
 ## In `config.toml`
 
