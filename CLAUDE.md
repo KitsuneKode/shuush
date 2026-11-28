@@ -5,7 +5,7 @@
 Shuush is an MIT-licensed Linux/Wayland intelligence, context, safety, and UI layer built on top of `voxtype` (and optionally enhanced by the companion `~/Projects/voxtype-fork` build).
 
 ### Repository Layout
-- `bin/shuush` — User CLI (`studio`, `doctor`, `caps`, `wire` / `unwire`, `recover`, `build-wtype`, `build-ime`, `toggle`, `learn`, `services`, `uninstall`)
+- `bin/shuush` — User CLI (`studio`, `doctor`, `caps`, `wire` / `unwire`, `recover`, `build-wtype`, `build-ime`, `toggle`, `learn`, `bench`, `services`, `uninstall`)
 - `ime/` — `shuush-ime`, the only compiled part (Rust; libc, serde_json, wayland-rs): the fork's input method as a helper the toggle starts for a take (`PP_IME=shuush`, off by default). Live words as preedit from a live-text source, the final text in one commit, `field_text.json`, `live_in_field` / `sensitive_field`. Control socket `$XDG_RUNTIME_DIR/shuush/ime.sock`; exits when idle. Test with `cargo test` (fakes and a private in-process compositor, never the live seat) and `cargo clippy --all-targets`
 - `install.sh` — Zero-sudo installer & live-sync script (`~/.local/share/shuush`, `~/.local/bin/shuush`, systemd user services, KitsuneHud OSD)
 - `libexec/`
@@ -13,6 +13,7 @@ Shuush is an MIT-licensed Linux/Wayland intelligence, context, safety, and UI la
   - `shuush_wire.py` — `shuush wire` / `unwire` / `wire --status`: writes Shuush's keys with `voxtype config set`, records old and new values in `~/.config/shuush/wired.json`, restores them exactly. Never hand-edit config.toml (profiles are the one exception: voxtype has no settable profile key)
   - `shuush-build-wtype.sh` + `wtype-key-gap.patch` — build/check the patched wtype
   - `shuush-build-ime.sh` — build/check `shuush-ime` (`cargo build --release --locked`, into `~/.local/bin`)
+  - `shuush_bench.py` / `shuush_bench_data.py` — `shuush bench`: read-aloud prompts, `record`/`import`/`public` clips, `run` (offline `voxtype transcribe` per model and option set, scored for WER, names, numbers, negations, last-word loss, peak VRAM; `--cleanup` only on request), `models` (Hex/voxtype candidates). Docs: `docs/accuracy-bench.md`. Never runs the daemon, never writes `~/.config/voxtype`
   - `voxtype-toggle.sh` — Push-to-talk / tap-for-handsfree / command-mode launcher; captures target window, primary selection, clipboard baseline, and background AT-SPI/kitty screen+draft context at record start
   - `voxtype-postprocess.sh` — Cleanup pipeline (`[output.post_process]`), DATA-framed prompt, failover chain (`local`, `groq`, `groq2`, `cerebras`, `opencode`, `openrouter`), budget control, streaming support, clipboard leak guard, and history/review dispatch
   - `voxtype_pp_gate.py` — Single-call deterministic `prepare` batch (privacy guard, hallucination strip, snippets, sure-name `hard_apply`, secret redaction, XML tag neutralization, screen terms, hints), anti-paraphrase span gate (`constrain` / `constrain-check` with negation, digit, numeric-value, and first-person invariants), vocabulary `finish`, and `fallback_clean`

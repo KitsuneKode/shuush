@@ -19,7 +19,10 @@ class BenchPrompt:
     is_question: bool = False
 
 
-# 42 short read-aloud prompts across 6 categories (7 per category).
+# 42 read-aloud prompts across 7 categories. Word, number, negation and
+# question mix follows the owner's takes (35% carry a negation, 10% a digit,
+# 11% are questions; median 32 words), minus anything private: only terms
+# from the public part of vocabulary.txt (tools, products, public brands).
 PROMPTS: tuple[BenchPrompt, ...] = (
     # --- names (7): desktop, compositor, tools, AI & web brands ---
     BenchPrompt(
@@ -31,19 +34,19 @@ PROMPTS: tuple[BenchPrompt, ...] = (
     BenchPrompt(
         id="names-02",
         category="names",
-        text="Compare voxtype with Parakeet against Wispr Flow on long coding dictations.",
+        text="I am comparing voxtype with Parakeet against Wispr Flow on long coding dictations.",
         terms=("voxtype", "Parakeet", "Wispr Flow"),
     ),
     BenchPrompt(
         id="names-03",
         category="names",
-        text="Open Ghostty and attach kittymux before launching T3 Code on Omarchy.",
+        text="Open Ghostty, attach kittymux, and launch T3 Code on Omarchy before I forget.",
         terms=("Ghostty", "kittymux", "T3 Code", "Omarchy"),
     ),
     BenchPrompt(
         id="names-04",
         category="names",
-        text="Ask Devin, Codex, and Claude Code to review the kuwai pull request.",
+        text="Ask Devin and Codex to review the kuwai pull request, then tell Claude Code what they found.",
         terms=("Devin", "Codex", "Claude Code", "kuwai"),
     ),
     BenchPrompt(
@@ -94,12 +97,6 @@ PROMPTS: tuple[BenchPrompt, ...] = (
         category="code_terms",
         text="AT-SPI reads focused draft text unless systemd restarts the accessibility bus.",
         terms=("AT-SPI", "systemd"),
-    ),
-    BenchPrompt(
-        id="code-06",
-        category="code_terms",
-        text="Create isolated git worktrees so parallel agents never touch the same branch.",
-        terms=("worktrees",),
     ),
     BenchPrompt(
         id="code-07",
@@ -187,12 +184,6 @@ PROMPTS: tuple[BenchPrompt, ...] = (
         text="It isn't a Whisper bug; neither CUDA nor Vulkan dropped the final word.",
         terms=("Whisper", "CUDA", "Vulkan"),
     ),
-    BenchPrompt(
-        id="neg-07",
-        category="negations",
-        text="Please don't push the commit yet because I haven't reviewed the diff.",
-        terms=(),
-    ),
     # --- last_word (7): end-of-utterance truncation & clipping traps ---
     BenchPrompt(
         id="last-01",
@@ -223,12 +214,6 @@ PROMPTS: tuple[BenchPrompt, ...] = (
         category="last_word",
         text="Attach the background session right inside kittymux.",
         terms=("kittymux",),
-    ),
-    BenchPrompt(
-        id="last-06",
-        category="last_word",
-        text="Save the JSON summary as soon as we finish the benchmark.",
-        terms=(),
     ),
     BenchPrompt(
         id="last-07",
@@ -279,12 +264,31 @@ PROMPTS: tuple[BenchPrompt, ...] = (
         terms=("Shuush",),
         is_question=True,
     ),
+    # --- long (4): the owner's median take is 32 words; these run 30-45 ---
     BenchPrompt(
-        id="q-07",
-        category="questions",
-        text="What is the WER difference between fp16 and fp32 on 25 clips?",
-        terms=("WER",),
+        id="long-01",
+        category="long",
+        text="The plan for tonight is to record every prompt once, run each model on the same clips, and then decide whether Parakeet is still the right default.",
+        terms=("Parakeet",),
+    ),
+    BenchPrompt(
+        id="long-02",
+        category="long",
+        text="I dictated a long paragraph yesterday and the last sentence lost its final word, and after I paused for a second the next one started without its first two words.",
+        terms=(),
+    ),
+    BenchPrompt(
+        id="long-03",
+        category="long",
+        text="Can you check whether the pull request touches the post process script? Another agent is changing it, so leave a comment instead of fixing it.",
+        terms=(),
         is_question=True,
+    ),
+    BenchPrompt(
+        id="long-04",
+        category="long",
+        text="The review is on Thursday afternoon, about 12 people are coming, the budget is 4500 dollars, and nobody should forward the invite until Codex finishes the checks.",
+        terms=("Codex",),
     ),
 )
 
@@ -295,260 +299,172 @@ PROMPT_CATEGORIES: tuple[str, ...] = (
     "negations",
     "last_word",
     "questions",
+    "long",
 )
 
 
 @dataclass(frozen=True)
 class ModelCandidate:
-    """One ASR model candidate from Hex / voxtype with 6 GB VRAM guidance."""
+    """One ASR model: where it runs, what it costs on a 6 GB card, how to fetch it.
+
+    Names, sizes and licences come from voxtype's own registries (`voxtype info
+    models --json`, src/setup/model.rs); `hex_wer` is the figure Hex's catalog
+    publishes (LibriSpeech test-clean unless `hex_note` says otherwise), shown
+    for orientation only: it is not measured here and not on the owner's speech.
+    """
 
     id: str
     display_name: str
-    hex_model: bool
-    engine: str
-    model_ref: str          # Model name/filename in ~/.local/share/voxtype/models/
-    backend: str            # "onnx-cuda", "whisper-cuda", "whisper-vulkan", "gguf-vulkan", "unsupported"
-    binary_kind: str        # "fork", "stock-vulkan", "both", "rebuild", "unsupported"
+    engine: str             # voxtype engine: parakeet | whisper | cohere | gguf | unsupported
+    model_ref: str          # file or directory name inside the models dir
+    runner: str             # "fork" (CUDA ONNX), "vulkan" (stock voxtype-vulkan + gguf worker), "none"
     disk_mb: int
-    vram_gb: str            # Estimated GPU VRAM footprint (or "CPU / N/A")
-    fits_6gb: str           # "yes", "tight", "no", "n/a"
-    supports_streaming: bool
-    supports_vocab_bias: str  # "rescore", "initial_prompt", "none"
-    fetch_cmd: str
-    notes: str
+    vram_est: str           # estimate; `bench run` measures the real peak for what it runs
+    fits_6gb: str           # "yes" | "tight" | "no"
+    vocab: str              # "rescore" (fork acoustic rescoring) | "prompt" (whisper initial_prompt) | "none"
+    fetch_name: str         # the value for `voxtype setup --download --model`
+    license: str = ""
+    hex_wer: float | None = None
+    hex_note: str = ""
+    notes: str = ""
     gguf_arch: str = ""
     language: str = "en"
+    streaming_pipeline: bool = False  # fork cache-aware streaming decode (final pass, pad, rescoring)
 
 
-# Ordered by relevance for English dictation on a 6 GB NVIDIA RTX 4050 Laptop GPU.
+# Ordered by how likely each is to beat the daily driver for English dictation
+# on a 6 GB NVIDIA laptop GPU. The desktop itself holds ~1.2 GB of the 6.
 MODEL_CATALOG: tuple[ModelCandidate, ...] = (
     ModelCandidate(
         id="parakeet-unified-fp16",
-        display_name="Parakeet Unified EN 0.6B (fp16 ONNX)",
-        hex_model=True,
-        engine="parakeet",
-        model_ref="parakeet-unified-en-0.6b-fp16",
-        backend="onnx-cuda",
-        binary_kind="fork",
-        disk_mb=1255,
-        vram_gb="~2.3 GB",
-        fits_6gb="yes",
-        supports_streaming=True,
-        supports_vocab_bias="rescore",
-        fetch_cmd="Already installed (~/.local/share/voxtype/models/parakeet-unified-en-0.6b-fp16)",
-        notes="Current daily driver; streaming + final pass + fork acoustic vocabulary rescoring.",
+        display_name="Parakeet Unified EN 0.6B (fp16 ONNX, CUDA)",
+        engine="parakeet", model_ref="parakeet-unified-en-0.6b-fp16", runner="fork",
+        disk_mb=1255, vram_est="~2.3 GB", fits_6gb="yes", vocab="rescore",
+        fetch_name="(installed; fp16 conversion of parakeet-unified-en-0.6b)",
+        hex_wer=1.60,
+        notes="The daily driver: streaming preview, whole-recording final pass, pad, acoustic vocabulary rescoring.",
+        streaming_pipeline=True,
     ),
     ModelCandidate(
         id="parakeet-unified-fp32",
-        display_name="Parakeet Unified EN 0.6B (fp32 ONNX)",
-        hex_model=True,
-        engine="parakeet",
-        model_ref="parakeet-unified-en-0.6b",
-        backend="onnx-cuda",
-        binary_kind="fork",
-        disk_mb=2456,
-        vram_gb="~3.3 GB",
-        fits_6gb="yes",
-        supports_streaming=True,
-        supports_vocab_bias="rescore",
-        fetch_cmd="voxtype setup --download --model parakeet-unified-en-0.6b",
-        notes="Full-precision reference weights for Parakeet Unified; +1.0 GB VRAM over fp16.",
-    ),
-    ModelCandidate(
-        id="parakeet-tdt-v2",
-        display_name="Parakeet TDT 0.6B v2 (EN fp32 ONNX)",
-        hex_model=True,
-        engine="parakeet",
-        model_ref="parakeet-tdt-0.6b-v2",
-        backend="onnx-cuda",
-        binary_kind="fork",
-        disk_mb=2400,
-        vram_gb="~3.2 GB",
-        fits_6gb="yes",
-        supports_streaming=False,
-        supports_vocab_bias="none",
-        fetch_cmd="voxtype setup --download --model parakeet-tdt-0.6b-v2",
-        notes="Hex English-only TDT v2; offline batch only (streaming=false, no fork vocab rescoring).",
-    ),
-    ModelCandidate(
-        id="parakeet-tdt-v2-int8",
-        display_name="Parakeet TDT 0.6B v2 (EN int8 ONNX)",
-        hex_model=True,
-        engine="parakeet",
-        model_ref="parakeet-tdt-0.6b-v2-int8",
-        backend="onnx-cuda",
-        binary_kind="fork",
-        disk_mb=640,
-        vram_gb="~1.2 GB",
-        fits_6gb="yes",
-        supports_streaming=False,
-        supports_vocab_bias="none",
-        fetch_cmd="voxtype setup --download --model parakeet-tdt-0.6b-v2-int8",
-        notes="Quantized EN TDT v2; low disk/VRAM footprint; offline batch only.",
-    ),
-    ModelCandidate(
-        id="parakeet-tdt-v3",
-        display_name="Parakeet TDT 0.6B v3 (25 langs fp32 ONNX)",
-        hex_model=True,
-        engine="parakeet",
-        model_ref="parakeet-tdt-0.6b-v3",
-        backend="onnx-cuda",
-        binary_kind="fork",
-        disk_mb=2600,
-        vram_gb="~3.4 GB",
-        fits_6gb="yes",
-        supports_streaming=False,
-        supports_vocab_bias="none",
-        fetch_cmd="voxtype setup --download --model parakeet-tdt-0.6b-v3",
-        notes="Hex multilingual v3; can drift to non-English on short utterances (e.g. 'hello' -> 'Hallo').",
-    ),
-    ModelCandidate(
-        id="parakeet-tdt-v3-int8",
-        display_name="Parakeet TDT 0.6B v3 (25 langs int8 ONNX)",
-        hex_model=True,
-        engine="parakeet",
-        model_ref="parakeet-tdt-0.6b-v3-int8",
-        backend="onnx-cuda",
-        binary_kind="fork",
-        disk_mb=670,
-        vram_gb="~1.3 GB",
-        fits_6gb="yes",
-        supports_streaming=False,
-        supports_vocab_bias="none",
-        fetch_cmd="voxtype setup --download --model parakeet-tdt-0.6b-v3-int8",
-        notes="Quantized multilingual TDT v3; offline batch only.",
+        display_name="Parakeet Unified EN 0.6B (fp32 ONNX, CUDA)",
+        engine="parakeet", model_ref="parakeet-unified-en-0.6b", runner="fork",
+        disk_mb=2660, vram_est="~3.3 GB", fits_6gb="yes", vocab="rescore",
+        fetch_name="parakeet-unified-en-0.6b",
+        hex_wer=1.60,
+        notes="Reference precision for the same model; shows whether fp16 costs accuracy.",
+        streaming_pipeline=True,
     ),
     ModelCandidate(
         id="parakeet-ultra-q8",
-        display_name="Parakeet Ultra Q8_0 (GGUF Vulkan)",
-        hex_model=True,
-        engine="parakeet",
-        model_ref="parakeet-ultra-Q8_0.gguf",
-        backend="gguf-vulkan",
-        binary_kind="stock-vulkan",
-        disk_mb=740,
-        vram_gb="~1.1 GB",
-        fits_6gb="yes",
-        supports_streaming=False,
-        supports_vocab_bias="none",
-        fetch_cmd="/usr/lib/voxtype/voxtype-vulkan setup --download --model parakeet-ultra-Q8_0.gguf",
-        notes="25-language GGUF Parakeet via voxtype-gguf-worker-vulkan; offline only.",
+        display_name="Parakeet Ultra Q8_0 (GGUF, Vulkan)",
+        engine="parakeet", model_ref="parakeet-ultra-Q8_0.gguf", runner="vulkan",
+        disk_mb=740, vram_est="~1.2 GB", fits_6gb="yes", vocab="none",
+        fetch_name="parakeet-ultra-Q8_0.gguf",
+        license="CC-BY-4.0", hex_wer=1.80,
+        notes="Batch only (no streaming preview, no rescoring); half the VRAM of the daily driver.",
     ),
     ModelCandidate(
-        id="whisper-large-v3-turbo",
-        display_name="Whisper large-v3-turbo",
-        hex_model=True,
-        engine="whisper",
-        model_ref="ggml-large-v3-turbo.bin",
-        backend="whisper-vulkan",
-        binary_kind="both",
-        disk_mb=1600,
-        vram_gb="~2.2 GB",
-        fits_6gb="yes",
-        supports_streaming=False,
-        supports_vocab_bias="initial_prompt",
-        fetch_cmd="voxtype setup --download --model large-v3-turbo",
-        notes="Hex pick; reads vocabulary via whisper.initial_prompt. Fast on /usr/lib/voxtype/voxtype-vulkan (fork binary lacks whisper CUDA).",
+        id="parakeet-ultra-q4",
+        display_name="Parakeet Ultra Q4_K_M (GGUF, Vulkan)",
+        engine="parakeet", model_ref="parakeet-ultra-Q4_K_M.gguf", runner="vulkan",
+        disk_mb=486, vram_est="~0.9 GB", fits_6gb="yes", vocab="none",
+        fetch_name="parakeet-ultra-Q4_K_M.gguf",
+        license="CC-BY-4.0", hex_wer=1.80, hex_note="Hex lists the Q8_0 file",
+        notes="Smallest Parakeet Ultra; check the quantisation cost against Q8_0.",
     ),
     ModelCandidate(
         id="cohere-transcribe-q4",
-        display_name="Cohere Transcribe 03-2026 Q4_K_M (GGUF)",
-        hex_model=True,
-        engine="cohere",
-        model_ref="cohere-transcribe-03-2026-Q4_K_M.gguf",
-        backend="gguf-vulkan",
-        binary_kind="stock-vulkan",
-        disk_mb=1558,
-        vram_gb="~2.3 GB",
-        fits_6gb="yes",
-        supports_streaming=False,
-        supports_vocab_bias="none",
-        fetch_cmd="/usr/lib/voxtype/voxtype-vulkan setup --download --model cohere-transcribe-03-2026-Q4_K_M.gguf",
-        notes="Hex 'fewest wrong words' (2B encoder-decoder, 14 langs); runs via /usr/lib/voxtype/voxtype-vulkan + gguf-worker-vulkan.",
+        display_name="Cohere Transcribe 03-2026 Q4_K_M (GGUF, Vulkan)",
+        engine="cohere", model_ref="cohere-transcribe-03-2026-Q4_K_M.gguf", runner="vulkan",
+        disk_mb=1558, vram_est="~2.2 GB", fits_6gb="yes", vocab="none",
+        fetch_name="cohere-transcribe-03-2026-Q4_K_M.gguf",
+        license="Apache-2.0", hex_wer=1.27,
+        notes="Hex's lowest English WER; encoder-decoder, no vocabulary hook; 14 languages.",
     ),
     ModelCandidate(
         id="cohere-transcribe-q8",
-        display_name="Cohere Transcribe 03-2026 Q8_0 (GGUF)",
-        hex_model=True,
-        engine="cohere",
-        model_ref="cohere-transcribe-03-2026-Q8_0.gguf",
-        backend="gguf-vulkan",
-        binary_kind="stock-vulkan",
-        disk_mb=2411,
-        vram_gb="~3.4 GB",
-        fits_6gb="tight",
-        supports_streaming=False,
-        supports_vocab_bias="none",
-        fetch_cmd="/usr/lib/voxtype/voxtype-vulkan setup --download --model cohere-transcribe-03-2026-Q8_0.gguf",
-        notes="Higher-precision Cohere Transcribe GGUF; fits 6 GB alone (~1.1 GB desktop headroom) but tight alongside Ollama.",
+        display_name="Cohere Transcribe 03-2026 Q8_0 (GGUF, Vulkan)",
+        engine="cohere", model_ref="cohere-transcribe-03-2026-Q8_0.gguf", runner="vulkan",
+        disk_mb=2411, vram_est="~3.2 GB", fits_6gb="tight", vocab="none",
+        fetch_name="cohere-transcribe-03-2026-Q8_0.gguf",
+        license="Apache-2.0", hex_wer=1.27,
+        notes="Larger quantisation; ~1.5 GB left beside the desktop, tight next to a running daemon.",
+    ),
+    ModelCandidate(
+        id="whisper-large-v3-turbo",
+        display_name="Whisper large-v3-turbo (ggml, Vulkan)",
+        engine="whisper", model_ref="ggml-large-v3-turbo.bin", runner="vulkan",
+        disk_mb=1600, vram_est="~2.0 GB", fits_6gb="yes", vocab="prompt",
+        fetch_name="large-v3-turbo",
+        license="MIT", hex_wer=2.01,
+        notes="The only candidate that reads the vocabulary at decode time (whisper.initial_prompt); drops words more than Parakeet on short takes.",
+    ),
+    ModelCandidate(
+        id="parakeet-tdt-v2",
+        display_name="Parakeet TDT 0.6B v2 (English, fp32 ONNX, CUDA)",
+        engine="parakeet", model_ref="parakeet-tdt-0.6b-v2", runner="fork",
+        disk_mb=2400, vram_est="~3.2 GB", fits_6gb="yes", vocab="none",
+        fetch_name="parakeet-tdt-0.6b-v2",
+        license="CC-BY-4.0", hex_wer=1.69,
+        notes="Batch decode with the fork's non-streaming transcriber; no rescoring.",
+    ),
+    ModelCandidate(
+        id="parakeet-tdt-v2-int8",
+        display_name="Parakeet TDT 0.6B v2 (English, int8 ONNX)",
+        engine="parakeet", model_ref="parakeet-tdt-0.6b-v2-int8", runner="fork",
+        disk_mb=640, vram_est="~1.2 GB", fits_6gb="yes", vocab="none",
+        fetch_name="parakeet-tdt-0.6b-v2-int8",
+        license="CC-BY-4.0", hex_wer=1.69, hex_note="Hex lists the fp32 export",
+        notes="Cheapest download of the v2 weights.",
+    ),
+    ModelCandidate(
+        id="parakeet-tdt-v3",
+        display_name="Parakeet TDT 0.6B v3 (25 languages, fp32 ONNX)",
+        engine="parakeet", model_ref="parakeet-tdt-0.6b-v3", runner="fork",
+        disk_mb=2600, vram_est="~3.4 GB", fits_6gb="yes", vocab="none",
+        fetch_name="parakeet-tdt-0.6b-v3",
+        license="CC-BY-4.0", hex_wer=1.94,
+        notes="Multilingual; can drift into another language on very short takes.",
+    ),
+    ModelCandidate(
+        id="nemotron-3.5-asr",
+        display_name="Nemotron 3.5 ASR 0.6B Q8_0 (GGUF, Vulkan)",
+        engine="gguf", model_ref="nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf", runner="vulkan",
+        disk_mb=751, vram_est="~1.2 GB", fits_6gb="yes", vocab="none",
+        fetch_name="nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf",
+        license="OpenMDW-1.1", hex_wer=3.05,
+        notes="Hex's own run; behind Parakeet on English.",
+        gguf_arch="parakeet", language="en-US",
     ),
     ModelCandidate(
         id="qwen3-asr-0.6b",
-        display_name="Qwen3-ASR 0.6B Q8_0 (GGUF)",
-        hex_model=True,
-        engine="gguf",
-        model_ref="Qwen3-ASR-0.6B-Q8_0.gguf",
-        backend="gguf-vulkan",
-        binary_kind="stock-vulkan",
-        disk_mb=850,
-        vram_gb="~1.4 GB",
-        fits_6gb="yes",
-        supports_streaming=False,
-        supports_vocab_bias="none",
-        fetch_cmd="/usr/lib/voxtype/voxtype-vulkan setup --download --model Qwen3-ASR-0.6B-Q8_0.gguf",
-        notes="Hex multilingual pick; voxtype gguf engine runs it offline (no vocab prompt wiring in voxtype yet).",
+        display_name="Qwen3-ASR 0.6B Q8_0 (GGUF, Vulkan)",
+        engine="gguf", model_ref="Qwen3-ASR-0.6B-Q8_0.gguf", runner="vulkan",
+        disk_mb=850, vram_est="~1.4 GB", fits_6gb="yes", vocab="none",
+        fetch_name="Qwen3-ASR-0.6B-Q8_0.gguf",
+        license="Apache-2.0", hex_wer=None, hex_note="Hex publishes only a Mandarin CER (FLEURS)",
+        notes="Multilingual; no English figure from Hex.",
         gguf_arch="qwen3_asr",
     ),
     ModelCandidate(
         id="qwen3-asr-1.7b",
-        display_name="Qwen3-ASR 1.7B Q8_0 (GGUF)",
-        hex_model=False,
-        engine="gguf",
-        model_ref="Qwen3-ASR-1.7B-Q8_0.gguf",
-        backend="gguf-vulkan",
-        binary_kind="stock-vulkan",
-        disk_mb=2185,
-        vram_gb="~3.2 GB",
-        fits_6gb="tight",
-        supports_streaming=False,
-        supports_vocab_bias="none",
-        fetch_cmd="/usr/lib/voxtype/voxtype-vulkan setup --download --model Qwen3-ASR-1.7B-Q8_0.gguf",
-        notes="Strong Open ASR leaderboard score (5.75 avg WER); offline via stock Vulkan binary.",
+        display_name="Qwen3-ASR 1.7B Q8_0 (GGUF, Vulkan)",
+        engine="gguf", model_ref="Qwen3-ASR-1.7B-Q8_0.gguf", runner="vulkan",
+        disk_mb=2185, vram_est="~3.0 GB", fits_6gb="tight", vocab="none",
+        fetch_name="Qwen3-ASR-1.7B-Q8_0.gguf",
+        license="Apache-2.0",
+        notes="Not in Hex's picker; in voxtype's.",
         gguf_arch="qwen3_asr",
     ),
     ModelCandidate(
-        id="nemotron-3.5-asr",
-        display_name="Nemotron 3.5 ASR 0.6B Q8_0 (GGUF)",
-        hex_model=True,
-        engine="gguf",
-        model_ref="nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf",
-        backend="gguf-vulkan",
-        binary_kind="stock-vulkan",
-        disk_mb=751,
-        vram_gb="~1.2 GB",
-        fits_6gb="yes",
-        supports_streaming=False,
-        supports_vocab_bias="none",
-        fetch_cmd="/usr/lib/voxtype/voxtype-vulkan setup --download --model nemotron-3.5-asr-streaming-0.6b-Q8_0.gguf",
-        notes="Hex pick; Hex benchmarks put it behind Parakeet v3 (3.05% vs 1.95% LibriSpeech test-clean).",
-        gguf_arch="parakeet",
-        language="en-US",
-    ),
-    ModelCandidate(
-        id="granite-speech-5.0",
-        display_name="IBM Granite Speech 5.0 (470M TurboCTC / 2B)",
-        hex_model=True,
-        engine="unsupported",
-        model_ref="",
-        backend="unsupported",
-        binary_kind="unsupported",
-        disk_mb=500,
-        vram_gb="~1.0 GB (470M) / ~4.5 GB (2B fp16)",
-        fits_6gb="yes",
-        supports_streaming=False,
-        supports_vocab_bias="none",
-        fetch_cmd="Not supported natively in voxtype (neither ONNX nor gguf-worker catalog); use remote OpenAI-compat ASR server",
-        notes="Hex added 470M TurboCTC but noted Parakeet beat it on English accuracy & speed; 2B has no GGUF port yet.",
+        id="granite-speech-5",
+        display_name="IBM Granite Speech 5.0",
+        engine="unsupported", model_ref="", runner="none",
+        disk_mb=0, vram_est="n/a", fits_6gb="n/a", vocab="none",
+        fetch_name="(not in voxtype)",
+        license="", hex_wer=4.77,
+        notes="Hex ships it; voxtype has no Granite engine or GGUF. Only reachable through a remote OpenAI-style server (whisper.mode = remote).",
     ),
 )
 
