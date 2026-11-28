@@ -1,0 +1,12 @@
+[Unit]
+Description=Shuush dictation end-to-end run (private headless sway, fake endpoints)
+Documentation=file://@REPO@/tests/e2e/README.md
+
+[Service]
+Type=oneshot
+# Nothing here touches the live session: the run builds its own world under /tmp and
+# its own namespaces. Low priority so it never competes with the desktop.
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=20min
+ExecStart=@REPO@/tests/e2e/nightly.sh

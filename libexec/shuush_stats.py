@@ -203,10 +203,22 @@ def format_report(report: dict, path: Path) -> str:
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="shuush-stats")
-    ap.add_argument("topic", nargs="?", default="latency", choices=("latency",))
+    ap.add_argument("topic", nargs="?", default="latency", choices=("latency", "reliability"))
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--history", default="", help="path to history.jsonl")
+    ap.add_argument("--days", type=float, default=7.0, help="reliability: how many days back")
+    ap.add_argument("--outcomes", default="", help="reliability: path to outcomes.jsonl")
     a = ap.parse_args(argv)
+    if a.topic == "reliability":
+        import shuush_reliability
+        args = ["report", "--days", str(a.days)]
+        if a.json:
+            args.append("--json")
+        if a.history:
+            args += ["--history", a.history]
+        if a.outcomes:
+            args += ["--outcomes", a.outcomes]
+        return shuush_reliability.main(args)
 
     path = Path(a.history) if a.history else default_history_path()
     rows = load_rows(path)

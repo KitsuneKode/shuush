@@ -1,0 +1,44 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>e2e target page</title>
+<style>
+  body { font: 16px sans-serif; margin: 16px; }
+  textarea, input { width: 90%; display: block; margin: 8px 0; font-size: 18px; }
+  textarea { height: 120px; }
+  #ce { border: 1px solid #888; min-height: 80px; width: 90%; padding: 4px; font-size: 18px; }
+</style>
+<label>textarea</label><textarea id="ta"></textarea>
+<label>contenteditable</label><div id="ce" contenteditable="true"></div>
+<label>password</label><input id="pw" type="password">
+<script>
+  const SELF = location.origin;
+  const post = (o) => fetch(SELF + "/_target", {method: "POST", body: JSON.stringify(o)}).catch(() => {});
+  const val = (el) => el.id === "ce" ? el.innerText : el.value;
+  for (const el of document.querySelectorAll("#ta, #ce, #pw")) {
+    const id = el.id;
+    // An input event carries what landed; the whole value rides along so a
+    // scenario reads the final text from the last event, never from a guess.
+    el.addEventListener("input", (e) => post({field: id, type: "input", inputType: e.inputType || "", data: e.data || "", value: val(el)}));
+    el.addEventListener("paste", (e) => post({field: id, type: "paste", data: (e.clipboardData || window.clipboardData).getData("text")}));
+    el.addEventListener("focus", () => post({field: id, type: "focus"}));
+    el.addEventListener("compositionstart", () => post({field: id, type: "compositionstart"}));
+    el.addEventListener("compositionend", (e) => post({field: id, type: "compositionend", data: e.data || ""}));
+  }
+  async function poll() {
+    try {
+      const r = await fetch(SELF + "/_page/cmd");
+      const j = await r.json();
+      if (j.cmd) {
+        const [c, a] = j.cmd.split(":");
+        if (c === "focus") document.getElementById(a).focus();
+        if (c === "clear") { for (const el of document.querySelectorAll("#ta, #ce, #pw")) { if (el.id === "ce") el.innerText = ""; else el.value = ""; } }
+        if (c === "dump") post({type: "dump", ta: val(document.getElementById("ta")), ce: val(document.getElementById("ce")), pw: val(document.getElementById("pw")), active: document.activeElement && document.activeElement.id});
+        post({type: "ack", cmd: j.cmd});
+      }
+    } catch (e) {}
+    setTimeout(poll, 100);
+  }
+  poll();
+  document.getElementById("ta").focus();
+  post({type: "ready"});
+</script>

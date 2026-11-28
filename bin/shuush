@@ -53,6 +53,8 @@ Usage:
   shuush learn [list|pending|add HEARD MEANT|accept HEARD|reject HEARD|forget HEARD|fix|sync-toml]
   shuush stats latency [--json] [--history PATH]
                            Print p50/p90/p95 latency by delivery method, length band and app family
+  shuush stats reliability [--days 7] [--json]
+                           How many takes were delivered, recovered or failed, per app (history + outcomes)
   shuush deliver [serve|status|ping]
                            Manage the Shuush delivery queue worker (PP_DELIVERY=shuush)
   shuush doctor [--json]   Check voxtype, GPU, compositor, Wayland, AT-SPI, services, delivery mode & daemon caps
@@ -182,6 +184,13 @@ doctor() {
     check "delivery_mode" 'true' \
       "Delivery mode: daemon (voxtype delivers; set PP_DELIVERY=shuush to switch)"
   fi
+
+  local rel_json rel_status rel_label rel_hint
+  rel_json="$(python3 -I "$LIBEXEC/shuush_reliability.py" doctor 2>/dev/null || echo '{}')"
+  rel_status="$(jq -r '.status // "ok"' <<<"$rel_json" 2>/dev/null)"
+  rel_label="$(jq -r '.label // "dictation reliability: not available"' <<<"$rel_json" 2>/dev/null)"
+  rel_hint="$(jq -r '.hint // ""' <<<"$rel_json" 2>/dev/null)"
+  check "reliability" '[ "$rel_status" != warn ]' "$rel_label" "$rel_hint"
 
   local caps_json
   caps_json="$(python3 -I "$LIBEXEC/shuush_caps.py" 2>/dev/null || echo '{}')"

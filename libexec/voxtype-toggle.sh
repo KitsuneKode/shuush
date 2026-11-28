@@ -148,6 +148,9 @@ start() {  # [profile]
         exit 0
     fi
     rm -f "$rt/handsfree"
+    # What the last take ended in goes into the reliability ledger before this one
+    # overwrites outcome.json (background, no text, no wait).
+    python3 -I "$SCRIPT_DIR/shuush_reliability.py" record 9>&- </dev/null >/dev/null 2>&1 &
     take=$(date +%s%N)
     dir="$rt/takes/$take"
     mkdir -p "$rt/takes" && mkdir "$dir" || exit 1
