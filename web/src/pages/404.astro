@@ -2,19 +2,15 @@
 import BaseLayout from '../layouts/BaseLayout.astro';
 ---
 <BaseLayout
-  title="Page not found — Shuush"
+  title="Page not found | Shuush"
   description="That page does not exist on Shuush."
   noindex={true}
 >
-  <main id="main" class="wrap-narrow" style="padding-block: clamp(64px, 10vw, 128px); text-align: center; display: grid; align-content: center; justify-items: center; gap: 20px;">
-    <span class="kicker"><span class="idx">404</span> Not found</span>
-    <h1>Nothing was <em class="hush">dictated</em> here.</h1>
-    <p class="lead" style="text-align: center;">
-      That URL doesn't exist. Head back to the landing page or browse the engineering notes.
+  <main id="main" class="wrap-narrow not-found">
+    <h1>Nothing was dictated here.</h1>
+    <p class="not-found-sub">
+      That URL does not exist. Return to the landing page or browse the engineering notes in <a href="/blog/" class="inline-link">Writing</a>.
     </p>
-    <div class="cta-row" style="justify-content: center;">
-      <a href="/" class="btn btn-primary">Back to Shuush <span class="arrow" aria-hidden="true">→</span></a>
-      <a href="/blog/" class="btn btn-ghost">Read the blog</a>
-    </div>
+    <a href="/" class="btn-primary">Back to Shuush <span class="arrow" aria-hidden="true">→</span></a>
   </main>
 </BaseLayout>
