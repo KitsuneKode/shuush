@@ -8,6 +8,8 @@
 //   - audio         peak/rms/vad frames (audio-bridge sidecar)
 //   - liveText      $XDG_RUNTIME_DIR/voxtype/live_text, maintained by the
 //                   voxtype-live-osd watcher (journal → file transport)
+//   - liveInField   $XDG_RUNTIME_DIR/voxtype/live_in_field, present while the
+//                   voxtype fork shows the words in the field (preedit)
 //
 // With the voxtype fork's streaming preview, live words arrive while
 // "streaming" (~3 updates/s); the cleanup script shows the raw text while
@@ -229,10 +231,48 @@ Item {
         path: root._runtimeDir.length > 0 ? root._runtimeDir + "/voxtype/live_text" : ""
         watchChanges: true
         printErrors: false
-        onLoaded: root.liveText = (text() || "").trim()
+        onLoaded: { root.liveText = (text() || "").trim(); inFieldFile.reload(); }
         onLoadFailed: root.liveText = ""
         onFileChanged: reload()
     }
+
+    // Words in the field
+    // With `[output] preedit = true` the voxtype fork shows the take's words
+    // underlined in the focused field and writes live_in_field while it does
+    // (removed when the text lands). Words in both places read twice, so the
+    // pill keeps its meter, label and clock and leaves the words out. The
+    // daemon writes live_text a moment before live_in_field, so words wait
+    // wordsWaitMs before they first show: long enough for the marker to land,
+    // so the first word never flashes in a pill that is about to narrow.
+    // Fields that can't show them (terminals, apps without text-input) never
+    // get the marker and show words as before. The file can't be watched
+    // before it exists, so every live_text update re-reads it, and the wait
+    // ends with one more read: the words show only if it is still absent.
+    property bool liveInField: false
+    property bool wordsOk: false
+    property bool _askedField: false
+    readonly property int wordsWaitMs: 400
+    FileView {
+        id: inFieldFile
+        path: root._runtimeDir.length > 0 ? root._runtimeDir + "/voxtype/live_in_field" : ""
+        watchChanges: true
+        printErrors: false
+        onFileChanged: reload()
+        onLoaded: { root._askedField = false; root.liveInField = true; }
+        onLoadFailed: {
+            root.liveInField = false;
+            if (root._askedField) { root._askedField = false; root.wordsOk = root.active; }
+        }
+    }
+    // Decided only while the take is on: the marker goes after the text
+    // lands, and taking that mid-exit would flash the words under the check.
+    function _gateWords() {
+        if (liveInField) { wordsWait.stop(); _askedField = false; wordsOk = false; return; }
+        if (!wordsOk && active && transcriptShown !== "" && !wordsWait.running) wordsWait.restart();
+    }
+    Timer { id: wordsWait; interval: root.wordsWaitMs; onTriggered: { root._askedField = true; inFieldFile.reload(); } }
+    onLiveInFieldChanged: _gateWords()
+    onActiveChanged: _gateWords()
 
     // Class of the window this take will land in, written by
     // voxtype-toggle.sh when recording starts. The pill says so, because
@@ -276,7 +316,7 @@ Item {
         return t.substring(cut > 0 ? cut + 1 : t.length - 600);
     }
     readonly property string transcriptShown: _cap(shownText)
-    readonly property bool hasText: transcriptShown.length > 0
+    readonly property bool hasText: wordsOk && transcriptShown.length > 0
 
     // ------------------------------------------------------------------
     // Streaming word reveal
@@ -324,7 +364,7 @@ Item {
         _births = births;
         nowMs = Date.now();
     }
-    onTranscriptShownChanged: _trackWords(transcriptShown)
+    onTranscriptShownChanged: { _trackWords(transcriptShown); _gateWords(); }
     Timer { interval: 16; repeat: true; running: root.revealing || (root.highlighting && !root.reducedMotion); onTriggered: root.nowMs = Date.now() }
     // Reduced motion: the marked words hold their tint, then turn plain at once.
     Timer { interval: root.highlightMs; running: root.highlighting && root.reducedMotion; onTriggered: root._changedAt = 0 }
@@ -434,6 +474,9 @@ Item {
             lingering = false;
             liveText = "";
             shownText = "";
+            wordsWait.stop();
+            wordsOk = false;
+            _askedField = false;
             finalShown = false;
             _changed = [];
             changedCount = 0;
@@ -460,6 +503,9 @@ Item {
         wasCancelled = false;
         liveText = "";
         shownText = "";
+        wordsWait.stop();
+        wordsOk = false;
+        _askedField = false;
         finalShown = false;
         _changed = [];
         changedCount = 0;
